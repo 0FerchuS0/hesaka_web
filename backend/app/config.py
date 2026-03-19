@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "password"
     TENANT_DB_PREFIX: str = "hesaka_"
+    DEFAULT_TENANT_SLUG: str | None = None
 
     # JWT
     SECRET_KEY: str = "cambia_esta_clave_secreta_en_produccion"

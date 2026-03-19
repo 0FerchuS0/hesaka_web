@@ -7,6 +7,7 @@ Ejemplo: optica-sol.hesaka.com → tenant_slug = "optica_sol"
 """
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
+from app.config import settings
 from app.database import get_admin_session
 from app.models.admin_models import Tenant
 import logging
@@ -29,6 +30,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # En desarrollo, permitir override por header
         tenant_slug = request.headers.get("X-Tenant-Slug", tenant_slug)
+
+        # Fallback util para el primer deploy online sin subdominios
+        if not tenant_slug and settings.DEFAULT_TENANT_SLUG:
+            tenant_slug = settings.DEFAULT_TENANT_SLUG
 
         if tenant_slug and tenant_slug not in RESERVED_SLUGS:
             # Verificar que el tenant existe y está activo
@@ -87,6 +92,6 @@ def get_tenant_slug(request: Request) -> str:
     if not slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No se pudo identificar el tenant. Revisa el subdominio."
+            detail="No se pudo identificar el tenant. Revisa el subdominio o configura DEFAULT_TENANT_SLUG."
         )
     return slug

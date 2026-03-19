@@ -1,0 +1,33 @@
+# ============================================================
+# HESAKA Web — Backend Dependencies
+# ============================================================
+
+# Web Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Database
+sqlalchemy==2.0.44
+psycopg2-binary==2.9.11
+alembic==1.14.1
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.20
+
+# Validation & Settings
+pydantic==2.10.6
+pydantic-settings==2.7.1
+
+# PDFs (reutilizamos reportlab del sistema desktop)
+reportlab==4.4.5
+
+# Excel
+openpyxl==3.1.5
+
+# Date utilities
+python-dateutil==2.9.0.post0
+
+# Environment
+python-dotenv==1.0.1

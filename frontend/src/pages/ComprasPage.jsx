@@ -165,13 +165,145 @@ function RemoteProveedorSelect({ value, proveedorNombre = '', onChange }) {
                         >
                             <div style={{ fontSize: '0.84rem', fontWeight: 600 }}>{item.nombre}</div>
                             {(item.telefono || item.email) && (
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                <div style={{ display: 'none' }}>
                                     {[item.telefono, item.email].filter(Boolean).join(' · ')}
                                 </div>
                             )}
                         </div>
                     ))}
                 </div>
+            )}
+        </div>
+    )
+}
+
+function CompraProductoSelect({ item, index, onUpdateItem }) {
+    const [buscar, setBuscar] = useState(item.descripcion || '')
+    const [showList, setShowList] = useState(false)
+    const [menuPosition, setMenuPosition] = useState(null)
+    const inputRef = useRef(null)
+
+    useEffect(() => {
+        setBuscar(item.descripcion || '')
+    }, [item.descripcion])
+
+    const { data: productos = [] } = useQuery({
+        queryKey: ['compras-productos-select', buscar],
+        queryFn: () => {
+            const params = new URLSearchParams({ page: '1', page_size: '25', solo_activos: 'true' })
+            if (buscar.trim()) params.append('buscar', buscar.trim())
+            return api.get(`/productos/listado-optimizado?${params.toString()}`).then(response => response.data.items || [])
+        },
+        enabled: showList,
+        retry: false,
+    })
+
+    const openList = () => {
+        if (!inputRef.current) {
+            setShowList(true)
+            return
+        }
+        const rect = inputRef.current.getBoundingClientRect()
+        const menuWidth = Math.max(rect.width, 620)
+        const estimatedMenuHeight = 420
+        const viewportPadding = 12
+        const spaceBelow = window.innerHeight - rect.bottom
+        const top = spaceBelow < estimatedMenuHeight
+            ? Math.max(viewportPadding, rect.top - estimatedMenuHeight - 4)
+            : rect.bottom + 4
+        setMenuPosition({
+            top,
+            left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - menuWidth - viewportPadding)),
+            width: menuWidth,
+        })
+        setShowList(true)
+    }
+
+    const selectProducto = producto => {
+        setBuscar(producto.nombre)
+        setShowList(false)
+        const costo = parseFloat(producto.costo) || 0
+        const cantidad = parseInt(item.cantidad, 10) || 1
+        onUpdateItem(index, recalcItem({
+            ...item,
+            descripcion: producto.nombre,
+            producto_id: producto.id,
+            costo_unitario: costo,
+            iva: producto.iva ?? item.iva ?? 10,
+            descuento: item.descuento || 0,
+        }))
+    }
+
+    return (
+        <div style={{ position: 'relative' }}>
+            <input
+                ref={inputRef}
+                className="form-input"
+                style={{ padding: '6px 8px', minWidth: 320, width: '100%' }}
+                placeholder="Buscar producto..."
+                value={buscar}
+                onFocus={openList}
+                onChange={event => {
+                    const nextValue = event.target.value
+                    setBuscar(nextValue)
+                    openList()
+                    onUpdateItem(index, recalcItem({
+                        ...item,
+                        descripcion: nextValue,
+                        producto_id: nextValue.trim() ? item.producto_id : null,
+                    }))
+                }}
+            />
+            {showList && (
+                <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 95 }} onClick={() => setShowList(false)} />
+                    <div
+                        style={{
+                            position: 'fixed',
+                            top: menuPosition?.top ?? 0,
+                            left: menuPosition?.left ?? 0,
+                            width: menuPosition?.width ?? 620,
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 10,
+                            maxHeight: 420,
+                            overflowY: 'auto',
+                            boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
+                            zIndex: 100,
+                        }}
+                        onMouseDown={event => event.preventDefault()}
+                    >
+                        {productos.length === 0 ? (
+                            <div style={{ padding: '12px 14px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>Sin resultados</div>
+                        ) : productos.map(producto => (
+                            <div
+                                key={producto.id}
+                                onClick={() => selectProducto(producto)}
+                                style={{ padding: '11px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}
+                                onMouseEnter={event => { event.currentTarget.style.background = 'rgba(59,130,246,0.12)' }}
+                                onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+                            >
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div style={{ fontSize: '0.84rem', fontWeight: 600, lineHeight: 1.35 }}>{producto.nombre}</div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.35 }}>
+                                        {[producto.codigo, producto.categoria_nombre].filter(Boolean).join(' · ') || 'Producto'}
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, minWidth: 150, flexShrink: 0 }}>
+                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                        Costo: Gs. {fmt(producto.costo)}
+                                    </span>
+                                    <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 700 }}>
+                                        Venta: Gs. {fmt(producto.precio_venta)}
+                                    </span>
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                    {[producto.codigo, producto.categoria_nombre].filter(Boolean).join(' · ') || 'Producto'}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </>
             )}
         </div>
     )
@@ -206,7 +338,7 @@ function VentaSelectorModal({ proveedorId, tipoCompra, selectedVentas, onConfirm
     const ventasSeleccionadas = ventas.filter(venta => selectedIds.has(venta.venta_id))
 
     return (
-        <Modal title="Seleccionar Ventas" onClose={onClose} maxWidth="920px">
+        <Modal title="Seleccionar Ventas" onClose={onClose} maxWidth="1100px">
             {!proveedorId ? (
                 <div className="empty-state" style={{ padding: '36px 20px' }}>
                     <AlertCircle size={34} />
@@ -229,7 +361,7 @@ function VentaSelectorModal({ proveedorId, tipoCompra, selectedVentas, onConfirm
                                 <p>No hay ventas con items pendientes para importar.</p>
                             </div>
                         ) : (
-                            <div className="table-container">
+                            <div className="table-container" style={{ maxHeight: '70vh', minHeight: '420px', overflowY: 'auto' }}>
                                 <table>
                                     <thead>
                                         <tr><th></th><th>Venta</th><th>Cliente</th><th>Fecha</th><th>Estado</th><th>Items</th></tr>
@@ -329,6 +461,13 @@ function CompraFormModal({ compraId = null, onClose }) {
             return next
         })
     }
+    const updateItemObject = (index, nextItem) => {
+        setItems(prev => {
+            const next = [...prev]
+            next[index] = recalcItem(nextItem)
+            return next
+        })
+    }
 
     const handleVentasConfirm = ventas => {
         const manuales = items.filter(item => !item.autoImportado)
@@ -407,7 +546,9 @@ function CompraFormModal({ compraId = null, onClose }) {
                             <tbody>
                                 {items.map((item, index) => (
                                     <tr key={`${item.presupuesto_item_id || 'manual'}-${index}`}>
-                                        <td><input className="form-input" style={{ padding: '6px 8px' }} value={item.descripcion} onChange={event => updateItem(index, 'descripcion', event.target.value)} /></td>
+                                        <td style={{ minWidth: 360 }}>
+                                            <CompraProductoSelect item={item} index={index} onUpdateItem={updateItemObject} />
+                                        </td>
                                         <td><input type="number" min="1" className="form-input" style={{ width: 84, padding: '6px 8px' }} value={item.cantidad} onChange={event => updateItem(index, 'cantidad', event.target.value)} /></td>
                                         <td><input type="number" min="0" className="form-input" style={{ width: 130, padding: '6px 8px' }} value={item.costo_unitario} onChange={event => updateItem(index, 'costo_unitario', event.target.value)} /></td>
                                         <td><input type="number" min="0" className="form-input" style={{ width: 100, padding: '6px 8px' }} value={item.descuento} onChange={event => updateItem(index, 'descuento', event.target.value)} /></td>

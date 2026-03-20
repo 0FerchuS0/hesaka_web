@@ -4,7 +4,8 @@ import axios from 'axios'
 
 const AuthContext = createContext(null)
 
-const API_BASE = '/api'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+const DEFAULT_TENANT = import.meta.env.VITE_TENANT_SLUG || ''
 
 // Axios instance con token automático
 export const api = axios.create({ baseURL: API_BASE })
@@ -12,6 +13,9 @@ export const api = axios.create({ baseURL: API_BASE })
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('hesaka_token')
     if (token) config.headers.Authorization = `Bearer ${token}`
+    if (DEFAULT_TENANT && !config.headers['X-Tenant-Slug']) {
+        config.headers['X-Tenant-Slug'] = DEFAULT_TENANT
+    }
     return config
 })
 

@@ -609,7 +609,6 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
             setExporting(false)
         }
     }
-
     return (
         <div style={{ position: 'relative' }}>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -619,7 +618,7 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
             {open && (
                 <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setOpen(false)} />
-                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', padding: '4px 0', minWidth: 190, zIndex: 100 }}>
+                    <div style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', padding: '4px 0', minWidth: 190, zIndex: 100 }}>
                         <button className="dropdown-item" onClick={() => handleAction(() => onVerFicha(venta))}>
                             <Eye size={14} style={{ marginRight: 8 }} /> Ficha cliente
                         </button>

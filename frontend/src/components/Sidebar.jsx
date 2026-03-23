@@ -100,6 +100,7 @@ const navGroups = [
                 label: 'Centro',
                 subItems: [
                     { to: '/reportes/ventas', label: 'Ventas y Rentabilidad' },
+                    { to: '/reportes/comparativo-mensual', label: 'Comparativo Mensual' },
                     { to: '/reportes/compras', label: 'Compras y Proveedores' },
                     { to: '/reportes/laboratorio', label: 'Trabajos Laboratorio' },
                     { to: '/reportes/finanzas', label: 'Financiero / Caja' },
@@ -202,7 +203,7 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                     }
                     if (item.to === '/reportes') {
                         const subItems = (item.subItems || []).filter(sub => {
-                            if (['/reportes/ventas', '/reportes/compras'].includes(sub.to)) {
+                            if (['/reportes/ventas', '/reportes/comparativo-mensual', '/reportes/compras'].includes(sub.to)) {
                                 return hasModuleAccess(user, 'reportes_comercial')
                             }
                             if (sub.to === '/reportes/laboratorio') {

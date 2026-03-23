@@ -22,6 +22,7 @@ const CajaPage = lazy(() => import('./pages/CajaPage'))
 const GastosPage = lazy(() => import('./pages/GastosPage'))
 const CuentasPorPagarPage = lazy(() => import('./pages/CuentasPorPagarPage'))
 const ReporteVentasPage = lazy(() => import('./pages/ReporteVentasPage'))
+const ReporteComparativoMensualPage = lazy(() => import('./pages/ReporteComparativoMensualPage'))
 const ReporteComprasPage = lazy(() => import('./pages/ReporteComprasPage'))
 const ReporteFinanzasPage = lazy(() => import('./pages/ReporteFinanzasPage'))
 const ReporteComisionesPage = lazy(() => import('./pages/ReporteComisionesPage'))
@@ -146,6 +147,7 @@ function AppLayout() {
 
                         <Route path="/reportes" element={<Navigate to="/reportes/ventas" replace />} />
                         <Route path="/reportes/ventas" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasPage /></RoleRoute>} />
+                        <Route path="/reportes/comparativo-mensual" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComparativoMensualPage /></RoleRoute>} />
                         <Route path="/reportes/compras" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComprasPage /></RoleRoute>} />
                         <Route path="/reportes/ajustes-ventas" element={<Navigate to="/ventas/ajustes" replace />} />
                         <Route path="/reportes/finanzas" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteFinanzasPage /></RoleRoute>} />

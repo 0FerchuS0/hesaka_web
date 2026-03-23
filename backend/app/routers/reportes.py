@@ -127,6 +127,56 @@ class ComparativaVentasDashboardOut(BaseModel):
     ano_anterior: PeriodoComparativoVentasOut
 
 
+class ComparativoMensualFilaOut(BaseModel):
+    anio: int
+    mes_numero: int
+    mes: str
+    fecha_desde: datetime
+    fecha_hasta: datetime
+    cantidad_ventas: int
+    total_ventas: float
+    total_costos: float
+    utilidad_bruta: float
+    total_comisiones: float
+    utilidad_neta: float
+    ticket_promedio: float
+    variacion_vs_mes_anterior: Optional[float] = None
+    variacion_vs_mismo_mes_ano_anterior: Optional[float] = None
+
+
+class ComparativoMensualResumenOut(BaseModel):
+    anio: int
+    filas: List[ComparativoMensualFilaOut]
+    total_ventas: float
+    total_costos: float
+    utilidad_bruta_total: float
+    total_comisiones: float
+    utilidad_neta_total: float
+    promedio_mensual: float
+    mejor_mes: Optional[str] = None
+    peor_mes: Optional[str] = None
+
+
+class ReporteComparativoMensualFilaOut(BaseModel):
+    mes_anio: str
+    periodo_texto: str
+    total_ventas: float
+    total_costos: float
+    utilidad_bruta: float
+    total_comisiones: float
+    utilidad_neta: float
+    margen_bruto_promedio: float
+    cantidad_ventas: int
+    year: int
+    month: int
+
+
+class ReporteComparativoMensualOut(BaseModel):
+    modo: str
+    fecha_referencia: datetime
+    filas: List[ReporteComparativoMensualFilaOut]
+
+
 class DashboardSerieVentasOut(BaseModel):
     mes: str
     ventas: float
@@ -354,6 +404,192 @@ def _obtener_comparativa_dashboard(session: Session) -> ComparativaVentasDashboa
             fecha_hasta=fin_ano_anterior,
             total_ventas=_sumar_ventas_periodo(session, inicio_ano_anterior, fin_ano_anterior),
         ),
+    )
+
+
+def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fecha_hasta: datetime):
+    ventas_db = (
+        session.query(Venta)
+        .filter(
+            Venta.fecha >= fecha_desde,
+            Venta.fecha <= fecha_hasta,
+            Venta.estado.notin_(['ANULADO', 'ANULADA'])
+        )
+        .order_by(Venta.fecha.desc())
+        .all()
+    )
+
+    total_ventas = 0.0
+    total_costos = 0.0
+    total_comisiones_referidor = 0.0
+    total_comisiones_bancarias = 0.0
+
+    for venta in ventas_db:
+        total_ventas += float(venta.total or 0.0)
+
+        presupuesto = venta.presupuesto_rel
+        if presupuesto and presupuesto.items:
+            for item in presupuesto.items:
+                costo_unitario = float(getattr(item, 'costo_unitario', 0.0) or 0.0)
+                cantidad = int(getattr(item, 'cantidad', 0) or 0)
+                total_costos += costo_unitario * cantidad
+
+        total_comisiones_referidor += float(getattr(venta, 'comision_monto', 0.0) or 0.0)
+
+        for pago in getattr(venta, 'pagos', []) or []:
+            if pago.metodo_pago == 'TARJETA':
+                porcentaje_comision = 3.3
+                banco = getattr(pago, 'banco_rel', None)
+                if banco and getattr(banco, 'porcentaje_comision', None):
+                    porcentaje_comision = banco.porcentaje_comision
+                total_comisiones_bancarias += float(pago.monto or 0.0) * (float(porcentaje_comision) / 100.0)
+
+    utilidad_bruta = total_ventas - total_costos
+    total_comisiones = total_comisiones_referidor + total_comisiones_bancarias
+    utilidad_neta = utilidad_bruta - total_comisiones
+    cantidad_ventas = len(ventas_db)
+    ticket_promedio = (total_ventas / cantidad_ventas) if cantidad_ventas > 0 else 0.0
+
+    return {
+        'cantidad_ventas': cantidad_ventas,
+        'total_ventas': float(total_ventas),
+        'total_costos': float(total_costos),
+        'utilidad_bruta': float(utilidad_bruta),
+        'total_comisiones': float(total_comisiones),
+        'utilidad_neta': float(utilidad_neta),
+        'ticket_promedio': float(ticket_promedio),
+    }
+
+
+def _porcentaje_variacion(actual: float, base: float) -> Optional[float]:
+    if base in (None, 0):
+        return None
+    return float(((actual - base) / base) * 100.0)
+
+
+def _obtener_comparativo_mensual(session: Session, anio: int) -> ComparativoMensualResumenOut:
+    nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+    filas: List[ComparativoMensualFilaOut] = []
+
+    for mes_numero in range(1, 13):
+        fecha_desde = datetime(anio, mes_numero, 1, 0, 0, 0)
+        if mes_numero == 12:
+            fecha_hasta = datetime(anio + 1, 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+        else:
+            fecha_hasta = datetime(anio, mes_numero + 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+
+        metricas = _obtener_metricas_ventas_periodo(session, fecha_desde, fecha_hasta)
+
+        if mes_numero == 1:
+            prev_desde = datetime(anio - 1, 12, 1, 0, 0, 0)
+            prev_hasta = datetime(anio, 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+        else:
+            prev_desde = datetime(anio, mes_numero - 1, 1, 0, 0, 0)
+            prev_hasta = datetime(anio, mes_numero, 1, 0, 0, 0) - timedelta(microseconds=1)
+
+        anterior_metricas = _obtener_metricas_ventas_periodo(session, prev_desde, prev_hasta)
+
+        mismo_mes_ano_anterior_desde = datetime(anio - 1, mes_numero, 1, 0, 0, 0)
+        if mes_numero == 12:
+            mismo_mes_ano_anterior_hasta = datetime(anio, 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+        else:
+            mismo_mes_ano_anterior_hasta = datetime(anio - 1, mes_numero + 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+
+        ano_anterior_metricas = _obtener_metricas_ventas_periodo(session, mismo_mes_ano_anterior_desde, mismo_mes_ano_anterior_hasta)
+
+        filas.append(
+            ComparativoMensualFilaOut(
+                anio=anio,
+                mes_numero=mes_numero,
+                mes=nombres_meses[mes_numero - 1],
+                fecha_desde=fecha_desde,
+                fecha_hasta=fecha_hasta,
+                cantidad_ventas=metricas['cantidad_ventas'],
+                total_ventas=metricas['total_ventas'],
+                total_costos=metricas['total_costos'],
+                utilidad_bruta=metricas['utilidad_bruta'],
+                total_comisiones=metricas['total_comisiones'],
+                utilidad_neta=metricas['utilidad_neta'],
+                ticket_promedio=metricas['ticket_promedio'],
+                variacion_vs_mes_anterior=_porcentaje_variacion(metricas['total_ventas'], anterior_metricas['total_ventas']),
+                variacion_vs_mismo_mes_ano_anterior=_porcentaje_variacion(metricas['total_ventas'], ano_anterior_metricas['total_ventas']),
+            )
+        )
+
+    total_ventas = sum(f.total_ventas for f in filas)
+    total_costos = sum(f.total_costos for f in filas)
+    utilidad_bruta_total = sum(f.utilidad_bruta for f in filas)
+    total_comisiones = sum(f.total_comisiones for f in filas)
+    utilidad_neta_total = sum(f.utilidad_neta for f in filas)
+    promedio_mensual = total_ventas / 12 if filas else 0.0
+
+    mejor_mes = max(filas, key=lambda f: f.total_ventas).mes if filas else None
+    peor_mes = min(filas, key=lambda f: f.total_ventas).mes if filas else None
+
+    return ComparativoMensualResumenOut(
+        anio=anio,
+        filas=filas,
+        total_ventas=float(total_ventas),
+        total_costos=float(total_costos),
+        utilidad_bruta_total=float(utilidad_bruta_total),
+        total_comisiones=float(total_comisiones),
+        utilidad_neta_total=float(utilidad_neta_total),
+        promedio_mensual=float(promedio_mensual),
+        mejor_mes=mejor_mes,
+        peor_mes=peor_mes,
+    )
+
+
+def _get_date_range_comparativo(fecha_referencia: datetime, months_back: int, modo: str):
+    target_year = fecha_referencia.year
+    target_month = fecha_referencia.month - months_back
+
+    while target_month <= 0:
+        target_month += 12
+        target_year -= 1
+
+    start_date = fecha_referencia.replace(year=target_year, month=target_month, day=1)
+    _, last_day_of_month = __import__('calendar').monthrange(target_year, target_month)
+
+    if modo == 'DIA':
+        target_day = fecha_referencia.day
+        actual_day = min(target_day, last_day_of_month)
+        end_date = fecha_referencia.replace(year=target_year, month=target_month, day=actual_day)
+        period_text = f"1 al {actual_day}"
+    else:
+        end_date = fecha_referencia.replace(year=target_year, month=target_month, day=last_day_of_month)
+        period_text = "Mes Completo"
+
+    return start_date, end_date, period_text
+
+
+def _obtener_reporte_comparativo_mensual(session: Session, fecha_referencia: datetime, modo: str) -> ReporteComparativoMensualOut:
+    filas: List[ReporteComparativoMensualFilaOut] = []
+
+    for i in range(13):
+        start_date, end_date, period_text = _get_date_range_comparativo(fecha_referencia, i, modo)
+        metricas = _obtener_metricas_ventas_periodo(session, start_date, end_date)
+
+        filas.append(
+            ReporteComparativoMensualFilaOut(
+                mes_anio=start_date.strftime("%B %Y").capitalize(),
+                periodo_texto=period_text,
+                total_ventas=metricas['total_ventas'],
+                total_costos=metricas['total_costos'],
+                utilidad_bruta=metricas['utilidad_bruta'],
+                total_comisiones=metricas['total_comisiones'],
+                utilidad_neta=metricas['utilidad_neta'],
+                margen_bruto_promedio=(metricas['utilidad_bruta'] / metricas['total_ventas'] * 100.0) if metricas['total_ventas'] > 0 else 0.0,
+                cantidad_ventas=metricas['cantidad_ventas'],
+                year=start_date.year,
+                month=start_date.month,
+            )
+        )
+
+    return ReporteComparativoMensualOut(
+        modo=modo,
+        fecha_referencia=fecha_referencia,
+        filas=filas,
     )
 
 
@@ -1064,6 +1300,25 @@ def obtener_reporte_ventas(
     try:
         resumen, _, _, _ = _obtener_datos_reporte_ventas(session, fecha_desde, fecha_hasta, cliente_id, estado_pago)
         return resumen
+    finally:
+        session.close()
+
+
+@router.get("/ventas/comparativo-mensual", response_model=ReporteComparativoMensualOut)
+def obtener_reporte_comparativo_mensual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    fecha_referencia: Optional[date] = Query(None),
+    modo: str = Query("MES"),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        fecha_base = fecha_referencia or date.today()
+        fecha_dt = datetime.combine(fecha_base, datetime.min.time())
+        modo_normalizado = (modo or "MES").upper()
+        if modo_normalizado not in ("MES", "DIA"):
+            raise HTTPException(status_code=422, detail="Modo invalido. Use MES o DIA.")
+        return _obtener_reporte_comparativo_mensual(session, fecha_dt, modo_normalizado)
     finally:
         session.close()
 

@@ -19,6 +19,7 @@ python-multipart==0.0.20
 # Validation & Settings
 pydantic==2.10.6
 pydantic-settings==2.7.1
+email-validator==2.2.0
 
 # PDFs (reutilizamos reportlab del sistema desktop)
 reportlab==4.4.5

@@ -508,7 +508,11 @@ export default function PresupuestosPage() {
 
     const { data: presupuestos = [], isLoading } = useQuery({
         queryKey: ['presupuestos', estadoFiltro],
-        queryFn: () => api.get(`/presupuestos/?estado=${estadoFiltro}&limit=100`).then(r => r.data),
+        queryFn: () => {
+            const params = new URLSearchParams({ limit: '100' })
+            if (estadoFiltro) params.append('estado', estadoFiltro)
+            return api.get(`/presupuestos/?${params.toString()}`).then(r => r.data)
+        },
         retry: false,
     })
 

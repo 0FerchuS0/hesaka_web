@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Subdominios que no corresponden a tenants de clientes
 RESERVED_SLUGS = {"www", "api", "admin", "static", "localhost"}
+PLATFORM_HOST_SUFFIXES = (".up.railway.app",)
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
@@ -56,6 +57,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
     def _extract_slug(self, host: str) -> str | None:
         """Extrae el subdominio del host. 'optica-sol.hesaka.com' → 'optica_sol'"""
         host = host.split(":")[0]  # Quitar puerto si existe
+        if any(host.endswith(suffix) for suffix in PLATFORM_HOST_SUFFIXES):
+            return None
         parts = host.split(".")
         if len(parts) >= 3:
             raw = parts[0]

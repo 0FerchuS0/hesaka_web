@@ -5,6 +5,7 @@ Multi-tenant SaaS para ópticas
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from app.bootstrap import bootstrap_default_tenant
 from app.config import settings
 from app.database import init_admin_db
 from app.middleware.tenant import TenantMiddleware
@@ -32,6 +33,8 @@ async def lifespan(app: FastAPI):
     try:
         init_admin_db()
         logger.info("✅ Base de datos admin inicializada.")
+        bootstrap_default_tenant()
+        logger.info("✅ Tenant por defecto verificado.")
     except Exception as e:
         logger.error(f"❌ Error al inicializar la base de datos admin: {e}")
     yield

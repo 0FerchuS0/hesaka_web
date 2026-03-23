@@ -217,13 +217,53 @@ def _serializar_ajuste(ajuste: AjusteVenta) -> AjusteVentaOut:
 
 def _build_presupuesto_out(p):
     """Construye PresupuestoOut con todos los campos calculados: cliente_nombre, referidor_nombre, producto_nombre por ítem."""
-    po = PresupuestoOut.model_validate(p)
-    po.cliente_nombre = p.cliente_rel.nombre if p.cliente_rel else None
-    po.referidor_nombre = p.referidor_rel.nombre if getattr(p, 'referidor_rel', None) else None
-    for item_out, item_orm in zip(po.items, p.items):
-        if getattr(item_orm, 'producto_rel', None):
-            item_out.producto_nombre = item_orm.producto_rel.nombre
-    return po
+    items = []
+    for item in getattr(p, "items", []) or []:
+        producto_rel = getattr(item, "producto_rel", None)
+        descripcion_personalizada = getattr(item, "descripcion_personalizada", None)
+        producto_nombre = None
+        if producto_rel and getattr(producto_rel, "nombre", None):
+            producto_nombre = producto_rel.nombre
+        elif descripcion_personalizada:
+            producto_nombre = descripcion_personalizada
+
+        items.append({
+            "id": getattr(item, "id", 0) or 0,
+            "producto_id": getattr(item, "producto_id", 0) or 0,
+            "producto_nombre": producto_nombre,
+            "cantidad": getattr(item, "cantidad", 0) or 0,
+            "precio_unitario": float(getattr(item, "precio_unitario", 0.0) or 0.0),
+            "costo_unitario": float(getattr(item, "costo_unitario", 0.0) or 0.0),
+            "descuento": float(getattr(item, "descuento", 0.0) or 0.0),
+            "subtotal": float(getattr(item, "subtotal", 0.0) or 0.0),
+            "descripcion_personalizada": descripcion_personalizada,
+            "codigo_armazon": getattr(item, "codigo_armazon", None),
+            "medidas_armazon": getattr(item, "medidas_armazon", None),
+        })
+
+    return PresupuestoOut(
+        id=getattr(p, "id", 0) or 0,
+        codigo=getattr(p, "codigo", "") or "",
+        fecha=getattr(p, "fecha", datetime.now()) or datetime.now(),
+        estado=getattr(p, "estado", "BORRADOR") or "BORRADOR",
+        cliente_id=getattr(p, "cliente_id", 0) or 0,
+        cliente_nombre=p.cliente_rel.nombre if getattr(p, "cliente_rel", None) else None,
+        total=float(getattr(p, "total", 0.0) or 0.0),
+        graduacion_od_esfera=getattr(p, "graduacion_od_esfera", None),
+        graduacion_od_cilindro=getattr(p, "graduacion_od_cilindro", None),
+        graduacion_od_eje=getattr(p, "graduacion_od_eje", None),
+        graduacion_od_adicion=getattr(p, "graduacion_od_adicion", None),
+        graduacion_oi_esfera=getattr(p, "graduacion_oi_esfera", None),
+        graduacion_oi_cilindro=getattr(p, "graduacion_oi_cilindro", None),
+        graduacion_oi_eje=getattr(p, "graduacion_oi_eje", None),
+        graduacion_oi_adicion=getattr(p, "graduacion_oi_adicion", None),
+        doctor_receta=getattr(p, "doctor_receta", None),
+        observaciones=getattr(p, "observaciones", None),
+        referidor_id=getattr(p, "referidor_id", None),
+        referidor_nombre=p.referidor_rel.nombre if getattr(p, "referidor_rel", None) else None,
+        comision_monto=float(getattr(p, "comision_monto", 0.0) or 0.0),
+        items=items,
+    )
 
 
 @pre_router.get("/", response_model=List[PresupuestoOut])

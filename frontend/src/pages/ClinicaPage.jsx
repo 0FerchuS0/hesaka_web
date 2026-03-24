@@ -442,8 +442,8 @@ function PacienteForm({ initialData, referidorOptions, onSearchReferidor, referi
     )
 }
 
-function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares, onSave, onCancel, saving, readOnly = false, saved = false }) {
-    const [form, setForm] = useState(() => ({
+function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares, onSave, onCancel, saving, savingText = 'Guardando...', readOnly = false, saved = false }) {
+    const buildFormState = useMemo(() => ({
         fecha: initialData?.fecha ? String(initialData.fecha).slice(0, 16) : new Date().toISOString().slice(0, 16),
         doctor_id: initialData?.doctor_id || '',
         lugar_atencion_id: initialData?.lugar_atencion_id || '',
@@ -514,10 +514,15 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
         resumen_resultados: initialData?.resumen_resultados || '',
         marca_recomendada: initialData?.marca_recomendada || '',
         fecha_control: initialData?.fecha_control ? String(initialData.fecha_control).slice(0, 10) : '',
-    }))
+    }), [initialData])
+    const [form, setForm] = useState(buildFormState)
     const [recommendation, setRecommendation] = useState(() => parseRecommendationState(initialData))
     const [patologiaSearch, setPatologiaSearch] = useState('')
     const [patologiaSeleccionada, setPatologiaSeleccionada] = useState(null)
+
+    useEffect(() => {
+        setForm(buildFormState)
+    }, [buildFormState])
 
     useEffect(() => {
         setRecommendation(parseRecommendationState(initialData))
@@ -1078,10 +1083,10 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                 </div>
             )}
             <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
-                <button type="button" className="btn btn-secondary" onClick={onCancel}>{readOnly ? 'Cerrar' : 'Cancelar'}</button>
+                <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>{readOnly ? 'Cerrar' : 'Cancelar'}</button>
                 {!readOnly && (
                     <button type="submit" className="btn btn-primary" disabled={saving || saved}>
-                        {saved ? 'Consulta guardada' : saving ? 'Guardando...' : 'Guardar consulta'}
+                        {saved ? 'Consulta guardada' : saving ? savingText : 'Guardar consulta'}
                     </button>
                 )}
             </div>
@@ -1920,6 +1925,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
     const [modalMedicamento, setModalMedicamento] = useState(null)
     const [recentCreatedMedicamento, setRecentCreatedMedicamento] = useState(null)
     const [medicamentoSearch, setMedicamentoSearch] = useState('')
+    const [consultaSavePhase, setConsultaSavePhase] = useState('idle')
 
     const historialQuery = useQuery({
         queryKey: ['clinica', 'paciente-historial', pacienteId],
@@ -1965,6 +1971,8 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
             queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'paciente-historial', pacienteId] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
+            queryClient.invalidateQueries({ queryKey: ['clinica', 'consulta-detalle'] }),
+            queryClient.invalidateQueries({ queryKey: ['clinica', 'historial-general-detalle'] }),
         ])
         onRefreshPacientes?.()
     }
@@ -1976,9 +1984,17 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
             if (consultaModal?.mode === 'edit') return (await api.put(`${endpoint}/${consultaModal.id}`, payload)).data
             return (await api.post(endpoint, payload)).data
         },
+        onMutate: () => {
+            setConsultaSavePhase('saving')
+        },
         onSuccess: async () => {
-            setConsultaModal(null)
+            setConsultaSavePhase('refreshing')
             await invalidateAll()
+            setConsultaModal(null)
+            setConsultaSavePhase('idle')
+        },
+        onError: () => {
+            setConsultaSavePhase('idle')
         },
     })
 
@@ -2404,16 +2420,23 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
             </Modal>
 
             {consultaModal && (
-                <Modal title={consultaModal.mode === 'create' ? `Nueva consulta ${consultaModal.type === 'OFTALMOLOGIA' ? 'oftalmologica' : 'de contactologia'}` : consultaModal.mode === 'edit' ? 'Editar consulta' : 'Consulta clinica'} onClose={() => setConsultaModal(null)} maxWidth="920px">
+                <Modal
+                    title={consultaModal.mode === 'create' ? `Nueva consulta ${consultaModal.type === 'OFTALMOLOGIA' ? 'oftalmologica' : 'de contactologia'}` : consultaModal.mode === 'edit' ? 'Editar consulta' : 'Consulta clinica'}
+                    onClose={() => setConsultaModal(null)}
+                    maxWidth="920px"
+                    closeDisabled={consultaSavePhase !== 'idle'}
+                    onCloseAttempt={() => window.alert('La consulta aun se esta actualizando. Espera a que el historial refleje los cambios antes de cerrar.')}
+                >
                     <ConsultaClinicaForm
                         type={consultaModal.type}
                         initialData={consultaModal.initialData}
                         pacienteId={pacienteId}
                         doctores={doctoresQuery.data || []}
                         lugares={lugaresQuery.data || []}
-                        onSave={payload => saveConsultaMutation.mutate(payload)}
+                        onSave={payload => saveConsultaMutation.mutate(payload.consulta)}
                         onCancel={() => setConsultaModal(null)}
-                        saving={saveConsultaMutation.isPending}
+                        saving={saveConsultaMutation.isPending || consultaSavePhase === 'refreshing'}
+                        savingText={consultaSavePhase === 'refreshing' ? 'Actualizando vista...' : 'Guardando...'}
                         readOnly={consultaModal.mode === 'view'}
                     />
                 </Modal>
@@ -3729,6 +3752,7 @@ function HistorialClinicoGeneralSection() {
     const [medicamentoSearch, setMedicamentoSearch] = useState('')
     const [actionError, setActionError] = useState('')
     const [documentosMenuOpen, setDocumentosMenuOpen] = useState(false)
+    const [consultaSavePhase, setConsultaSavePhase] = useState('idle')
 
     const pacientesFilterQuery = useQuery({
         queryKey: ['clinica', 'historial-general-pacientes-filter', pacienteSearch],
@@ -3827,6 +3851,8 @@ function HistorialClinicoGeneralSection() {
             queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'paciente-historial'] }),
+            queryClient.invalidateQueries({ queryKey: ['clinica', 'historial-general-detalle'] }),
+            queryClient.invalidateQueries({ queryKey: ['clinica', 'consulta-detalle'] }),
         ])
     }
 
@@ -3838,9 +3864,17 @@ function HistorialClinicoGeneralSection() {
                 : `/clinica/consultas/contactologia/${consultaModal.id}`
             return (await api.put(endpoint, payload)).data
         },
+        onMutate: () => {
+            setConsultaSavePhase('saving')
+        },
         onSuccess: async () => {
-            setConsultaModal(null)
+            setConsultaSavePhase('refreshing')
             await invalidateAll()
+            setConsultaModal(null)
+            setConsultaSavePhase('idle')
+        },
+        onError: () => {
+            setConsultaSavePhase('idle')
         },
     })
 
@@ -4398,16 +4432,23 @@ function HistorialClinicoGeneralSection() {
             </div>
 
             {consultaModal && (
-                <Modal title={consultaModal.mode === 'edit' ? 'Editar consulta' : 'Consulta clinica'} onClose={() => setConsultaModal(null)} maxWidth="920px">
+                <Modal
+                    title={consultaModal.mode === 'edit' ? 'Editar consulta' : 'Consulta clinica'}
+                    onClose={() => setConsultaModal(null)}
+                    maxWidth="920px"
+                    closeDisabled={consultaSavePhase !== 'idle'}
+                    onCloseAttempt={() => window.alert('La consulta aun se esta procesando. Espera a que termine antes de cerrar.')}
+                >
                     <ConsultaClinicaForm
                         type={consultaModal.type}
                         initialData={consultaModal.initialData}
                         pacienteId={consultaModal.patientId}
                         doctores={doctoresQuery.data || []}
                         lugares={lugaresQuery.data || []}
-                        onSave={payload => saveConsultaMutation.mutate(payload)}
+                        onSave={payload => saveConsultaMutation.mutate(payload.consulta)}
                         onCancel={() => setConsultaModal(null)}
-                        saving={saveConsultaMutation.isPending}
+                        saving={saveConsultaMutation.isPending || consultaSavePhase === 'refreshing'}
+                        savingText={consultaSavePhase === 'refreshing' ? 'Actualizando vista...' : 'Guardando...'}
                         readOnly={consultaModal.mode === 'view'}
                     />
                 </Modal>

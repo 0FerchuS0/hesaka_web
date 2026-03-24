@@ -68,14 +68,10 @@ function AjusteFormModal({ mode = 'create', ajuste = null, onClose, onSaved }) {
         if (mode === 'edit') return
         const timer = setTimeout(async () => {
             const term = ventaBusqueda.trim()
-            if (!term) {
-                setVentas([])
-                setVentasLoading(false)
-                return
-            }
             try {
                 setVentasLoading(true)
-                const params = new URLSearchParams({ page: '1', page_size: '20', search: term })
+                const params = new URLSearchParams({ page: '1', page_size: '20' })
+                if (term) params.append('search', term)
                 const response = await api.get(`/ventas/listado-optimizado?${params.toString()}`)
                 setVentas(response.data.items || [])
             } catch (err) {
@@ -147,7 +143,8 @@ function AjusteFormModal({ mode = 'create', ajuste = null, onClose, onSaved }) {
                             loading={ventasLoading}
                             placeholder="Buscar venta por codigo o cliente..."
                             emptyMessage="No se encontraron ventas"
-                            promptMessage="Escriba para buscar venta"
+                            promptMessage="Seleccione o escriba para buscar venta"
+                            minChars={0}
                         />
                     ) : (
                         <div className="form-input" style={{ display: 'flex', alignItems: 'center' }}>

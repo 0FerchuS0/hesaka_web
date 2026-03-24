@@ -8,6 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from app.utils.media_storage import resolve_logo_disk_path
 
 
 def _fmt_gs(value):
@@ -52,9 +53,10 @@ def generar_pdf_reporte_trabajos_lab(trabajos, config, fecha_desde=None, fecha_h
     )
     elements = []
 
-    if config and getattr(config, "logo_path", None) and os.path.exists(config.logo_path):
+    logo_disk_path = resolve_logo_disk_path(getattr(config, "logo_path", None) if config else None)
+    if logo_disk_path and os.path.exists(logo_disk_path):
         try:
-            logo = Image(config.logo_path, width=1.8 * cm, height=1.8 * cm)
+            logo = Image(logo_disk_path, width=1.8 * cm, height=1.8 * cm)
             logo.hAlign = "LEFT"
             elements.append(logo)
         except Exception:

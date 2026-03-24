@@ -109,6 +109,34 @@ class Referidor(Base):
     comisiones = relationship("Comision", back_populates="referidor_rel", lazy='selectin')
 
 
+class Vendedor(Base):
+    __tablename__ = 'vendedores'
+    __table_args__ = (
+        Index('idx_vendedor_nombre', 'nombre'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nombre = Column(String(100), nullable=False)
+    telefono = Column(String(50))
+    email = Column(String(100))
+    notas = Column(Text)
+    activo = Column(Boolean, default=True)
+    ventas = relationship("Venta", back_populates="vendedor_rel", lazy='selectin')
+    presupuestos = relationship("Presupuesto", back_populates="vendedor_rel", lazy='selectin')
+
+
+class CanalVenta(Base):
+    __tablename__ = 'canales_venta'
+    __table_args__ = (
+        Index('idx_canal_venta_nombre', 'nombre'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nombre = Column(String(100), nullable=False)
+    descripcion = Column(Text)
+    activo = Column(Boolean, default=True)
+    ventas = relationship("Venta", back_populates="canal_venta_rel", lazy='selectin')
+    presupuestos = relationship("Presupuesto", back_populates="canal_venta_rel", lazy='selectin')
+
+
 class Cliente(Base):
     __tablename__ = 'clientes'
     __table_args__ = (
@@ -166,6 +194,10 @@ class Presupuesto(Base):
     doctor_receta = Column(String(255), nullable=True)
     observaciones = Column(String(255), nullable=True)
     fecha_receta = Column(DateTime, nullable=True)
+    vendedor_id = Column(Integer, ForeignKey('vendedores.id'), nullable=True)
+    vendedor_rel = relationship("Vendedor", back_populates="presupuestos", lazy='selectin')
+    canal_venta_id = Column(Integer, ForeignKey('canales_venta.id'), nullable=True)
+    canal_venta_rel = relationship("CanalVenta", back_populates="presupuestos", lazy='selectin')
     referidor_id = Column(Integer, ForeignKey('referidores.id'), nullable=True)
     referidor_rel = relationship("Referidor", lazy='selectin')
     comision_monto = Column(Float, default=0.0)
@@ -212,6 +244,10 @@ class Venta(Base):
     saldo = Column(Float, default=0.0)
     estado = Column(String(20), default='PENDIENTE')
     estado_entrega = Column(String(20), default='ENTREGADO')
+    vendedor_id = Column(Integer, ForeignKey('vendedores.id'), nullable=True)
+    vendedor_rel = relationship("Vendedor", back_populates="ventas", lazy='selectin')
+    canal_venta_id = Column(Integer, ForeignKey('canales_venta.id'), nullable=True)
+    canal_venta_rel = relationship("CanalVenta", back_populates="ventas", lazy='selectin')
     referidor_id = Column(Integer, ForeignKey('referidores.id'), nullable=True)
     referidor_rel = relationship("Referidor", lazy='selectin')
     comision_monto = Column(Float, default=0.0)

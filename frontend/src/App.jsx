@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, useAuth } from './context/AuthContext'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { AuthProvider, useAuth, api } from './context/AuthContext'
 import Sidebar from './components/Sidebar'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { hasModuleAccess, normalizeRole } from './utils/roles'
@@ -8,8 +9,11 @@ import { hasModuleAccess, normalizeRole } from './utils/roles'
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const UsuariosPage = lazy(() => import('./pages/UsuariosPage'))
+const ConfiguracionGeneralPage = lazy(() => import('./pages/ConfiguracionGeneralPage'))
 const ClientesPage = lazy(() => import('./pages/ClientesPage'))
 const ReferidoresPage = lazy(() => import('./pages/ReferidoresPage'))
+const VendedoresPage = lazy(() => import('./pages/VendedoresPage'))
+const CanalesVentaPage = lazy(() => import('./pages/CanalesVentaPage'))
 const CategoriasPage = lazy(() => import('./pages/CategoriasPage'))
 const AtributosPage = lazy(() => import('./pages/AtributosPage'))
 const MarcasPage = lazy(() => import('./pages/MarcasPage'))
@@ -109,14 +113,62 @@ function HomeRoute() {
 }
 
 function AppLayout() {
+    const { user } = useAuth()
+    const location = useLocation()
     const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
         const saved = window.localStorage.getItem('hesaka-sidebar-collapsed')
         return saved === 'true'
     })
 
+    const { data: estadoConfig, isLoading: loadingConfig } = useQuery({
+        queryKey: ['configuracion-general-estado'],
+        queryFn: () => api.get('/configuracion-general/estado').then(response => response.data),
+        retry: false,
+        staleTime: 60000,
+    })
+
     useEffect(() => {
         window.localStorage.setItem('hesaka-sidebar-collapsed', String(sidebarCollapsed))
     }, [sidebarCollapsed])
+
+    const role = normalizeRole(user?.rol)
+    const configIncomplete = estadoConfig && !estadoConfig.configuracion_completa
+    const inConfigRoute = location.pathname === '/configuracion-general'
+
+    if (loadingConfig) {
+        return (
+            <div className="app-layout">
+                <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(prev => !prev)} />
+                <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
+                    <RouteLoader />
+                </main>
+            </div>
+        )
+    }
+
+    if (configIncomplete && !inConfigRoute && role === 'ADMIN') {
+        return <Navigate to="/configuracion-general" replace />
+    }
+
+    if (configIncomplete && !inConfigRoute && role !== 'ADMIN') {
+        return (
+            <div className="app-layout">
+                <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(prev => !prev)} />
+                <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
+                    <div className="page-body">
+                        <div className="card">
+                            <div className="empty-state" style={{ padding: '72px 20px' }}>
+                                <h3 style={{ fontSize: '1rem', color: 'var(--text-primary)', marginBottom: 8 }}>Configuracion pendiente</h3>
+                                <p style={{ color: 'var(--text-muted)', maxWidth: 560 }}>
+                                    Un administrador debe completar primero la configuracion general de la optica para habilitar el resto del sistema.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        )
+    }
 
     return (
         <div className="app-layout">
@@ -126,9 +178,12 @@ function AppLayout() {
                     <Routes>
                         <Route path="/" element={<HomeRoute />} />
                         <Route path="/usuarios" element={<RoleRoute allowedRoles="usuarios"><UsuariosPage /></RoleRoute>} />
+                        <Route path="/configuracion-general" element={<ConfiguracionGeneralPage />} />
                         <Route path="/clientes" element={<RoleRoute allowedRoles="catalogos"><ClientesPage /></RoleRoute>} />
                         <Route path="/clientes/saldos" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteSaldosClientesPage /></RoleRoute>} />
                         <Route path="/referidores" element={<RoleRoute allowedRoles="catalogos"><ReferidoresPage /></RoleRoute>} />
+                        <Route path="/vendedores" element={<RoleRoute allowedRoles="catalogos"><VendedoresPage /></RoleRoute>} />
+                        <Route path="/canales-venta" element={<RoleRoute allowedRoles="catalogos"><CanalesVentaPage /></RoleRoute>} />
                         <Route path="/categorias" element={<RoleRoute allowedRoles="catalogos"><CategoriasPage /></RoleRoute>} />
                         <Route path="/atributos" element={<RoleRoute allowedRoles="catalogos"><AtributosPage /></RoleRoute>} />
                         <Route path="/marcas" element={<RoleRoute allowedRoles="catalogos"><MarcasPage /></RoleRoute>} />

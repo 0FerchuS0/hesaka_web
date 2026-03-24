@@ -4,6 +4,7 @@ Multi-tenant SaaS para ópticas
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from app.bootstrap import bootstrap_default_tenant
 from app.config import settings
@@ -13,7 +14,7 @@ from app.middleware.tenant import TenantMiddleware
 # ─── Routers ───────────────────────────────────────────────────────────────────
 from app.routers.auth import router as auth_router
 from app.routers.productos import router as prod_router, cat_router, attr_router, marca_router
-from app.routers.clientes import router as cli_router, prov_router, ref_router
+from app.routers.clientes import router as cli_router, prov_router, ref_router, vend_router, canal_router, config_router
 from app.routers.ventas import router as ven_router, pre_router
 from app.routers.compras import router as comp_router
 from app.routers.finanzas import caja_router, banco_router, gasto_router
@@ -52,6 +53,9 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+settings.media_root_path.mkdir(parents=True, exist_ok=True)
+app.mount(settings.MEDIA_URL_PREFIX, StaticFiles(directory=str(settings.media_root_path)), name="media")
+
 # CORS (permite acceso desde el frontend)
 app.add_middleware(
     CORSMiddleware,
@@ -74,6 +78,9 @@ app.include_router(marca_router)
 app.include_router(cli_router)
 app.include_router(prov_router)
 app.include_router(ref_router)
+app.include_router(vend_router)
+app.include_router(canal_router)
+app.include_router(config_router)
 app.include_router(ven_router)
 app.include_router(pre_router)
 app.include_router(comp_router)

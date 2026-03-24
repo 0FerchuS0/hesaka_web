@@ -7,7 +7,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from app.database import get_session_for_tenant
-from app.models.models import Banco, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Venta, Compra
+from app.models.models import Banco, CanalVenta, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra
 from app.utils.auth import get_current_user
 from app.middleware.tenant import get_tenant_slug
 from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
@@ -18,6 +18,7 @@ from app.utils.pdf_reporte_compras import generar_pdf_reporte_compras
 from app.utils.excel_reporte_compras import generar_excel_reporte_compras
 from app.utils.pdf_estado_cuenta_cliente import generar_pdf_estado_cuenta_cliente
 from app.utils.pdf_reporte_trabajos_lab import generar_pdf_reporte_trabajos_lab
+from app.utils.configuracion_general import obtener_canal_principal
 
 router = APIRouter(prefix="/api/reportes", tags=["Reportes"])
 
@@ -27,6 +28,8 @@ class ReporteVentaOut(BaseModel):
     fecha: datetime
     codigo: str
     cliente_nombre: str
+    vendedor_nombre: Optional[str] = None
+    canal_venta_nombre: Optional[str] = None
     estado: str
     total_venta: float
     costo_total: float
@@ -44,6 +47,18 @@ class ResumenReporteVentasOut(BaseModel):
     utilidad_neta: float
     margen_promedio: float
     cantidad_ventas: int
+    por_vendedor: List["ResumenGrupoVentasOut"] = Field(default_factory=list)
+    por_canal: List["ResumenGrupoVentasOut"] = Field(default_factory=list)
+
+
+class ResumenGrupoVentasOut(BaseModel):
+    clave: str
+    etiqueta: str
+    cantidad_ventas: int
+    total_ventas: float
+    total_costos: float
+    utilidad_neta: float
+    margen_promedio: float
 
 
 class ReporteCompraOut(BaseModel):
@@ -548,16 +563,40 @@ def _get_date_range_comparativo(fecha_referencia: datetime, months_back: int, mo
         target_month += 12
         target_year -= 1
 
-    start_date = fecha_referencia.replace(year=target_year, month=target_month, day=1)
+    start_date = fecha_referencia.replace(
+        year=target_year,
+        month=target_month,
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
     _, last_day_of_month = __import__('calendar').monthrange(target_year, target_month)
 
     if modo == 'DIA':
         target_day = fecha_referencia.day
         actual_day = min(target_day, last_day_of_month)
-        end_date = fecha_referencia.replace(year=target_year, month=target_month, day=actual_day)
+        end_date = fecha_referencia.replace(
+            year=target_year,
+            month=target_month,
+            day=actual_day,
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
         period_text = f"1 al {actual_day}"
     else:
-        end_date = fecha_referencia.replace(year=target_year, month=target_month, day=last_day_of_month)
+        end_date = fecha_referencia.replace(
+            year=target_year,
+            month=target_month,
+            day=last_day_of_month,
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
         period_text = "Mes Completo"
 
     return start_date, end_date, period_text
@@ -694,7 +733,9 @@ def _obtener_datos_reporte_ventas(
     fecha_desde: Optional[date],
     fecha_hasta: Optional[date],
     cliente_id: Optional[int],
-    estado_pago: Optional[str]
+    estado_pago: Optional[str],
+    vendedor_id: Optional[int] = None,
+    canal_venta_id: Optional[int] = None,
 ):
     query = session.query(Venta).filter(Venta.estado.notin_(['ANULADO', 'ANULADA']))
         
@@ -706,6 +747,12 @@ def _obtener_datos_reporte_ventas(
         
     if cliente_id:
         query = query.filter(Venta.cliente_id == cliente_id)
+
+    if vendedor_id:
+        query = query.filter(Venta.vendedor_id == vendedor_id)
+
+    if canal_venta_id:
+        query = query.filter(Venta.canal_venta_id == canal_venta_id)
         
     if estado_pago:
         query = query.filter(Venta.estado == estado_pago)
@@ -719,6 +766,9 @@ def _obtener_datos_reporte_ventas(
     suma_utilidad_bruta = 0.0
     suma_comisiones_referidor = 0.0
     suma_comisiones_bancarias = 0.0
+    resumen_vendedores = {}
+    resumen_canales = {}
+    canal_default = obtener_canal_principal(session)
     
     for venta in ventas_db:
         presupuesto = venta.presupuesto_rel
@@ -762,6 +812,8 @@ def _obtener_datos_reporte_ventas(
             fecha=venta.fecha,
             codigo=venta.codigo,
             cliente_nombre=cliente_text,
+            vendedor_nombre=venta.vendedor_rel.nombre if getattr(venta, 'vendedor_rel', None) else None,
+            canal_venta_nombre=venta.canal_venta_rel.nombre if getattr(venta, 'canal_venta_rel', None) else None,
             estado=venta.estado,
             total_venta=venta.total,
             costo_total=costo_total,
@@ -777,10 +829,57 @@ def _obtener_datos_reporte_ventas(
             'utilidad_bruta': utilidad_bruta,
             'margen_bruto': margen_bruto
         })
+
+        utilidad_neta_venta = utilidad_bruta - (com_ref + com_ban)
+        etiqueta_vendedor = venta.vendedor_rel.nombre if getattr(venta, 'vendedor_rel', None) else 'Sin vendedor'
+        clave_vendedor = f"vendedor:{venta.vendedor_id or 0}"
+        bucket_vendedor = resumen_vendedores.setdefault(
+            clave_vendedor,
+            {"clave": clave_vendedor, "etiqueta": etiqueta_vendedor, "cantidad_ventas": 0, "total_ventas": 0.0, "total_costos": 0.0, "utilidad_neta": 0.0},
+        )
+        bucket_vendedor["cantidad_ventas"] += 1
+        bucket_vendedor["total_ventas"] += float(venta.total or 0.0)
+        bucket_vendedor["total_costos"] += float(costo_total or 0.0)
+        bucket_vendedor["utilidad_neta"] += float(utilidad_neta_venta or 0.0)
+
+        etiqueta_canal = venta.canal_venta_rel.nombre if getattr(venta, 'canal_venta_rel', None) else (canal_default.nombre if canal_default else 'Canal principal')
+        clave_canal = f"canal:{venta.canal_venta_id or 0}"
+        bucket_canal = resumen_canales.setdefault(
+            clave_canal,
+            {"clave": clave_canal, "etiqueta": etiqueta_canal, "cantidad_ventas": 0, "total_ventas": 0.0, "total_costos": 0.0, "utilidad_neta": 0.0},
+        )
+        bucket_canal["cantidad_ventas"] += 1
+        bucket_canal["total_ventas"] += float(venta.total or 0.0)
+        bucket_canal["total_costos"] += float(costo_total or 0.0)
+        bucket_canal["utilidad_neta"] += float(utilidad_neta_venta or 0.0)
         
     total_comisiones = suma_comisiones_referidor + suma_comisiones_bancarias
     utilidad_neta = suma_utilidad_bruta - total_comisiones
     margen_prom_global = (suma_utilidad_bruta / suma_ventas * 100) if suma_ventas > 0 else 0.0
+    por_vendedor = [
+        ResumenGrupoVentasOut(
+            clave=item["clave"],
+            etiqueta=item["etiqueta"],
+            cantidad_ventas=item["cantidad_ventas"],
+            total_ventas=item["total_ventas"],
+            total_costos=item["total_costos"],
+            utilidad_neta=item["utilidad_neta"],
+            margen_promedio=(item["utilidad_neta"] / item["total_ventas"] * 100) if item["total_ventas"] else 0.0,
+        )
+        for item in sorted(resumen_vendedores.values(), key=lambda x: (-x["total_ventas"], x["etiqueta"]))
+    ]
+    por_canal = [
+        ResumenGrupoVentasOut(
+            clave=item["clave"],
+            etiqueta=item["etiqueta"],
+            cantidad_ventas=item["cantidad_ventas"],
+            total_ventas=item["total_ventas"],
+            total_costos=item["total_costos"],
+            utilidad_neta=item["utilidad_neta"],
+            margen_promedio=(item["utilidad_neta"] / item["total_ventas"] * 100) if item["total_ventas"] else 0.0,
+        )
+        for item in sorted(resumen_canales.values(), key=lambda x: (-x["total_ventas"], x["etiqueta"]))
+    ]
     
     resumen_json = ResumenReporteVentasOut(
         ventas=resultado_ventas,
@@ -790,7 +889,9 @@ def _obtener_datos_reporte_ventas(
         total_comisiones=total_comisiones,
         utilidad_neta=utilidad_neta,
         margen_promedio=margen_prom_global,
-        cantidad_ventas=len(resultado_ventas)
+        cantidad_ventas=len(resultado_ventas),
+        por_vendedor=por_vendedor,
+        por_canal=por_canal,
     )
     
     return resumen_json, ventas_data, suma_comisiones_referidor, suma_comisiones_bancarias
@@ -1293,12 +1394,14 @@ def obtener_reporte_ventas(
     fecha_hasta: Optional[date] = Query(None),
     cliente_id: Optional[int] = Query(None),
     estado_pago: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
     tenant_slug: str = Depends(get_tenant_slug),
     current_user = Depends(get_current_user)
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        resumen, _, _, _ = _obtener_datos_reporte_ventas(session, fecha_desde, fecha_hasta, cliente_id, estado_pago)
+        resumen, _, _, _ = _obtener_datos_reporte_ventas(session, fecha_desde, fecha_hasta, cliente_id, estado_pago, vendedor_id, canal_venta_id)
         return resumen
     finally:
         session.close()
@@ -1445,13 +1548,15 @@ def exportar_reporte_ventas_pdf(
     fecha_hasta: Optional[date] = Query(None),
     cliente_id: Optional[int] = Query(None),
     estado_pago: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
     tenant_slug: str = Depends(get_tenant_slug),
     current_user = Depends(get_current_user)
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
         _, ventas_data, com_ref, com_ban = _obtener_datos_reporte_ventas(
-            session, fecha_desde, fecha_hasta, cliente_id, estado_pago)
+            session, fecha_desde, fecha_hasta, cliente_id, estado_pago, vendedor_id, canal_venta_id)
             
         config = session.query(ConfiguracionEmpresa).first()
         
@@ -1538,13 +1643,15 @@ def exportar_reporte_ventas_excel(
     fecha_hasta: Optional[date] = Query(None),
     cliente_id: Optional[int] = Query(None),
     estado_pago: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
     tenant_slug: str = Depends(get_tenant_slug),
     current_user = Depends(get_current_user)
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
         _, ventas_data, com_ref, com_ban = _obtener_datos_reporte_ventas(
-            session, fecha_desde, fecha_hasta, cliente_id, estado_pago)
+            session, fecha_desde, fecha_hasta, cliente_id, estado_pago, vendedor_id, canal_venta_id)
             
         config = session.query(ConfiguracionEmpresa).first()
         

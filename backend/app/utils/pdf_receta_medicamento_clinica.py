@@ -7,7 +7,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
-EMPRESA_DIRECCION = "AVDA BLAS GARAY 1149 C/ AVDA SAN JOSE | Tel: 0973851449"
+EMPRESA_SUBTITULO_FALLBACK = ""
 
 
 def _texto(value):
@@ -16,14 +16,16 @@ def _texto(value):
     return str(value)
 
 
-def _header_block(story, styles):
+def _header_block(story, styles, empresa_nombre, empresa_subtitulo=None):
     empresa = ParagraphStyle("Empresa", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, alignment=1, spaceAfter=4)
     sub = ParagraphStyle("EmpresaSub", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, alignment=1, leading=11)
     receta = ParagraphStyle("RecetaMed", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=15, alignment=1, textColor=colors.HexColor("#22c55e"), spaceBefore=12, spaceAfter=8)
     line = Table([[""]], colWidths=[17.2 * cm], rowHeights=[0.08 * cm])
     line.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.black)]))
-    story.append(Paragraph("CENTRO OPTICO SANTA FE", empresa))
-    story.append(Paragraph(EMPRESA_DIRECCION, sub))
+    story.append(Paragraph(_texto(empresa_nombre) if empresa_nombre else "Mi Empresa", empresa))
+    subtitulo = (empresa_subtitulo or EMPRESA_SUBTITULO_FALLBACK or "").strip()
+    if subtitulo:
+        story.append(Paragraph(subtitulo, sub))
     story.extend([Spacer(1, 0.35 * cm), line, Spacer(1, 0.2 * cm), Paragraph("RECETA MEDICA", receta)])
 
 
@@ -39,7 +41,7 @@ def _section_style():
     )
 
 
-def _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, compra=False):
+def _render_receta_copy(story, styles, empresa_nombre, paciente_nombre, paciente_ci, receta, compra=False):
     normal = ParagraphStyle("NormalMed", parent=styles["BodyText"], fontName="Helvetica", fontSize=10, leading=13)
     italic = ParagraphStyle("ItalicMed", parent=normal, fontName="Helvetica-Oblique", fontSize=9)
     receta_title = ParagraphStyle("RxTitle", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12, textColor=colors.HexColor("#22c55e"), spaceBefore=12, spaceAfter=6)
@@ -55,7 +57,7 @@ def _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, com
         spaceAfter=6,
     )
 
-    _header_block(story, styles)
+    _header_block(story, styles, empresa_nombre)
     story.append(
         Paragraph(
             "COPIA CON INDICACIONES" if not compra else "COPIA PARA COMPRA DE MEDICAMENTOS",
@@ -107,7 +109,6 @@ def _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, com
 
 
 def generar_pdf_receta_medicamento_clinica(empresa_nombre: str, paciente_nombre: str, paciente_ci: str | None, receta: dict) -> bytes:
-    del empresa_nombre
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -119,9 +120,9 @@ def generar_pdf_receta_medicamento_clinica(empresa_nombre: str, paciente_nombre:
     )
     styles = getSampleStyleSheet()
     story = []
-    _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, compra=False)
+    _render_receta_copy(story, styles, empresa_nombre, paciente_nombre, paciente_ci, receta, compra=False)
     story.append(PageBreak())
-    _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, compra=True)
+    _render_receta_copy(story, styles, empresa_nombre, paciente_nombre, paciente_ci, receta, compra=True)
 
     doc.build(story)
     pdf = buffer.getvalue()
@@ -130,7 +131,6 @@ def generar_pdf_receta_medicamento_clinica(empresa_nombre: str, paciente_nombre:
 
 
 def generar_pdf_receta_medicamento_compra_clinica(empresa_nombre: str, paciente_nombre: str, paciente_ci: str | None, receta: dict) -> bytes:
-    del empresa_nombre
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -142,7 +142,7 @@ def generar_pdf_receta_medicamento_compra_clinica(empresa_nombre: str, paciente_
     )
     styles = getSampleStyleSheet()
     story = []
-    _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, compra=True)
+    _render_receta_copy(story, styles, empresa_nombre, paciente_nombre, paciente_ci, receta, compra=True)
     doc.build(story)
     pdf = buffer.getvalue()
     buffer.close()
@@ -150,7 +150,6 @@ def generar_pdf_receta_medicamento_compra_clinica(empresa_nombre: str, paciente_
 
 
 def generar_pdf_receta_medicamento_indicaciones_clinica(empresa_nombre: str, paciente_nombre: str, paciente_ci: str | None, receta: dict) -> bytes:
-    del empresa_nombre
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -162,7 +161,7 @@ def generar_pdf_receta_medicamento_indicaciones_clinica(empresa_nombre: str, pac
     )
     styles = getSampleStyleSheet()
     story = []
-    _render_receta_copy(story, styles, paciente_nombre, paciente_ci, receta, compra=False)
+    _render_receta_copy(story, styles, empresa_nombre, paciente_nombre, paciente_ci, receta, compra=False)
     doc.build(story)
     pdf = buffer.getvalue()
     buffer.close()

@@ -7,7 +7,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
-EMPRESA_DIRECCION = "AVDA BLAS GARAY 1149 C/ AVDA SAN JOSE | Tel: 0973851449"
+EMPRESA_SUBTITULO_FALLBACK = ""
 
 
 def _texto(value):
@@ -41,13 +41,15 @@ def _fmt_adicion(value):
     return f"{number:+.2f}" if number >= 0 else f"{number:.2f}"
 
 
-def _header_block(story, styles, title_text):
+def _header_block(story, styles, title_text, empresa_nombre, empresa_subtitulo=None):
     empresa = ParagraphStyle("Empresa", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, alignment=1, spaceAfter=4)
     sub = ParagraphStyle("EmpresaSub", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, alignment=1, leading=11)
     title = ParagraphStyle("DocumentoTitle", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=16, alignment=0, spaceBefore=12, spaceAfter=10)
 
-    story.append(Paragraph("CENTRO OPTICO SANTA FE", empresa))
-    story.append(Paragraph(EMPRESA_DIRECCION, sub))
+    story.append(Paragraph(_texto(empresa_nombre) if _has_value(empresa_nombre) else "Mi Empresa", empresa))
+    subtitulo = (empresa_subtitulo or EMPRESA_SUBTITULO_FALLBACK or "").strip()
+    if subtitulo:
+        story.append(Paragraph(subtitulo, sub))
     line = Table([[""]], colWidths=[17.2 * cm], rowHeights=[0.08 * cm])
     line.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.black)]))
     story.extend([Spacer(1, 0.35 * cm), line, Spacer(1, 0.45 * cm), Paragraph(title_text, title)])
@@ -91,7 +93,6 @@ def _first_value(*values):
 
 
 def generar_pdf_consulta_clinica(empresa_nombre: str, paciente_nombre: str, paciente_ci: str | None, consulta: dict) -> bytes:
-    del empresa_nombre
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -109,7 +110,7 @@ def generar_pdf_consulta_clinica(empresa_nombre: str, paciente_nombre: str, paci
     titulo = "RECETA OFTALMOLOGICA" if tipo == "OFTALMOLOGIA" else "RECETA DE CONTACTOLOGIA"
 
     story = []
-    _header_block(story, styles, titulo)
+    _header_block(story, styles, titulo, empresa_nombre)
 
     datos = [
         [f"Paciente: {_texto(paciente_nombre)}", f"Fecha: {_texto(consulta.get('fecha'))[:10]}"],

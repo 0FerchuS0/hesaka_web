@@ -4,6 +4,7 @@ Lee las variables del archivo .env
 """
 from pydantic_settings import BaseSettings
 from typing import List
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
     # Ambiente
     ENVIRONMENT: str = "development"
 
+    # Archivos subidos
+    MEDIA_ROOT: str | None = None
+    MEDIA_URL_PREFIX: str = "/media"
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
@@ -40,6 +45,12 @@ class Settings(BaseSettings):
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{db_name}"
         )
+
+    @property
+    def media_root_path(self) -> Path:
+        if self.MEDIA_ROOT:
+            return Path(self.MEDIA_ROOT).expanduser().resolve()
+        return (Path(__file__).resolve().parents[1] / "media").resolve()
 
     class Config:
         env_file = ".env"

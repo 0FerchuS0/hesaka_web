@@ -22,7 +22,7 @@ from app.models.clinica_models import (
     VademecumPatologia,
     VademecumTratamiento,
 )
-from app.models.models import Cliente, Referidor
+from app.models.models import Cliente, ConfiguracionEmpresa, Referidor
 from app.schemas.schemas import ClinicaAlertOut, ClinicaDashboardResumenOut, ClinicaRecentConsultaOut
 from app.schemas.schemas import (
     ClinicaConsultaContactologiaIn,
@@ -70,6 +70,12 @@ from app.utils.pdf_receta_medicamento_clinica import (
 )
 
 router = APIRouter(prefix="/api/clinica", tags=["Clinica"])
+
+
+def _nombre_empresa_documentos(session) -> str:
+    config = session.query(ConfiguracionEmpresa).first()
+    nombre = (config.nombre or "").strip() if config else ""
+    return nombre or "Mi Empresa"
 
 
 def _inicio_mes(actual: date) -> datetime:
@@ -1883,7 +1889,7 @@ def pdf_receta_medicamento(
         receta = _obtener_receta_medicamento_segura(session, receta_id)
         paciente = _obtener_paciente_seguro(session, receta.paciente_id)
         pdf = generar_pdf_receta_medicamento_clinica(
-            "HESAKA Web",
+            _nombre_empresa_documentos(session),
             paciente.nombre_completo,
             paciente.ci_pasaporte,
             receta.model_dump(),
@@ -1908,7 +1914,7 @@ def pdf_receta_medicamento_compra(
         receta = _obtener_receta_medicamento_segura(session, receta_id)
         paciente = _obtener_paciente_seguro(session, receta.paciente_id)
         pdf = generar_pdf_receta_medicamento_compra_clinica(
-            "HESAKA Web",
+            _nombre_empresa_documentos(session),
             paciente.nombre_completo,
             paciente.ci_pasaporte,
             receta.model_dump(),
@@ -1933,7 +1939,7 @@ def pdf_receta_medicamento_indicaciones(
         receta = _obtener_receta_medicamento_segura(session, receta_id)
         paciente = _obtener_paciente_seguro(session, receta.paciente_id)
         pdf = generar_pdf_receta_medicamento_indicaciones_clinica(
-            "HESAKA Web",
+            _nombre_empresa_documentos(session),
             paciente.nombre_completo,
             paciente.ci_pasaporte,
             receta.model_dump(),
@@ -2283,7 +2289,7 @@ def pdf_consulta_oftalmologica(
     try:
         consulta = _obtener_consulta_oft_segura(session, consulta_id)
         paciente = _obtener_paciente_seguro(session, consulta.paciente_id)
-        pdf = generar_pdf_consulta_clinica("HESAKA Web", paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
+        pdf = generar_pdf_consulta_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
         return StreamingResponse(iter([pdf]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="consulta_oft_{consulta_id}.pdf"'})
     finally:
         session.close()
@@ -2299,7 +2305,7 @@ def pdf_indicaciones_oftalmologia(
     try:
         consulta = _obtener_consulta_oft_segura(session, consulta_id)
         paciente = _obtener_paciente_seguro(session, consulta.paciente_id)
-        pdf = generar_pdf_indicaciones_clinica(paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
+        pdf = generar_pdf_indicaciones_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
         return StreamingResponse(iter([pdf]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="indicaciones_oft_{consulta_id}.pdf"'})
     finally:
         session.close()
@@ -2407,7 +2413,7 @@ def pdf_consulta_contactologia(
     try:
         consulta = _obtener_consulta_cont_segura(session, consulta_id)
         paciente = _obtener_paciente_seguro(session, consulta.paciente_id)
-        pdf = generar_pdf_consulta_clinica("HESAKA Web", paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
+        pdf = generar_pdf_consulta_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
         return StreamingResponse(iter([pdf]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="consulta_cont_{consulta_id}.pdf"'})
     finally:
         session.close()
@@ -2423,7 +2429,7 @@ def pdf_indicaciones_contactologia(
     try:
         consulta = _obtener_consulta_cont_segura(session, consulta_id)
         paciente = _obtener_paciente_seguro(session, consulta.paciente_id)
-        pdf = generar_pdf_indicaciones_clinica(paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
+        pdf = generar_pdf_indicaciones_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
         return StreamingResponse(iter([pdf]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="indicaciones_cont_{consulta_id}.pdf"'})
     finally:
         session.close()

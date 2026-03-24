@@ -1,5 +1,5 @@
 // HESAKA Web — Página: Ventas (Refactored con lógica financiera completa)
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
@@ -586,6 +586,8 @@ function ClienteFichaModal({ clienteId, onClose }) {
 function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc, anularMutation, user, anularBusyId }) {
     const [open, setOpen] = useState(false)
     const [exporting, setExporting] = useState(false)
+    const [menuPosition, setMenuPosition] = useState(null)
+    const triggerRef = useRef(null)
     const puedeCobrar = hasActionAccess(user, 'ventas.cobrar', 'ventas')
     const puedeAjustar = hasActionAccess(user, 'ventas.ajustar', 'ventas')
     const puedeEntrega = hasActionAccess(user, 'ventas.entrega', 'ventas')
@@ -609,16 +611,38 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
             setExporting(false)
         }
     }
+    useEffect(() => {
+        if (!open || !triggerRef.current) return
+
+        const updatePosition = () => {
+            if (!triggerRef.current) return
+            const rect = triggerRef.current.getBoundingClientRect()
+            setMenuPosition({
+                top: Math.max(12, rect.top - 6),
+                left: Math.max(12, rect.right),
+            })
+        }
+
+        updatePosition()
+        window.addEventListener('resize', updatePosition)
+        window.addEventListener('scroll', updatePosition, true)
+
+        return () => {
+            window.removeEventListener('resize', updatePosition)
+            window.removeEventListener('scroll', updatePosition, true)
+        }
+    }, [open])
+
     return (
         <div style={{ position: 'relative' }}>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div ref={triggerRef} style={{ display: 'flex', gap: 6 }}>
                 <button className="btn btn-secondary btn-sm" onClick={() => setOpen(!open)}>Acciones ▾</button>
             </div>
 
-            {open && (
+            {open && menuPosition && (
                 <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setOpen(false)} />
-                    <div style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', padding: '4px 0', minWidth: 190, zIndex: 100 }}>
+                    <div style={{ position: 'fixed', top: menuPosition.top, left: menuPosition.left, transform: 'translate(-100%, -100%)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', padding: '4px 0', minWidth: 210, zIndex: 100 }}>
                         <button className="dropdown-item" onClick={() => handleAction(() => onVerFicha(venta))}>
                             <Eye size={14} style={{ marginRight: 8 }} /> Ficha cliente
                         </button>
@@ -674,6 +698,8 @@ export default function VentasPage() {
     const [buscarDebounced, setBuscarDebounced] = useState('')
     const [estadoFiltro, setEstadoFiltro] = useState('')
     const [entregaFiltro, setEntregaFiltro] = useState('')
+    const [vendedorFiltro, setVendedorFiltro] = useState('')
+    const [canalFiltro, setCanalFiltro] = useState('')
     const [soloPendientes, setSoloPendientes] = useState(false)
     const [ventaPagos, setVentaPagos] = useState(null)
     const [ventaAjuste, setVentaAjuste] = useState(null)
@@ -691,20 +717,34 @@ export default function VentasPage() {
 
     useEffect(() => {
         setPage(1)
-    }, [buscarDebounced, estadoFiltro, entregaFiltro, soloPendientes, pageSize])
+    }, [buscarDebounced, estadoFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
 
     useEffect(() => {
         setSeleccionadas([])
-    }, [page, buscarDebounced, estadoFiltro, entregaFiltro, soloPendientes, pageSize])
+    }, [page, buscarDebounced, estadoFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
+
+    const { data: vendedoresFiltro = [] } = useQuery({
+        queryKey: ['ventas-vendedores-filtro'],
+        queryFn: () => api.get('/vendedores/?solo_activos=true&limit=200').then(r => r.data),
+        retry: false,
+    })
+
+    const { data: canalesFiltro = [] } = useQuery({
+        queryKey: ['ventas-canales-filtro'],
+        queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data),
+        retry: false,
+    })
 
     const { data, isLoading } = useQuery({
-        queryKey: ['ventas-optimizado', buscarDebounced, estadoFiltro, entregaFiltro, soloPendientes, page, pageSize],
+        queryKey: ['ventas-optimizado', buscarDebounced, estadoFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, page, pageSize],
         queryFn: () => {
             const params = new URLSearchParams()
             params.append('page', String(page))
             params.append('page_size', String(pageSize))
             if (estadoFiltro) params.append('estado', estadoFiltro)
             if (entregaFiltro) params.append('estado_entrega', entregaFiltro)
+            if (vendedorFiltro) params.append('vendedor_id', vendedorFiltro)
+            if (canalFiltro) params.append('canal_venta_id', canalFiltro)
             if (buscarDebounced) params.append('search', buscarDebounced)
             if (soloPendientes) params.append('con_saldo', 'true')
             return api.get(`/ventas/listado-optimizado?${params}`).then(r => r.data)
@@ -812,6 +852,14 @@ export default function VentasPage() {
                     <option value="EN_LABORATORIO">EN LABORATORIO</option>
                     <option value="ENTREGADO">ENTREGADO</option>
                 </select>
+                <select className="form-select" style={{ width: 180 }} value={vendedorFiltro} onChange={e => setVendedorFiltro(e.target.value)}>
+                    <option value="">Todos los vendedores</option>
+                    {vendedoresFiltro.map(vendedor => <option key={vendedor.id} value={vendedor.id}>{vendedor.nombre}</option>)}
+                </select>
+                <select className="form-select" style={{ width: 180 }} value={canalFiltro} onChange={e => setCanalFiltro(e.target.value)}>
+                    <option value="">Todos los canales</option>
+                    {canalesFiltro.map(canal => <option key={canal.id} value={canal.id}>{canal.nombre}</option>)}
+                </select>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', cursor: 'pointer' }}>
                     <input type="checkbox" checked={soloPendientes} onChange={e => setSoloPendientes(e.target.checked)} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }} />
                     <span style={{ fontWeight: 500, color: 'var(--text)' }}>Solo con Saldo</span>
@@ -851,7 +899,7 @@ export default function VentasPage() {
                     <div className="empty-state"><Box size={40} /><p>No hay ventas listadas.</p></div>
                 ) : (
                     <div className="table-container" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
-                        <table style={{ minWidth: 1040, tableLayout: 'fixed' }}>
+                        <table style={{ minWidth: 1260, tableLayout: 'fixed' }}>
                             <thead>
                                 <tr>
                                     <th style={{ width: 42 }}>
@@ -864,7 +912,7 @@ export default function VentasPage() {
                                         />
                                     </th>
                                     <th>Cód.</th><th>Fecha</th><th>Cliente</th>
-                                    <th>Total</th><th>Saldo</th>
+                                    <th>Vendedor</th><th>Canal</th><th>Total</th><th>Saldo</th>
                                     <th>Finanzas</th><th>Lab.</th><th style={{ width: 180 }}>Acciones</th>
                                 </tr>
                             </thead>
@@ -883,6 +931,8 @@ export default function VentasPage() {
                                         <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{v.codigo}</td>
                                         <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>{fmtDate(v.fecha)}</td>
                                         <td style={{ fontWeight: 500 }}>{v.cliente_nombre || '—'}</td>
+                                        <td style={{ color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{v.vendedor_nombre || '—'}</td>
+                                        <td style={{ color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{v.canal_venta_nombre || 'Canal principal'}</td>
                                         <td style={{ fontWeight: 600 }}>Gs. {fmt(v.total)}</td>
                                         <td style={{ color: v.saldo > 0 ? 'var(--warning)' : 'var(--success)', fontWeight: v.saldo > 0 ? 700 : 400 }}>
                                             {v.saldo > 0 ? `Gs. ${fmt(v.saldo)}` : '✓'}

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { hasModuleAccess } from '../utils/roles'
+import { hasModuleAccess, normalizeRole } from '../utils/roles'
 import {
     LayoutDashboard,
     Package,
@@ -34,7 +34,15 @@ const navGroups = [
         tint: 'rgba(96, 165, 250, 0.08)',
         items: [
             { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-            { to: '/usuarios', icon: Shield, label: 'Usuarios' },
+            {
+                to: '/configuracion-general',
+                icon: Building2,
+                label: 'Configuracion General',
+                subItems: [
+                    { to: '/configuracion-general', label: 'Datos Generales' },
+                    { to: '/usuarios', label: 'Usuarios', icon: Shield },
+                ]
+            },
         ]
     },
     {
@@ -72,6 +80,8 @@ const navGroups = [
                 ]
             },
             { to: '/referidores', icon: UserRoundPlus, label: 'Referidores' },
+            { to: '/vendedores', icon: Users, label: 'Vendedores' },
+            { to: '/canales-venta', icon: FolderTree, label: 'Canales de venta' },
             { to: '/categorias', icon: FolderTree, label: 'Categorias' },
             { to: '/atributos', icon: Layers3, label: 'Atributos' },
             { to: '/marcas', icon: Tag, label: 'Marcas' },
@@ -140,7 +150,10 @@ export default function Sidebar({ collapsed = false, onToggle }) {
     const [openMenus, setOpenMenus] = useState(() => {
         const initialState = {}
         navGroups.forEach(g => g.items.forEach(item => {
-            if (item.subItems && location.pathname.startsWith(item.to)) {
+            if (
+                item.subItems
+                && item.subItems.some(sub => location.pathname === sub.to || location.pathname.startsWith(`${sub.to}/`))
+            ) {
                 initialState[item.to] = true
             }
         }))
@@ -168,6 +181,18 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                     if (item.to === '/usuarios') {
                         return hasModuleAccess(user, 'usuarios') ? item : null
                     }
+                    if (item.to === '/configuracion-general') {
+                        const subItems = (item.subItems || []).filter(sub => {
+                            if (sub.to === '/configuracion-general') {
+                                return normalizeRole(user?.rol) === 'ADMIN'
+                            }
+                            if (sub.to === '/usuarios') {
+                                return hasModuleAccess(user, 'usuarios')
+                            }
+                            return false
+                        })
+                        return subItems.length > 0 ? { ...item, subItems } : null
+                    }
                     if (item.to === '/presupuestos') {
                         return hasModuleAccess(user, 'presupuestos') ? item : null
                     }
@@ -192,7 +217,7 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                         })
                         return { ...item, subItems }
                     }
-                    if (['/referidores', '/categorias', '/atributos', '/marcas', '/productos', '/proveedores'].includes(item.to)) {
+                    if (['/referidores', '/vendedores', '/canales-venta', '/categorias', '/atributos', '/marcas', '/productos', '/proveedores'].includes(item.to)) {
                         return hasModuleAccess(user, 'catalogos') ? item : null
                     }
                     if (['/caja', '/gastos'].includes(item.to)) {
@@ -256,10 +281,15 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                         {!collapsed && <div className="sidebar-section-title">{group.title}</div>}
                         {group.items.map((item) => (
                             <div key={item.to}>
-                                {item.subItems ? (
+                                {item.subItems ? (() => {
+                                    const isParentActive = item.subItems.some(
+                                        sub => location.pathname === sub.to || location.pathname.startsWith(`${sub.to}/`)
+                                    )
+
+                                    return (
                                     <>
                                         <button
-                                            className={`sidebar-item ${location.pathname.startsWith(item.to) ? 'active' : ''}`}
+                                            className={`sidebar-item ${isParentActive ? 'active' : ''}`}
                                             onClick={(e) => toggleMenu(e, item.to)}
                                             style={{ width: '100%', display: 'flex', justifyContent: collapsed ? 'center' : 'space-between' }}
                                             title={collapsed ? item.label : undefined}
@@ -289,7 +319,8 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                                             </div>
                                         )}
                                     </>
-                                ) : (
+                                    )
+                                })() : (
                                     <NavLink
                                         to={item.to}
                                         end={item.to === '/'}

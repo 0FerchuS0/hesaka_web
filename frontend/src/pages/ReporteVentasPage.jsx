@@ -16,6 +16,8 @@ export default function ReporteVentasPage() {
     const [data, setData] = useState(null)
     const [error, setError] = useState('')
     const [clientes, setClientes] = useState([])
+    const [vendedores, setVendedores] = useState([])
+    const [canales, setCanales] = useState([])
     const [clientesLoading, setClientesLoading] = useState(false)
     const [clienteBusqueda, setClienteBusqueda] = useState('')
     const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
@@ -23,12 +25,16 @@ export default function ReporteVentasPage() {
         fechaDesde: formatYmd(primerDia),
         fechaHasta: formatYmd(hoy),
         clienteId: '',
+        vendedorId: '',
+        canalVentaId: '',
         estadoPago: '',
     })
     const [filtrosAplicados, setFiltrosAplicados] = useState({
         fechaDesde: formatYmd(primerDia),
         fechaHasta: formatYmd(hoy),
         clienteId: '',
+        vendedorId: '',
+        canalVentaId: '',
         estadoPago: '',
     })
 
@@ -51,6 +57,24 @@ export default function ReporteVentasPage() {
         }, 250)
         return () => clearTimeout(timer)
     }, [clienteBusqueda])
+
+    useEffect(() => {
+        const cargarCatalogos = async () => {
+            try {
+                const [respVendedores, respCanales] = await Promise.all([
+                    api.get('/vendedores/?solo_activos=true&limit=200'),
+                    api.get('/canales-venta/?solo_activos=true&limit=200'),
+                ])
+                setVendedores(respVendedores.data || [])
+                setCanales(respCanales.data || [])
+            } catch (err) {
+                console.error('Error cargando catalogos comerciales:', err)
+                setVendedores([])
+                setCanales([])
+            }
+        }
+        cargarCatalogos()
+    }, [])
 
     const cargarClientes = async buscar => {
         try {
@@ -75,6 +99,8 @@ export default function ReporteVentasPage() {
             if (filtrosActuales.fechaDesde) params.append('fecha_desde', filtrosActuales.fechaDesde)
             if (filtrosActuales.fechaHasta) params.append('fecha_hasta', filtrosActuales.fechaHasta)
             if (filtrosActuales.clienteId) params.append('cliente_id', filtrosActuales.clienteId)
+            if (filtrosActuales.vendedorId) params.append('vendedor_id', filtrosActuales.vendedorId)
+            if (filtrosActuales.canalVentaId) params.append('canal_venta_id', filtrosActuales.canalVentaId)
             if (filtrosActuales.estadoPago) params.append('estado_pago', filtrosActuales.estadoPago)
             const response = await api.get(`/reportes/ventas?${params.toString()}`)
             setData(response.data || null)
@@ -99,6 +125,8 @@ export default function ReporteVentasPage() {
             fechaDesde: formatYmd(primerDia),
             fechaHasta: formatYmd(hoy),
             clienteId: '',
+            vendedorId: '',
+            canalVentaId: '',
             estadoPago: '',
         }
         setFiltros(reset)
@@ -114,6 +142,8 @@ export default function ReporteVentasPage() {
             if (filtrosAplicados.fechaDesde) params.append('fecha_desde', filtrosAplicados.fechaDesde)
             if (filtrosAplicados.fechaHasta) params.append('fecha_hasta', filtrosAplicados.fechaHasta)
             if (filtrosAplicados.clienteId) params.append('cliente_id', filtrosAplicados.clienteId)
+            if (filtrosAplicados.vendedorId) params.append('vendedor_id', filtrosAplicados.vendedorId)
+            if (filtrosAplicados.canalVentaId) params.append('canal_venta_id', filtrosAplicados.canalVentaId)
             if (filtrosAplicados.estadoPago) params.append('estado_pago', filtrosAplicados.estadoPago)
             await exportReportBlob(
                 `/reportes/ventas/${tipo}?${params.toString()}`,
@@ -178,6 +208,20 @@ export default function ReporteVentasPage() {
                             <option value="EN MORA">En mora</option>
                         </select>
                     </div>
+                    <div className="form-group">
+                        <label>Vendedor</label>
+                        <select name="vendedorId" value={filtros.vendedorId} onChange={handleFilterChange} className="form-select">
+                            <option value="">Todos</option>
+                            {vendedores.map(vendedor => <option key={vendedor.id} value={vendedor.id}>{vendedor.nombre}</option>)}
+                        </select>
+                    </div>
+                    <div className="form-group">
+                        <label>Canal de venta</label>
+                        <select name="canalVentaId" value={filtros.canalVentaId} onChange={handleFilterChange} className="form-select">
+                            <option value="">Todos</option>
+                            {canales.map(canal => <option key={canal.id} value={canal.id}>{canal.nombre}</option>)}
+                        </select>
+                    </div>
                 </div>
 
                 <div className="filters-actions" style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
@@ -220,6 +264,79 @@ export default function ReporteVentasPage() {
                 </div>
             )}
 
+            {data && (
+                <div className="grid-2" style={{ marginBottom: 20 }}>
+                    <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                            <h3 style={{ fontSize: '1rem', margin: 0 }}>Resumen por vendedor</h3>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>{(data.por_vendedor || []).length} grupo(s)</span>
+                        </div>
+                        <div className="table-responsive" style={{ maxHeight: 280, overflow: 'auto' }}>
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Vendedor</th>
+                                        <th className="text-right">Ventas</th>
+                                        <th className="text-right">Cant.</th>
+                                        <th className="text-right">U. neta</th>
+                                        <th className="text-center">Margen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(data.por_vendedor || []).length === 0 ? (
+                                        <tr><td colSpan="5" className="text-center" style={{ padding: 24, color: 'var(--text-muted)' }}>Sin datos agrupados.</td></tr>
+                                    ) : (
+                                        (data.por_vendedor || []).map(item => (
+                                            <tr key={item.clave}>
+                                                <td>{item.etiqueta}</td>
+                                                <td className="text-right">{formatCurrency(item.total_ventas)}</td>
+                                                <td className="text-right">{item.cantidad_ventas}</td>
+                                                <td className="text-right" style={{ color: '#2ecc71', fontWeight: 700 }}>{formatCurrency(item.utilidad_neta)}</td>
+                                                <td className="text-center">{Number(item.margen_promedio ?? 0).toFixed(2)}%</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                            <h3 style={{ fontSize: '1rem', margin: 0 }}>Resumen por canal</h3>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>{(data.por_canal || []).length} grupo(s)</span>
+                        </div>
+                        <div className="table-responsive" style={{ maxHeight: 280, overflow: 'auto' }}>
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Canal</th>
+                                        <th className="text-right">Ventas</th>
+                                        <th className="text-right">Cant.</th>
+                                        <th className="text-right">U. neta</th>
+                                        <th className="text-center">Margen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(data.por_canal || []).length === 0 ? (
+                                        <tr><td colSpan="5" className="text-center" style={{ padding: 24, color: 'var(--text-muted)' }}>Sin datos agrupados.</td></tr>
+                                    ) : (
+                                        (data.por_canal || []).map(item => (
+                                            <tr key={item.clave}>
+                                                <td>{item.etiqueta}</td>
+                                                <td className="text-right">{formatCurrency(item.total_ventas)}</td>
+                                                <td className="text-right">{item.cantidad_ventas}</td>
+                                                <td className="text-right" style={{ color: '#2ecc71', fontWeight: 700 }}>{formatCurrency(item.utilidad_neta)}</td>
+                                                <td className="text-center">{Number(item.margen_promedio ?? 0).toFixed(2)}%</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="card">
                 <div className="table-responsive">
                     <table className="table">
@@ -228,6 +345,8 @@ export default function ReporteVentasPage() {
                                 <th>Fecha</th>
                                 <th>Nro. factura</th>
                                 <th>Cliente</th>
+                                <th>Vendedor</th>
+                                <th>Canal</th>
                                 <th className="text-right">Total venta</th>
                                 <th className="text-right">Costo</th>
                                 <th className="text-right">U. bruta</th>
@@ -238,18 +357,18 @@ export default function ReporteVentasPage() {
                         <tbody>
                             {loading ? (
                                 <tr>
-                                    <td colSpan="8" className="text-center" style={{ padding: 40 }}>
+                                    <td colSpan="10" className="text-center" style={{ padding: 40 }}>
                                         <div className="spinner" style={{ margin: '0 auto' }} />
                                         <div style={{ marginTop: 10, color: 'var(--text-muted)' }}>Cargando analiticas...</div>
                                     </td>
                                 </tr>
                             ) : error ? (
                                 <tr>
-                                    <td colSpan="8" className="text-center text-danger" style={{ padding: 20 }}>{error}</td>
+                                    <td colSpan="10" className="text-center text-danger" style={{ padding: 20 }}>{error}</td>
                                 </tr>
                             ) : ventas.length === 0 ? (
                                 <tr>
-                                    <td colSpan="8" className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>
+                                    <td colSpan="10" className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>
                                         No se encontraron ventas para este periodo.
                                     </td>
                                 </tr>
@@ -259,6 +378,8 @@ export default function ReporteVentasPage() {
                                         <td>{formatDate(venta.fecha)}</td>
                                         <td><strong>{venta.codigo}</strong></td>
                                         <td>{venta.cliente_nombre}</td>
+                                        <td>{venta.vendedor_nombre || 'Sin vendedor'}</td>
+                                        <td>{venta.canal_venta_nombre || 'Canal principal'}</td>
                                         <td className="text-right fw-bold text-success">{formatCurrency(Number(venta.total_venta ?? 0))}</td>
                                         <td className="text-right text-danger">{formatCurrency(Number(venta.costo_total ?? 0))}</td>
                                         <td className="text-right fw-bold" style={{ color: '#f39c12' }}>{formatCurrency(Number(venta.utilidad_bruta ?? 0))}</td>

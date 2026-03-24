@@ -57,6 +57,59 @@ class UsuarioPermisosUpdate(BaseModel):
 
 
 # ──────────────────────────────────────────────
+# CONFIGURACION GENERAL
+# ──────────────────────────────────────────────
+
+class ConfiguracionGeneralUpdate(BaseModel):
+    nombre: str
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[EmailStr] = None
+    logo_path: Optional[str] = None
+
+    @field_validator("nombre")
+    @classmethod
+    def validar_nombre_configuracion(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            raise ValueError("El nombre de la optica es obligatorio")
+        return value
+
+    @field_validator("ruc", "direccion", "telefono", "logo_path")
+    @classmethod
+    def limpiar_texto_configuracion(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() if value else None
+
+
+class ConfiguracionGeneralOut(BaseModel):
+    id: int
+    nombre: str
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[EmailStr] = None
+    logo_path: Optional[str] = None
+    canal_principal_nombre: Optional[str] = None
+    configuracion_completa: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class ConfiguracionGeneralEstadoOut(BaseModel):
+    configuracion_completa: bool
+    nombre_negocio: Optional[str] = None
+    canal_principal_nombre: Optional[str] = None
+
+
+class ConfiguracionGeneralPublicaOut(BaseModel):
+    nombre: str
+    logo_path: Optional[str] = None
+    canal_principal_nombre: Optional[str] = None
+
+
+# ──────────────────────────────────────────────
 # CATEGORÍAS & ATRIBUTOS
 # ──────────────────────────────────────────────
 
@@ -381,6 +434,89 @@ class ReferidorCreate(BaseModel):
         return value
 
 
+class VendedorOut(BaseModel):
+    id: int
+    nombre: str
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = None
+    activo: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class VendedorListItemOut(BaseModel):
+    id: int
+    nombre: str
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    activo: bool = True
+
+
+class VendedorListResponseOut(BaseModel):
+    items: List[VendedorListItemOut]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class VendedorCreate(BaseModel):
+    nombre: str
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = None
+    activo: bool = True
+
+    @field_validator("nombre")
+    @classmethod
+    def normalizar_nombre_vendedor(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not value:
+            raise ValueError("nombre es obligatorio")
+        return value
+
+
+class CanalVentaOut(BaseModel):
+    id: int
+    nombre: str
+    descripcion: Optional[str] = None
+    activo: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class CanalVentaListItemOut(BaseModel):
+    id: int
+    nombre: str
+    descripcion: Optional[str] = None
+    activo: bool = True
+
+
+class CanalVentaListResponseOut(BaseModel):
+    items: List[CanalVentaListItemOut]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class CanalVentaCreate(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+    activo: bool = True
+
+    @field_validator("nombre")
+    @classmethod
+    def normalizar_nombre_canal(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not value:
+            raise ValueError("nombre es obligatorio")
+        return value
+
+
 # ──────────────────────────────────────────────
 # PRESUPUESTOS
 # ──────────────────────────────────────────────
@@ -427,6 +563,8 @@ class PresupuestoCreate(BaseModel):
     doctor_receta: Optional[str] = None
     observaciones: Optional[str] = None
     fecha_receta: Optional[datetime] = None
+    vendedor_id: Optional[int] = None
+    canal_venta_id: Optional[int] = None
     referidor_id: Optional[int] = None
     comision_monto: float = 0.0
     items: List[PresupuestoItemCreate]
@@ -449,6 +587,10 @@ class PresupuestoOut(BaseModel):
     graduacion_oi_adicion: Optional[str]
     doctor_receta: Optional[str]
     observaciones: Optional[str]
+    vendedor_id: Optional[int]
+    vendedor_nombre: Optional[str] = None
+    canal_venta_id: Optional[int]
+    canal_venta_nombre: Optional[str] = None
     referidor_id: Optional[int]
     referidor_nombre: Optional[str] = None
     comision_monto: float
@@ -505,6 +647,8 @@ class VentaCreate(BaseModel):
     cliente_id: int
     presupuesto_id: Optional[int] = None
     total: float
+    vendedor_id: Optional[int] = None
+    canal_venta_id: Optional[int] = None
     referidor_id: Optional[int] = None
     comision_monto: float = 0.0
     requiere_compra: bool = True
@@ -523,6 +667,10 @@ class VentaOut(BaseModel):
     estado: str = "PENDIENTE"
     estado_entrega: Optional[str] = None
     es_credito: bool = False
+    vendedor_id: Optional[int] = None
+    vendedor_nombre: Optional[str] = None
+    canal_venta_id: Optional[int] = None
+    canal_venta_nombre: Optional[str] = None
     referidor_id: Optional[int] = None
     comision_monto: float = 0.0
     pagos: List[PagoOut] = []
@@ -558,12 +706,19 @@ class CompraDetalleOut(BaseModel):
         from_attributes = True
 
 
+class PresupuestoAsignacionComercialIn(BaseModel):
+    vendedor_id: Optional[int] = None
+    canal_venta_id: Optional[int] = None
+
+
 class VentaListItemOut(BaseModel):
     id: int
     codigo: Optional[str] = "N/A"
     fecha: Optional[datetime] = None
     cliente_id: Optional[int] = None
     cliente_nombre: Optional[str] = None
+    vendedor_nombre: Optional[str] = None
+    canal_venta_nombre: Optional[str] = None
     total: float = 0.0
     saldo: float = 0.0
     estado: str = "PENDIENTE"

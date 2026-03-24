@@ -7,6 +7,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+from app.utils.media_storage import resolve_logo_disk_path
 
 def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hasta=None, 
                         total_comisiones_referidores=0.0, total_comisiones_bancarias=0.0) -> io.BytesIO:
@@ -63,10 +64,11 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
     
     # --- Header Table (Logo + Info) ---
     logo_img = []
-    if config and config.logo_path and os.path.exists(config.logo_path):
+    logo_disk_path = resolve_logo_disk_path(config.logo_path if config else None)
+    if logo_disk_path and os.path.exists(logo_disk_path):
         try:
             from reportlab.platypus import Image
-            img = Image(config.logo_path, width=1.5*cm, height=1.5*cm)
+            img = Image(logo_disk_path, width=1.5*cm, height=1.5*cm)
             img.hAlign = 'LEFT'
             logo_img.append(img)
         except:

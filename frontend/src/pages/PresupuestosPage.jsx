@@ -7,6 +7,7 @@ import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList } fr
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
+const abrirPresupuestoPdf = presupuestoId => window.open(`${api.defaults.baseURL}/presupuestos/${presupuestoId}/pdf`, '_blank', 'noopener,noreferrer')
 const estadoBadge = e => {
     const m = { PENDIENTE: 'badge-yellow', VENDIDO: 'badge-green', VENCIDO: 'badge-red', CANCELADO: 'badge-gray' }
     return <span className={`badge ${m[e] || 'badge-gray'}`}>{e}</span>
@@ -188,13 +189,100 @@ function ConvertirVentaModal({ presupuesto, onClose }) {
     )
 }
 
+function AsignacionComercialModal({ presupuesto, onClose }) {
+    const qc = useQueryClient()
+    const [vendedor, setVendedor] = useState(presupuesto?.vendedor_id ? String(presupuesto.vendedor_id) : '')
+    const [canalVenta, setCanalVenta] = useState(presupuesto?.canal_venta_id ? String(presupuesto.canal_venta_id) : '')
+    const [error, setError] = useState('')
+
+    const { data: vendedores = [] } = useQuery({ queryKey: ['presupuesto-asignacion-vendedores'], queryFn: () => api.get('/vendedores/?solo_activos=true&limit=100').then(r => r.data), retry: false })
+    const { data: canalesVenta = [] } = useQuery({ queryKey: ['presupuesto-asignacion-canales'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=100').then(r => r.data), retry: false })
+
+    const guardar = useMutation({
+        mutationFn: payload => api.patch(`/presupuestos/${presupuesto.id}/asignacion-comercial`, payload),
+        onSuccess: () => {
+            qc.invalidateQueries(['presupuestos'])
+            qc.invalidateQueries(['ventas'])
+            onClose()
+        },
+        onError: err => {
+            setError(err?.response?.data?.detail || 'No se pudo actualizar la asignacion comercial.')
+        }
+    })
+
+    const submit = event => {
+        event.preventDefault()
+        setError('')
+        guardar.mutate({
+            vendedor_id: vendedor ? parseInt(vendedor, 10) : null,
+            canal_venta_id: canalVenta ? parseInt(canalVenta, 10) : null,
+        })
+    }
+
+    return (
+        <form onSubmit={submit}>
+            <div style={{ background: 'rgba(26,86,219,0.06)', border: '1px solid rgba(26,86,219,0.15)', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>Presupuesto:</span>
+                    <span style={{ fontWeight: 700 }}>{presupuesto.codigo}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>Cliente:</span>
+                    <span style={{ fontWeight: 600 }}>{presupuesto.cliente_nombre || '—'}</span>
+                </div>
+            </div>
+
+            <div className="grid-2 mb-16">
+                <div className="form-group">
+                    <label className="form-label">Vendedor</label>
+                    <select className="form-select" value={vendedor} onChange={e => setVendedor(e.target.value)}>
+                        <option value="">Sin vendedor asignado</option>
+                        {vendedores.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Canal de venta</label>
+                    <select className="form-select" value={canalVenta} onChange={e => setCanalVenta(e.target.value)}>
+                        <option value="">Canal principal</option>
+                        {canalesVenta.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
+                    </select>
+                </div>
+            </div>
+
+            {error && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#f87171' }}>
+                    {error}
+                </div>
+            )}
+
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={guardar.isPending}>
+                    {guardar.isPending ? 'Guardando...' : 'Guardar asignacion'}
+                </button>
+            </div>
+        </form>
+    )
+}
+
+const presupuestoCoincideConFiltro = (presupuesto, estadoFiltro, vendedorFiltro, canalFiltro) => {
+    if (estadoFiltro && presupuesto.estado !== estadoFiltro) return false
+    if (vendedorFiltro && String(presupuesto.vendedor_id || '') !== String(vendedorFiltro)) return false
+    if (canalFiltro && String(presupuesto.canal_venta_id || '') !== String(canalFiltro)) return false
+    return true
+}
+
 function NuevoPresupuestoModal({ onClose, presupuesto }) {
     const qc = useQueryClient()
     const esEdicion = !!presupuesto
     const [cliente, setCliente] = useState(presupuesto ? String(presupuesto.cliente_id) : '')
     const [buscarCli, setBuscarCli] = useState(presupuesto ? (presupuesto.cliente_nombre || '') : '')
     const [showCliList, setShowCliList] = useState(false)
-    const [clienteObj, setClienteObj] = useState(presupuesto ? { nombre: presupuesto.cliente_nombre, referidor_nombre: presupuesto.referidor_nombre || null } : null)
+    const [clienteObj, setClienteObj] = useState(presupuesto ? {
+        nombre: presupuesto.cliente_nombre,
+        referidor_id: presupuesto.referidor_id || null,
+        referidor_nombre: presupuesto.referidor_nombre || null,
+    } : null)
     const blankItem = () => ({ producto_id: '', busq: '', cantidad: 1, precio_unitario: 0, costo_unitario: 0, descuento: 0, subtotal: 0 })
     const preItems = presupuesto?.items?.map(i => ({ ...i, busq: i.producto_nombre || '' })) || []
     const [items, setItems] = useState(esEdicion ? (preItems.length ? preItems : [blankItem()]) : [blankItem(), blankItem(), blankItem()])
@@ -209,6 +297,8 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
     const [doctor, setDoctor] = useState(presupuesto?.doctor_receta || '')
     const [obs, setObs] = useState(presupuesto?.observaciones || '')
     const [referidor, setReferidor] = useState(presupuesto?.referidor_id ? String(presupuesto.referidor_id) : '')
+    const [vendedor, setVendedor] = useState(presupuesto?.vendedor_id ? String(presupuesto.vendedor_id) : '')
+    const [canalVenta, setCanalVenta] = useState(presupuesto?.canal_venta_id ? String(presupuesto.canal_venta_id) : '')
     const [comision, setComision] = useState(presupuesto?.comision_monto || 0)
     const [comisionAlerta, setComisionAlerta] = useState(false)
     const [fecha, setFecha] = useState(
@@ -217,6 +307,9 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
 
     const { data: clientes = [] } = useQuery({ queryKey: ['clientes', buscarCli], queryFn: () => api.get(`/clientes/?buscar=${buscarCli}&limit=20`).then(r => r.data), retry: false, enabled: buscarCli.length >= 1 })
     const { data: referidores = [] } = useQuery({ queryKey: ['referidores'], queryFn: () => api.get('/referidores/').then(r => r.data), retry: false })
+    const { data: vendedores = [] } = useQuery({ queryKey: ['vendedores-select'], queryFn: () => api.get('/vendedores/?solo_activos=true&limit=100').then(r => r.data), retry: false })
+    const { data: canalesVenta = [] } = useQuery({ queryKey: ['canales-venta-select'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=100').then(r => r.data), retry: false })
+    const { data: estadoConfig } = useQuery({ queryKey: ['configuracion-general-estado'], queryFn: () => api.get('/configuracion-general/estado').then(r => r.data), retry: false })
     // Cargar último presupuesto del cliente para sugerir graduación
     const { data: ultimosPresupuestos = [] } = useQuery({
         queryKey: ['presupuestos-cliente', cliente],
@@ -234,6 +327,13 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
             setComision(0)
         }
     }, [clienteObj])
+
+    useEffect(() => {
+        if (canalVenta || presupuesto) return
+        const nombreCanalPrincipal = estadoConfig?.canal_principal_nombre
+        const canalDefault = canalesVenta.find(item => item.nombre === nombreCanalPrincipal) || canalesVenta[0]
+        if (canalDefault) setCanalVenta(String(canalDefault.id))
+    }, [canalesVenta, canalVenta, presupuesto, estadoConfig])
 
     const seleccionarCliente = (c) => {
         setClienteObj(c)
@@ -261,11 +361,44 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
         setShowGrad(true)
     }
 
+    const actualizarCachePresupuestos = (presupuestoActualizado) => {
+        const queries = qc.getQueriesData({ queryKey: ['presupuestos'] })
+        for (const [queryKey, current] of queries) {
+            if (!Array.isArray(current)) continue
+            const [, estadoActual = '', vendedorActual = '', canalActual = ''] = Array.isArray(queryKey) ? queryKey : []
+            const coincide = presupuestoCoincideConFiltro(presupuestoActualizado, estadoActual, vendedorActual, canalActual)
+            const existente = current.some(item => item.id === presupuestoActualizado.id)
+
+            if (esEdicion) {
+                if (existente && !coincide) {
+                    qc.setQueryData(queryKey, current.filter(item => item.id !== presupuestoActualizado.id))
+                    continue
+                }
+                if (coincide) {
+                    const actualizado = existente
+                        ? current.map(item => item.id === presupuestoActualizado.id ? presupuestoActualizado : item)
+                        : [presupuestoActualizado, ...current]
+                    qc.setQueryData(queryKey, actualizado.slice(0, 100))
+                }
+                continue
+            }
+
+            if (coincide && !existente) {
+                qc.setQueryData(queryKey, [presupuestoActualizado, ...current].slice(0, 100))
+            }
+        }
+    }
+
     const crear = useMutation({
         mutationFn: d => esEdicion
             ? api.put(`/presupuestos/${presupuesto.id}`, d)
             : api.post('/presupuestos/', d),
-        onSuccess: () => { qc.invalidateQueries(['presupuestos']); onClose() }
+        onSuccess: (response) => {
+            const presupuestoActualizado = response?.data
+            if (presupuestoActualizado) actualizarCachePresupuestos(presupuestoActualizado)
+            qc.invalidateQueries({ queryKey: ['presupuestos'] })
+            onClose()
+        }
     })
 
     const total = items.reduce((s, i) => s + (i.subtotal || 0), 0)
@@ -289,6 +422,8 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
             graduacion_oi_eje: grad.oi_eje || null, graduacion_oi_adicion: grad.oi_adicion || null,
             doctor_receta: doctor || null, observaciones: obs || null,
             referidor_id: referidor ? parseInt(referidor) : null,
+            vendedor_id: vendedor ? parseInt(vendedor) : null,
+            canal_venta_id: canalVenta ? parseInt(canalVenta) : null,
             comision_monto: parseFloat(comision) || 0,
             items: items.filter(i => i.producto_id).map(i => ({
                 id: i.id || null,
@@ -439,6 +574,33 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
                 </div>
             </div>
 
+            <div className="grid-2 mb-16">
+                <div className="form-group">
+                    <label className="form-label">Vendedor</label>
+                    <select
+                        className="form-select"
+                        value={vendedor}
+                        onChange={e => setVendedor(e.target.value)}
+                        style={{ background: '#1a1d27', color: 'var(--text-primary)' }}
+                    >
+                        <option value="" style={{ background: '#1a1d27' }}>Sin vendedor asignado</option>
+                        {vendedores.map(v => <option key={v.id} value={v.id} style={{ background: '#1a1d27' }}>{v.nombre}</option>)}
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Canal de venta</label>
+                    <select
+                        className="form-select"
+                        value={canalVenta}
+                        onChange={e => setCanalVenta(e.target.value)}
+                        style={{ background: '#1a1d27', color: 'var(--text-primary)' }}
+                    >
+                        <option value="" style={{ background: '#1a1d27' }}>{estadoConfig?.canal_principal_nombre || 'Canal principal'}</option>
+                        {canalesVenta.map(c => <option key={c.id} value={c.id} style={{ background: '#1a1d27' }}>{c.nombre}</option>)}
+                    </select>
+                </div>
+            </div>
+
             {/* Items */}
             <div style={{ marginBottom: 16 }}>
                 <div className="flex-between mb-16">
@@ -503,14 +665,22 @@ export default function PresupuestosPage() {
     const [buscar, setBuscar] = useState('')
     const [modal, setModal] = useState(false)
     const [editarPre, setEditarPre] = useState(null)     // presupuesto a editar
+    const [asignacionPre, setAsignacionPre] = useState(null)
     const [estadoFiltro, setEstadoFiltro] = useState('')
+    const [vendedorFiltro, setVendedorFiltro] = useState('')
+    const [canalFiltro, setCanalFiltro] = useState('')
     const [convertirPre, setConvertirPre] = useState(null)
 
+    const { data: vendedoresFiltro = [] } = useQuery({ queryKey: ['presupuestos-vendedores-filtro'], queryFn: () => api.get('/vendedores/?solo_activos=true&limit=200').then(r => r.data), retry: false })
+    const { data: canalesFiltro = [] } = useQuery({ queryKey: ['presupuestos-canales-filtro'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data), retry: false })
+
     const { data: presupuestos = [], isLoading } = useQuery({
-        queryKey: ['presupuestos', estadoFiltro],
+        queryKey: ['presupuestos', estadoFiltro, vendedorFiltro, canalFiltro],
         queryFn: () => {
             const params = new URLSearchParams({ limit: '100' })
             if (estadoFiltro) params.append('estado', estadoFiltro)
+            if (vendedorFiltro) params.append('vendedor_id', vendedorFiltro)
+            if (canalFiltro) params.append('canal_venta_id', canalFiltro)
             return api.get(`/presupuestos/?${params.toString()}`).then(r => r.data)
         },
         retry: false,
@@ -562,6 +732,14 @@ export default function PresupuestosPage() {
                         <option value="">Todos los estados</option>
                         {['PENDIENTE', 'VENDIDO', 'VENCIDO', 'CANCELADO'].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
+                    <select className="form-select" style={{ width: 180 }} value={vendedorFiltro} onChange={e => setVendedorFiltro(e.target.value)}>
+                        <option value="">Todos los vendedores</option>
+                        {vendedoresFiltro.map(vendedor => <option key={vendedor.id} value={vendedor.id}>{vendedor.nombre}</option>)}
+                    </select>
+                    <select className="form-select" style={{ width: 180 }} value={canalFiltro} onChange={e => setCanalFiltro(e.target.value)}>
+                        <option value="">Todos los canales</option>
+                        {canalesFiltro.map(canal => <option key={canal.id} value={canal.id}>{canal.nombre}</option>)}
+                    </select>
                 </div>
             </div>
 
@@ -574,7 +752,7 @@ export default function PresupuestosPage() {
                     <div className="table-container">
                         <table>
                             <thead>
-                                <tr><th>Código</th><th>Fecha</th><th>Cliente</th><th>OD</th><th>OI</th><th>Total</th><th>Estado</th><th>Acciones</th></tr>
+                                <tr><th>Código</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Canal</th><th>OD</th><th>OI</th><th>Total</th><th>Estado</th><th>Acciones</th></tr>
                             </thead>
                             <tbody>
                                 {filtrados.map(p => (
@@ -582,6 +760,8 @@ export default function PresupuestosPage() {
                                         <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{p.codigo}</td>
                                         <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{fmtDate(p.fecha)}</td>
                                         <td style={{ fontWeight: 500 }}>{p.cliente_nombre || '—'}</td>
+                                        <td style={{ color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{p.vendedor_nombre || '—'}</td>
+                                        <td style={{ color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{p.canal_venta_nombre || 'Canal principal'}</td>
                                         <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                                             {[p.graduacion_od_esfera, p.graduacion_od_cilindro, p.graduacion_od_eje].filter(Boolean).join(' / ') || '—'}
                                         </td>
@@ -593,6 +773,9 @@ export default function PresupuestosPage() {
                                         <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                             {['PENDIENTE', 'BORRADOR'].includes(p.estado) && (
                                                 <>
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => abrirPresupuestoPdf(p.id)}>
+                                                        <FileText size={12} /> PDF
+                                                    </button>
                                                     <button className="btn btn-primary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setConvertirPre(p)}>
                                                         <ShoppingBag size={12} /> Vender
                                                     </button>
@@ -607,6 +790,11 @@ export default function PresupuestosPage() {
                                             {p.estado !== 'VENDIDO' && (
                                                 <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleEliminar(p)} title="Eliminar">
                                                     <X size={12} />
+                                                </button>
+                                            )}
+                                            {p.estado === 'VENDIDO' && (
+                                                <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => abrirPresupuestoPdf(p.id)}>
+                                                    <FileText size={12} /> PDF
                                                 </button>
                                             )}
                                         </td>
@@ -634,6 +822,11 @@ export default function PresupuestosPage() {
             {convertirPre && (
                 <Modal title={`Convertir ${convertirPre.codigo} en Venta`} onClose={() => setConvertirPre(null)} maxWidth="500px">
                     <ConvertirVentaModal presupuesto={convertirPre} onClose={() => setConvertirPre(null)} />
+                </Modal>
+            )}
+            {asignacionPre && (
+                <Modal title={`Asignacion comercial ${asignacionPre.codigo}`} onClose={() => setAsignacionPre(null)} maxWidth="560px">
+                    <AsignacionComercialModal presupuesto={asignacionPre} onClose={() => setAsignacionPre(null)} />
                 </Modal>
             )}
         </div>

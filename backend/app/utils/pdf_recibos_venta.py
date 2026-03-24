@@ -8,6 +8,7 @@ from reportlab.lib import colors
 from reportlab.platypus import Paragraph
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+from app.utils.media_storage import resolve_logo_disk_path
 
 def fmt_gs(monto):
     try:
@@ -23,9 +24,10 @@ def _draw_letterhead(c, config, width, height):
     text_x = 2 * cm
     
     # Draw Logo if exists
-    if config and config.logo_path and os.path.exists(config.logo_path):
+    logo_disk_path = resolve_logo_disk_path(config.logo_path if config else None)
+    if logo_disk_path and os.path.exists(logo_disk_path):
         try:
-            c.drawImage(config.logo_path, 2 * cm, letterhead_y - logo_height, 
+            c.drawImage(logo_disk_path, 2 * cm, letterhead_y - logo_height, 
                        width=logo_width, height=logo_height, 
                        preserveAspectRatio=True, mask='auto')
             text_x = 2 * cm + logo_width + 0.4*cm
@@ -35,7 +37,7 @@ def _draw_letterhead(c, config, width, height):
     # Company Details
     c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(text_x, letterhead_y - 0.4*cm, config.nombre if config and config.nombre else "CENTRO OPTICO SANTA FE")
+    c.drawString(text_x, letterhead_y - 0.4*cm, config.nombre if config and config.nombre else "Mi Empresa")
     
     c.setFont("Helvetica", 8)
     c.setFillColorRGB(0.3, 0.3, 0.3)
@@ -43,17 +45,21 @@ def _draw_letterhead(c, config, width, height):
     current_y = letterhead_y - 0.7*cm
     line_height = 0.3*cm
     
-    ruc = config.ruc if config and config.ruc else "3431302-8"
-    c.drawString(text_x, current_y, f"RUC: {ruc}")
-    current_y -= line_height
-        
-    direccion = config.direccion if config and config.direccion else "AVDA BLAS GARAY 1149 C/ AVDA SAN JOSE"
-    c.drawString(text_x, current_y, f"{direccion}")
-    current_y -= line_height
-        
-    telefono = config.telefono if config and config.telefono else "0973851449"
-    c.drawString(text_x, current_y, f"Tel: {telefono}")
-    current_y -= line_height
+    if config and config.ruc:
+        c.drawString(text_x, current_y, f"RUC: {config.ruc}")
+        current_y -= line_height
+
+    if config and config.direccion:
+        c.drawString(text_x, current_y, f"{config.direccion}")
+        current_y -= line_height
+
+    if config and config.telefono:
+        c.drawString(text_x, current_y, f"Tel: {config.telefono}")
+        current_y -= line_height
+
+    if config and config.email:
+        c.drawString(text_x, current_y, f"Email: {config.email}")
+        current_y -= line_height
     
     c.setFillColorRGB(0, 0, 0)
     return current_y

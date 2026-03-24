@@ -1,9 +1,9 @@
-"""HESAKA Web - Router: Clientes, Proveedores, Referidores"""
+"""HESAKA Web - Router: Clientes, Proveedores, Referidores, Vendedores y Canales"""
 from datetime import datetime
 from math import ceil
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -23,9 +23,19 @@ from app.models.models import (
     Producto,
     Proveedor,
     Referidor,
+    Vendedor,
+    CanalVenta,
     Venta,
 )
 from app.schemas.schemas import (
+    ConfiguracionGeneralEstadoOut,
+    ConfiguracionGeneralOut,
+    ConfiguracionGeneralPublicaOut,
+    ConfiguracionGeneralUpdate,
+    CanalVentaCreate,
+    CanalVentaListItemOut,
+    CanalVentaListResponseOut,
+    CanalVentaOut,
     ClienteCreate,
     ClienteListItemOut,
     ClienteListResponseOut,
@@ -38,8 +48,19 @@ from app.schemas.schemas import (
     ReferidorListItemOut,
     ReferidorListResponseOut,
     ReferidorOut,
+    VendedorCreate,
+    VendedorListItemOut,
+    VendedorListResponseOut,
+    VendedorOut,
 )
-from app.utils.auth import get_current_user
+from app.utils.auth import get_current_user, require_admin
+from app.utils.configuracion_general import (
+    configuracion_general_completa,
+    obtener_canal_principal,
+    obtener_o_crear_configuracion_empresa,
+    sincronizar_canal_principal,
+)
+from app.utils.media_storage import save_logo_for_tenant
 from app.utils.excel_reporte_clientes import generar_excel_reporte_clientes
 from app.utils.pdf_fichas import generar_pdf_ficha_cliente, generar_pdf_ficha_proveedor
 from app.utils.pdf_reporte_clientes import generar_pdf_reporte_clientes
@@ -47,6 +68,9 @@ from app.utils.pdf_reporte_clientes import generar_pdf_reporte_clientes
 router = APIRouter(prefix="/api/clientes", tags=["Clientes"])
 prov_router = APIRouter(prefix="/api/proveedores", tags=["Proveedores"])
 ref_router = APIRouter(prefix="/api/referidores", tags=["Referidores"])
+vend_router = APIRouter(prefix="/api/vendedores", tags=["Vendedores"])
+canal_router = APIRouter(prefix="/api/canales-venta", tags=["Canales Venta"])
+config_router = APIRouter(prefix="/api/configuracion-general", tags=["Configuracion General"])
 
 
 class MovimientoFichaOut(BaseModel):
@@ -164,6 +188,115 @@ def _construir_query_referidores(session, buscar: Optional[str]):
             | Referidor.tipo_comision.ilike(term)
         )
     return query
+
+
+def _serializar_configuracion_general(session, config: ConfiguracionEmpresa) -> ConfiguracionGeneralOut:
+    canal_principal = obtener_canal_principal(session)
+    return ConfiguracionGeneralOut(
+        id=config.id,
+        nombre=config.nombre or "",
+        ruc=config.ruc,
+        direccion=config.direccion,
+        telefono=config.telefono,
+        email=config.email,
+        logo_path=config.logo_path,
+        canal_principal_nombre=canal_principal.nombre if canal_principal else None,
+        configuracion_completa=configuracion_general_completa(config),
+    )
+
+
+@config_router.get("/", response_model=ConfiguracionGeneralOut)
+def obtener_configuracion_general(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        config = obtener_o_crear_configuracion_empresa(session)
+        session.commit()
+        session.refresh(config)
+        return _serializar_configuracion_general(session, config)
+    finally:
+        session.close()
+
+
+@config_router.get("/publica", response_model=ConfiguracionGeneralPublicaOut)
+def obtener_configuracion_general_publica(
+    tenant_slug: str = Depends(get_tenant_slug),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        config = obtener_o_crear_configuracion_empresa(session)
+        session.commit()
+        canal_principal = obtener_canal_principal(session)
+        return ConfiguracionGeneralPublicaOut(
+            nombre=(config.nombre or "").strip() or "HESAKA Web",
+            logo_path=config.logo_path,
+            canal_principal_nombre=canal_principal.nombre if canal_principal else None,
+        )
+    finally:
+        session.close()
+
+
+@config_router.get("/estado", response_model=ConfiguracionGeneralEstadoOut)
+def obtener_estado_configuracion_general(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        config = session.query(ConfiguracionEmpresa).first()
+        canal_principal = obtener_canal_principal(session)
+        return ConfiguracionGeneralEstadoOut(
+            configuracion_completa=configuracion_general_completa(config),
+            nombre_negocio=(config.nombre or "").strip() or None if config else None,
+            canal_principal_nombre=canal_principal.nombre if canal_principal else None,
+        )
+    finally:
+        session.close()
+
+
+@config_router.put("/", response_model=ConfiguracionGeneralOut)
+def actualizar_configuracion_general(
+    data: ConfiguracionGeneralUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        config = obtener_o_crear_configuracion_empresa(session)
+        nombre_anterior = config.nombre
+
+        config.nombre = data.nombre
+        config.ruc = data.ruc
+        config.direccion = data.direccion
+        config.telefono = data.telefono
+        config.email = data.email
+        config.logo_path = data.logo_path
+
+        sincronizar_canal_principal(session, config, nombre_anterior)
+        session.commit()
+        session.refresh(config)
+        return _serializar_configuracion_general(session, config)
+    finally:
+        session.close()
+
+
+@config_router.post("/logo", response_model=ConfiguracionGeneralOut)
+def subir_logo_configuracion_general(
+    logo: UploadFile = File(...),
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        config = obtener_o_crear_configuracion_empresa(session)
+        config.logo_path = save_logo_for_tenant(tenant_slug, logo)
+        session.commit()
+        session.refresh(config)
+        return _serializar_configuracion_general(session, config)
+    finally:
+        session.close()
 
 
 def _build_cliente_ficha(session, cliente: Cliente):
@@ -911,5 +1044,247 @@ def eliminar_referidor(
     except IntegrityError:
         session.rollback()
         raise HTTPException(status_code=409, detail="No se puede eliminar el referidor porque tiene clientes asociados.")
+    finally:
+        session.close()
+
+
+def _construir_query_vendedores(session, buscar: Optional[str]):
+    query = session.query(Vendedor)
+    if buscar and buscar.strip():
+        term = f"%{buscar.strip()}%"
+        query = query.filter(
+            or_(
+                Vendedor.nombre.ilike(term),
+                Vendedor.telefono.ilike(term),
+                Vendedor.email.ilike(term),
+            )
+        )
+    return query
+
+
+def _construir_query_canales(session, buscar: Optional[str]):
+    query = session.query(CanalVenta)
+    if buscar and buscar.strip():
+        term = f"%{buscar.strip()}%"
+        query = query.filter(
+            or_(
+                CanalVenta.nombre.ilike(term),
+                CanalVenta.descripcion.ilike(term),
+            )
+        )
+    return query
+
+
+@vend_router.get("/", response_model=List[VendedorOut])
+def listar_vendedores(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    solo_activos: bool = Query(False),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = session.query(Vendedor)
+        if solo_activos:
+            query = query.filter(Vendedor.activo == True)
+        return query.order_by(Vendedor.nombre.asc()).all()
+    finally:
+        session.close()
+
+
+@vend_router.get("/listado-optimizado", response_model=VendedorListResponseOut)
+def listar_vendedores_optimizado(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    buscar: Optional[str] = Query(None),
+    solo_activos: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = _construir_query_vendedores(session, buscar)
+        if solo_activos:
+            query = query.filter(Vendedor.activo == True)
+        total = query.count()
+        total_pages = ceil(total / page_size) if total else 1
+        offset = (page - 1) * page_size
+        vendedores = query.order_by(Vendedor.nombre.asc()).offset(offset).limit(page_size).all()
+        items = [
+            VendedorListItemOut(
+                id=vendedor.id,
+                nombre=vendedor.nombre,
+                telefono=vendedor.telefono,
+                email=vendedor.email,
+                activo=bool(vendedor.activo),
+            )
+            for vendedor in vendedores
+        ]
+        return VendedorListResponseOut(items=items, page=page, page_size=page_size, total=total, total_pages=total_pages)
+    finally:
+        session.close()
+
+
+@vend_router.post("/", response_model=VendedorOut)
+def crear_vendedor(
+    data: VendedorCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        vendedor = Vendedor(**data.model_dump())
+        session.add(vendedor)
+        session.commit()
+        session.refresh(vendedor)
+        return vendedor
+    finally:
+        session.close()
+
+
+@vend_router.put("/{vendedor_id}", response_model=VendedorOut)
+def editar_vendedor(
+    vendedor_id: int,
+    data: VendedorCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        vendedor = session.query(Vendedor).filter(Vendedor.id == vendedor_id).first()
+        if not vendedor:
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
+        for key, value in data.model_dump().items():
+            setattr(vendedor, key, value)
+        session.commit()
+        session.refresh(vendedor)
+        return vendedor
+    finally:
+        session.close()
+
+
+@vend_router.delete("/{vendedor_id}")
+def eliminar_vendedor(
+    vendedor_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        vendedor = session.query(Vendedor).filter(Vendedor.id == vendedor_id).first()
+        if not vendedor:
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
+        session.delete(vendedor)
+        session.commit()
+        return {"ok": True}
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="No se puede eliminar el vendedor porque ya tiene presupuestos o ventas asociadas.")
+    finally:
+        session.close()
+
+
+@canal_router.get("/", response_model=List[CanalVentaOut])
+def listar_canales_venta(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    solo_activos: bool = Query(False),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = session.query(CanalVenta)
+        if solo_activos:
+            query = query.filter(CanalVenta.activo == True)
+        return query.order_by(CanalVenta.nombre.asc()).all()
+    finally:
+        session.close()
+
+
+@canal_router.get("/listado-optimizado", response_model=CanalVentaListResponseOut)
+def listar_canales_venta_optimizado(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    buscar: Optional[str] = Query(None),
+    solo_activos: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = _construir_query_canales(session, buscar)
+        if solo_activos:
+            query = query.filter(CanalVenta.activo == True)
+        total = query.count()
+        total_pages = ceil(total / page_size) if total else 1
+        offset = (page - 1) * page_size
+        canales = query.order_by(CanalVenta.nombre.asc()).offset(offset).limit(page_size).all()
+        items = [
+            CanalVentaListItemOut(
+                id=canal.id,
+                nombre=canal.nombre,
+                descripcion=canal.descripcion,
+                activo=bool(canal.activo),
+            )
+            for canal in canales
+        ]
+        return CanalVentaListResponseOut(items=items, page=page, page_size=page_size, total=total, total_pages=total_pages)
+    finally:
+        session.close()
+
+
+@canal_router.post("/", response_model=CanalVentaOut)
+def crear_canal_venta(
+    data: CanalVentaCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        canal = CanalVenta(**data.model_dump())
+        session.add(canal)
+        session.commit()
+        session.refresh(canal)
+        return canal
+    finally:
+        session.close()
+
+
+@canal_router.put("/{canal_id}", response_model=CanalVentaOut)
+def editar_canal_venta(
+    canal_id: int,
+    data: CanalVentaCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        canal = session.query(CanalVenta).filter(CanalVenta.id == canal_id).first()
+        if not canal:
+            raise HTTPException(status_code=404, detail="Canal no encontrado.")
+        for key, value in data.model_dump().items():
+            setattr(canal, key, value)
+        session.commit()
+        session.refresh(canal)
+        return canal
+    finally:
+        session.close()
+
+
+@canal_router.delete("/{canal_id}")
+def eliminar_canal_venta(
+    canal_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        canal = session.query(CanalVenta).filter(CanalVenta.id == canal_id).first()
+        if not canal:
+            raise HTTPException(status_code=404, detail="Canal no encontrado.")
+        session.delete(canal)
+        session.commit()
+        return {"ok": True}
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="No se puede eliminar el canal porque ya tiene presupuestos o ventas asociadas.")
     finally:
         session.close()

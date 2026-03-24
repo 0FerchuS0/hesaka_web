@@ -7,7 +7,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
-EMPRESA_DIRECCION = "AVDA BLAS GARAY 1149 C/ AVDA SAN JOSE | Tel: 0973851449"
+EMPRESA_SUBTITULO_FALLBACK = ""
 
 
 def _texto(value):
@@ -20,13 +20,15 @@ def _has_value(value):
     return value not in (None, "", [], "-")
 
 
-def _header_block(story, styles, title_text):
+def _header_block(story, styles, title_text, empresa_nombre, empresa_subtitulo=None):
     empresa = ParagraphStyle("EmpresaInd", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, alignment=1, spaceAfter=4)
     sub = ParagraphStyle("EmpresaSubInd", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, alignment=1, leading=11)
     title = ParagraphStyle("DocumentoTitleInd", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=16, alignment=0, spaceBefore=12, spaceAfter=10)
 
-    story.append(Paragraph("CENTRO OPTICO SANTA FE", empresa))
-    story.append(Paragraph(EMPRESA_DIRECCION, sub))
+    story.append(Paragraph(_texto(empresa_nombre) if _has_value(empresa_nombre) else "Mi Empresa", empresa))
+    subtitulo = (empresa_subtitulo or EMPRESA_SUBTITULO_FALLBACK or "").strip()
+    if subtitulo:
+        story.append(Paragraph(subtitulo, sub))
     line = Table([[""]], colWidths=[17.2 * cm], rowHeights=[0.08 * cm])
     line.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.black)]))
     story.extend([Spacer(1, 0.35 * cm), line, Spacer(1, 0.45 * cm), Paragraph(title_text, title)])
@@ -46,7 +48,7 @@ def _simple_rows_table(rows, widths):
     return table
 
 
-def generar_pdf_indicaciones_clinica(paciente_nombre: str, paciente_ci: str | None, consulta: dict) -> bytes:
+def generar_pdf_indicaciones_clinica(empresa_nombre: str, paciente_nombre: str, paciente_ci: str | None, consulta: dict) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -61,7 +63,7 @@ def generar_pdf_indicaciones_clinica(paciente_nombre: str, paciente_ci: str | No
     section = ParagraphStyle("SectionIndicaciones", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12, textColor=colors.black, spaceBefore=8, spaceAfter=6)
 
     story = []
-    _header_block(story, styles, "INDICACIONES")
+    _header_block(story, styles, "INDICACIONES", empresa_nombre)
 
     datos = [
         [f"Paciente: {_texto(paciente_nombre)}", f"Fecha: {_texto(consulta.get('fecha'))[:10]}"],

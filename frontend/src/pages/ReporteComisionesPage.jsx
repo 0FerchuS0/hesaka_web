@@ -340,7 +340,8 @@ export default function ReporteComisionesPage() {
                             loading={referidoresLoading}
                             placeholder="Buscar referidor..."
                             emptyMessage="No se encontraron referidores"
-                            promptMessage="Escriba para buscar referidor"
+                            promptMessage="Seleccione un referidor"
+                            minChars={0}
                         />
                     </div>
                     <div className="form-group" style={{ marginBottom: 0 }}>

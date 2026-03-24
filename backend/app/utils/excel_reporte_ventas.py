@@ -37,7 +37,7 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
     align_right = Alignment(horizontal='right', vertical='center')
     
     # Encabezado Empresa
-    company_name = config.nombre if (config and config.nombre) else "CENTRO OPTICO SANTA FE"
+    company_name = config.nombre if (config and config.nombre) else "Mi Empresa"
     ws.merge_cells('A1:H1')
     ws['A1'] = company_name
     ws['A1'].font = font_title

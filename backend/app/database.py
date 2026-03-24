@@ -39,6 +39,32 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         _tenant_schema_checked.add(tenant_slug)
         return
 
+    tablas_catalogo_comercial = []
+    if "vendedores" not in table_names:
+        tablas_catalogo_comercial.append(models.Vendedor.__table__)
+    if "canales_venta" not in table_names:
+        tablas_catalogo_comercial.append(models.CanalVenta.__table__)
+    if tablas_catalogo_comercial:
+        Base.metadata.create_all(bind=engine, tables=tablas_catalogo_comercial)
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+
+    if "presupuestos" in table_names:
+        presupuesto_columns = {column["name"] for column in inspector.get_columns("presupuestos")}
+        with engine.begin() as connection:
+            if "vendedor_id" not in presupuesto_columns and "vendedores" in table_names:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN vendedor_id INTEGER REFERENCES vendedores(id)"))
+            if "canal_venta_id" not in presupuesto_columns and "canales_venta" in table_names:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN canal_venta_id INTEGER REFERENCES canales_venta(id)"))
+
+    if "ventas" in table_names:
+        venta_columns = {column["name"] for column in inspector.get_columns("ventas")}
+        with engine.begin() as connection:
+            if "vendedor_id" not in venta_columns and "vendedores" in table_names:
+                connection.execute(text("ALTER TABLE ventas ADD COLUMN vendedor_id INTEGER REFERENCES vendedores(id)"))
+            if "canal_venta_id" not in venta_columns and "canales_venta" in table_names:
+                connection.execute(text("ALTER TABLE ventas ADD COLUMN canal_venta_id INTEGER REFERENCES canales_venta(id)"))
+
     # Si el tenant aun no tiene la base del modulo clinico, crearla una sola vez.
     if "clinica_pacientes" not in table_names:
         Base.metadata.create_all(bind=engine)

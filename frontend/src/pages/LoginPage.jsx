@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { LogIn } from 'lucide-react'
 import PasswordField from '../components/PasswordField'
+import { api } from '../context/AuthContext'
 
 export default function LoginPage() {
     const { login } = useAuth()
@@ -10,6 +12,27 @@ export default function LoginPage() {
     const [form, setForm] = useState({ email: '', password: '' })
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
+
+    const { data: configPublica } = useQuery({
+        queryKey: ['configuracion-general-publica'],
+        queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
+        retry: false,
+    })
+
+    const backendBaseUrl = useMemo(() => {
+        const base = api.defaults.baseURL || ''
+        if (typeof base === 'string' && /^https?:\/\//i.test(base)) {
+            return base.replace(/\/api\/?$/, '')
+        }
+        return window.location.origin
+    }, [])
+
+    const logoUrl = useMemo(() => {
+        const logoPath = configPublica?.logo_path
+        if (!logoPath) return ''
+        if (/^https?:\/\//i.test(logoPath)) return logoPath
+        return `${backendBaseUrl}${logoPath}`
+    }, [backendBaseUrl, configPublica?.logo_path])
 
     const handleSubmit = async event => {
         event.preventDefault()
@@ -29,8 +52,14 @@ export default function LoginPage() {
         <div className="login-page">
             <div className="login-card">
                 <div className="login-logo">
-                    <div className="login-logo-icon">H</div>
-                    <h1>HESAKA Web</h1>
+                    {logoUrl ? (
+                        <div style={{ width: 96, height: 96, margin: '0 auto 12px', borderRadius: 20, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+                            <img src={logoUrl} alt="Logo institucional" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                        </div>
+                    ) : (
+                        <div className="login-logo-icon">H</div>
+                    )}
+                    <h1>{configPublica?.nombre || 'HESAKA Web'}</h1>
                     <p>Sistema de Gestion para Opticas</p>
                 </div>
 

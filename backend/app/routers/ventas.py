@@ -10,16 +10,18 @@ from app.database import get_session_for_tenant
 from app.models.models import (
     Venta, Presupuesto, PresupuestoItem, Pago,
     Cliente, ConfiguracionCaja, MovimientoCaja, MovimientoBanco,
-    Banco, Comision, Referidor, Producto, CompraDetalle, AjusteVenta
+    Banco, Comision, Referidor, Producto, CompraDetalle, AjusteVenta,
+    Vendedor, CanalVenta, ConfiguracionEmpresa
 )
 from app.utils.auth import get_current_user, require_action
+from app.utils.configuracion_general import obtener_canal_principal
 from app.middleware.tenant import get_tenant_slug
 from app.schemas.schemas import (
     VentaOut, VentaCreate, PresupuestoOut, PresupuestoCreate,
     PagoCreate, PagoOut, PagoMultipleCreate, PagoMultipleItem, GrupoPagoOut,
     VentaListItemOut, VentaListResponseOut,
     VentasPdfMultipleRequest, AjusteVentaCreate, AjusteVentaUpdate,
-    AjusteVentaOut, AjusteVentaListResponseOut
+    AjusteVentaOut, AjusteVentaListResponseOut, PresupuestoAsignacionComercialIn
 )
 from fastapi.responses import StreamingResponse
 from app.utils.pdf_recibos_venta import (
@@ -27,9 +29,14 @@ from app.utils.pdf_recibos_venta import (
     generar_recibo_venta_consolidado,
     generar_recibos_ventas_concatenado,
 )
+from app.utils.pdf_presupuestos import generar_pdf_presupuesto
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
 pre_router = APIRouter(prefix="/api/presupuestos", tags=["Presupuestos"])
+
+
+def _obtener_canal_venta_default(session):
+    return obtener_canal_principal(session)
 
 
 def _get_siguiente_codigo(session, modelo, prefijo: str) -> str:
@@ -261,6 +268,10 @@ def _build_presupuesto_out(p):
         observaciones=getattr(p, "observaciones", None),
         referidor_id=getattr(p, "referidor_id", None),
         referidor_nombre=p.referidor_rel.nombre if getattr(p, "referidor_rel", None) else None,
+        vendedor_id=getattr(p, "vendedor_id", None),
+        vendedor_nombre=p.vendedor_rel.nombre if getattr(p, "vendedor_rel", None) else None,
+        canal_venta_id=getattr(p, "canal_venta_id", None),
+        canal_venta_nombre=p.canal_venta_rel.nombre if getattr(p, "canal_venta_rel", None) else None,
         comision_monto=float(getattr(p, "comision_monto", 0.0) or 0.0),
         items=items,
     )
@@ -272,6 +283,8 @@ def listar_presupuestos(
     current_user=Depends(get_current_user),
     cliente_id: Optional[int] = Query(None),
     estado: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
     skip: int = 0, limit: int = 50
 ):
     session = get_session_for_tenant(tenant_slug)
@@ -281,6 +294,10 @@ def listar_presupuestos(
             q = q.filter(Presupuesto.cliente_id == cliente_id)
         if estado:
             q = q.filter(Presupuesto.estado == estado)
+        if vendedor_id:
+            q = q.filter(Presupuesto.vendedor_id == vendedor_id)
+        if canal_venta_id:
+            q = q.filter(Presupuesto.canal_venta_id == canal_venta_id)
         pres = q.order_by(Presupuesto.fecha.desc()).offset(skip).limit(limit).all()
         return [_build_presupuesto_out(p) for p in pres]
     finally:
@@ -314,6 +331,9 @@ def convertir_presupuesto_a_venta(
         pagado_inicial = sum(p.monto for p in pagos)
         saldo_inicial = max(0.0, pre.total - pagado_inicial)
 
+        canal_default = _obtener_canal_venta_default(session)
+        canal_venta_id = pre.canal_venta_id or (canal_default.id if canal_default else None)
+
         venta = Venta(
             codigo=codigo,
             cliente_id=pre.cliente_id,
@@ -323,6 +343,8 @@ def convertir_presupuesto_a_venta(
             estado="PAGADO" if saldo_inicial == 0 else "PENDIENTE",
             estado_entrega="EN_LABORATORIO",
             referidor_id=pre.referidor_id,
+            vendedor_id=pre.vendedor_id,
+            canal_venta_id=canal_venta_id,
             comision_monto=pre.comision_monto or 0.0,
             requiere_compra=True,
             es_credito=saldo_inicial > 0,
@@ -352,6 +374,8 @@ def convertir_presupuesto_a_venta(
         session.refresh(venta)
         vo = VentaOut.model_validate(venta)
         vo.cliente_nombre = venta.cliente_rel.nombre if venta.cliente_rel else None
+        vo.vendedor_nombre = venta.vendedor_rel.nombre if venta.vendedor_rel else None
+        vo.canal_venta_nombre = venta.canal_venta_rel.nombre if venta.canal_venta_rel else None
         return vo
     except HTTPException:
         session.rollback()
@@ -383,6 +407,10 @@ def crear_presupuesto(data: PresupuestoCreate, tenant_slug: str = Depends(get_te
         codigo = _get_siguiente_codigo(session, Presupuesto, "PRE")
         items_data = data.items
         pres_data = data.model_dump(exclude={"items"})
+        if not pres_data.get("canal_venta_id"):
+            canal_default = _obtener_canal_venta_default(session)
+            if canal_default:
+                pres_data["canal_venta_id"] = canal_default.id
         presupuesto = Presupuesto(codigo=codigo, **pres_data)
         session.add(presupuesto)
         session.flush()
@@ -518,6 +546,8 @@ def listar_ventas(
     estado: Optional[str] = Query(None),
     cliente_id: Optional[int] = Query(None),
     estado_entrega: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
     skip: int = 0, limit: int = 50
 ):
     session = get_session_for_tenant(tenant_slug)
@@ -529,6 +559,10 @@ def listar_ventas(
             q = q.filter(Venta.cliente_id == cliente_id)
         if estado_entrega:
             q = q.filter(Venta.estado_entrega == estado_entrega)
+        if vendedor_id:
+            q = q.filter(Venta.vendedor_id == vendedor_id)
+        if canal_venta_id:
+            q = q.filter(Venta.canal_venta_id == canal_venta_id)
         ventas = q.order_by(Venta.fecha.desc()).offset(skip).limit(limit).all()
         result = []
         for v in ventas:
@@ -537,6 +571,8 @@ def listar_ventas(
                 vo.cliente_nombre = str(v.cliente_rel.nombre)
             else:
                 vo.cliente_nombre = "N/A"
+            vo.vendedor_nombre = v.vendedor_rel.nombre if getattr(v, "vendedor_rel", None) else None
+            vo.canal_venta_nombre = v.canal_venta_rel.nombre if getattr(v, "canal_venta_rel", None) else None
             result.append(vo)
         return result
     finally:
@@ -560,6 +596,8 @@ def get_ventas_pendientes_cobro(
                 vo.cliente_nombre = str(v.cliente_rel.nombre)
             else:
                 vo.cliente_nombre = "N/A"
+            vo.vendedor_nombre = v.vendedor_rel.nombre if getattr(v, "vendedor_rel", None) else None
+            vo.canal_venta_nombre = v.canal_venta_rel.nombre if getattr(v, "canal_venta_rel", None) else None
             result.append(vo)
         return result
     except Exception as e:
@@ -713,12 +751,57 @@ def revertir_grupo_pago(
         session.close()
 
 
+@pre_router.patch("/{pre_id}/asignacion-comercial", response_model=PresupuestoOut)
+def actualizar_asignacion_comercial_presupuesto(
+    pre_id: int,
+    data: PresupuestoAsignacionComercialIn,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user)
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        p = session.query(Presupuesto).filter(Presupuesto.id == pre_id).first()
+        if not p:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
+
+        if data.vendedor_id:
+            vendedor = session.query(Vendedor).filter(Vendedor.id == data.vendedor_id).first()
+            if not vendedor:
+                raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
+
+        if data.canal_venta_id:
+            canal = session.query(CanalVenta).filter(CanalVenta.id == data.canal_venta_id).first()
+            if not canal:
+                raise HTTPException(status_code=404, detail="Canal de venta no encontrado.")
+
+        canal_venta_id = data.canal_venta_id
+        if not canal_venta_id:
+            canal_default = _obtener_canal_venta_default(session)
+            canal_venta_id = canal_default.id if canal_default else None
+
+        p.vendedor_id = data.vendedor_id
+        p.canal_venta_id = canal_venta_id
+
+        venta = session.query(Venta).filter(Venta.presupuesto_id == p.id).first()
+        if venta:
+            venta.vendedor_id = data.vendedor_id
+            venta.canal_venta_id = canal_venta_id
+
+        session.commit()
+        session.refresh(p)
+        return _build_presupuesto_out(p)
+    finally:
+        session.close()
+
+
 @router.get("/listado-optimizado", response_model=VentaListResponseOut)
 def listar_ventas_optimizado(
     tenant_slug: str = Depends(get_tenant_slug),
     current_user=Depends(get_current_user),
     estado: Optional[str] = Query(None),
     estado_entrega: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
     con_saldo: bool = Query(False),
     page: int = Query(1, ge=1),
@@ -726,18 +809,34 @@ def listar_ventas_optimizado(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        query = session.query(Venta).outerjoin(Cliente, Venta.cliente_id == Cliente.id)
+        query = (
+            session.query(Venta)
+            .outerjoin(Cliente, Venta.cliente_id == Cliente.id)
+            .outerjoin(Vendedor, Venta.vendedor_id == Vendedor.id)
+            .outerjoin(CanalVenta, Venta.canal_venta_id == CanalVenta.id)
+        )
         if estado:
             query = query.filter(Venta.estado == estado)
         else:
             query = query.filter(Venta.estado != "ANULADA")
         if estado_entrega:
             query = query.filter(Venta.estado_entrega == estado_entrega)
+        if vendedor_id:
+            query = query.filter(Venta.vendedor_id == vendedor_id)
+        if canal_venta_id:
+            query = query.filter(Venta.canal_venta_id == canal_venta_id)
         if con_saldo:
             query = query.filter(Venta.saldo > 0)
         if search and search.strip():
             term = f"%{search.strip()}%"
-            query = query.filter(or_(Venta.codigo.ilike(term), Cliente.nombre.ilike(term)))
+            query = query.filter(
+                or_(
+                    Venta.codigo.ilike(term),
+                    Cliente.nombre.ilike(term),
+                    Vendedor.nombre.ilike(term),
+                    CanalVenta.nombre.ilike(term),
+                )
+            )
 
         total = query.count()
         total_pages = ceil(total / page_size) if total else 1
@@ -757,6 +856,8 @@ def listar_ventas_optimizado(
                 fecha=venta.fecha,
                 cliente_id=venta.cliente_id,
                 cliente_nombre=venta.cliente_rel.nombre if venta.cliente_rel else "N/A",
+                vendedor_nombre=venta.vendedor_rel.nombre if getattr(venta, "vendedor_rel", None) else None,
+                canal_venta_nombre=venta.canal_venta_rel.nombre if getattr(venta, "canal_venta_rel", None) else None,
                 total=venta.total or 0.0,
                 saldo=venta.saldo or 0.0,
                 estado=venta.estado,
@@ -789,6 +890,8 @@ def obtener_venta(venta_id: int, tenant_slug: str = Depends(get_tenant_slug), cu
             vo.cliente_nombre = str(v.cliente_rel.nombre)
         else:
             vo.cliente_nombre = "N/A"
+        vo.vendedor_nombre = v.vendedor_rel.nombre if getattr(v, "vendedor_rel", None) else None
+        vo.canal_venta_nombre = v.canal_venta_rel.nombre if getattr(v, "canal_venta_rel", None) else None
         return vo
     finally:
         session.close()
@@ -849,6 +952,8 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
         session.refresh(venta)
         vo = VentaOut.model_validate(venta)
         vo.cliente_nombre = venta.cliente_rel.nombre if venta.cliente_rel else None
+        vo.vendedor_nombre = venta.vendedor_rel.nombre if venta.vendedor_rel else None
+        vo.canal_venta_nombre = venta.canal_venta_rel.nombre if venta.canal_venta_rel else None
         return vo
     except HTTPException:
         session.rollback()
@@ -1049,7 +1154,7 @@ def descargar_recibo_pago(
             raise HTTPException(status_code=404, detail="Pago no encontrado.")
         venta = pago.venta_rel
         cliente = venta.cliente_rel if venta else None
-        config = None # TODO: Implementar TenantConfiguracion en futuras migraciones
+        config = session.query(ConfiguracionEmpresa).first()
         
         pdf_buffer = generar_recibo_pago_individual(pago, venta, cliente, config)
         filename = f"{cliente.nombre if cliente else 'Cliente'}_recibo_pago_{pago.id}.pdf"
@@ -1077,7 +1182,7 @@ def descargar_recibo_venta_consolidado(
         if not venta:
             raise HTTPException(status_code=404, detail="Venta no encontrada.")
         cliente = venta.cliente_rel
-        config = None # TODO: Implementar TenantConfiguracion en futuras migraciones
+        config = session.query(ConfiguracionEmpresa).first()
         
         pdf_buffer = generar_recibo_venta_consolidado(venta, cliente, list(venta.pagos), config)
         filename = f"{cliente.nombre if cliente else 'Cliente'}_recibo_venta_{venta.codigo}.pdf"
@@ -1126,7 +1231,8 @@ def descargar_recibos_ventas_multiples(
                 "pagos": list(venta.pagos),
             })
 
-        pdf_buffer = generar_recibos_ventas_concatenado(ventas_data, config=None)
+        config = session.query(ConfiguracionEmpresa).first()
+        pdf_buffer = generar_recibos_ventas_concatenado(ventas_data, config=config)
         nombre_archivo = f"ventas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         return StreamingResponse(
             pdf_buffer,
@@ -1137,6 +1243,34 @@ def descargar_recibos_ventas_multiples(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generando PDF múltiple: {str(e)}")
+    finally:
+        session.close()
+
+
+@pre_router.get("/{pre_id}/pdf")
+def descargar_pdf_presupuesto(
+    pre_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("presupuestos.exportar", "ventas"))
+):
+    """Genera un PDF de presupuesto usando la configuracion general del tenant."""
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        presupuesto = session.query(Presupuesto).filter(Presupuesto.id == pre_id).first()
+        if not presupuesto:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
+        config = session.query(ConfiguracionEmpresa).first()
+        pdf_buffer = generar_pdf_presupuesto(presupuesto, config)
+        filename = f"{presupuesto.codigo}_presupuesto.pdf"
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename=\"{filename}\"'}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando PDF del presupuesto: {str(e)}")
     finally:
         session.close()
 

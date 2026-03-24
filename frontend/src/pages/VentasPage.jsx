@@ -306,13 +306,13 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     })
     const confirmNavigation = usePendingNavigationGuard(Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId), 'La gestion de pagos aun se esta procesando. ¿Seguro que desea salir de esta vista?')
 
-    if (isLoading || !venta) return <div className="flex-center p-20"><div className="spinner"></div></div>
-
     useEffect(() => {
         const busy = Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId)
         onBusyChange?.(busy)
         return () => onBusyChange?.(false)
     }, [cobrar.isPending, deletingPagoId, onBusyChange, pdfOpeningPagoId])
+
+    if (isLoading || !venta) return <div className="flex-center p-20"><div className="spinner"></div></div>
 
     const handleSubmit = e => {
         e.preventDefault()
@@ -1016,7 +1016,13 @@ export default function VentasPage() {
             </div>
 
             {ventaPagos && (
-                <Modal title={`Gestión de Pagos: ${ventaPagos.codigo}`} onClose={() => setVentaPagos(null)} maxWidth="550px">
+                <Modal
+                    title={`Gestión de Pagos: ${ventaPagos.codigo}`}
+                    onClose={() => setVentaPagos(null)}
+                    maxWidth="550px"
+                    closeDisabled={ventaPagosModalBusy}
+                    onCloseAttempt={() => window.alert('La gestion de pagos aun se esta procesando. Espera a que termine antes de cerrar.')}
+                >
                     <GestionPagosModal ventaId={ventaPagos.id} onClose={() => setVentaPagos(null)} onBusyChange={setVentaPagosModalBusy} />
                 </Modal>
             )}

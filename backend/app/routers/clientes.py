@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import get_session_for_tenant
 from app.middleware.tenant import get_tenant_slug
+from app.models.clinica_models import ConsultaOftalmologica, Doctor as ClinicaDoctor, Paciente as ClinicaPaciente
 from app.models.models import (
     Categoria,
     Cliente,
@@ -379,7 +380,7 @@ def _build_cliente_ficha(session, cliente: Cliente):
     cliente_out = ClienteOut.model_validate(cliente)
     cliente_out.referidor_nombre = cliente.referidor_rel.nombre if cliente.referidor_rel else None
 
-    ultima_grad = (
+    ultima_grad_presupuesto = (
         session.query(Presupuesto)
         .filter(
             Presupuesto.cliente_id == cliente.id,
@@ -389,23 +390,66 @@ def _build_cliente_ficha(session, cliente: Cliente):
         .first()
     )
 
+    ultima_grad_consulta = (
+        session.query(ConsultaOftalmologica, ClinicaDoctor.nombre_completo.label("doctor_nombre"))
+        .join(ClinicaPaciente, ClinicaPaciente.id == ConsultaOftalmologica.paciente_id)
+        .outerjoin(ClinicaDoctor, ClinicaDoctor.id == ConsultaOftalmologica.doctor_id)
+        .filter(
+            ClinicaPaciente.cliente_id == cliente.id,
+            or_(
+                ConsultaOftalmologica.ref_od_esfera.isnot(None),
+                ConsultaOftalmologica.ref_od_cilindro.isnot(None),
+                ConsultaOftalmologica.ref_od_eje.isnot(None),
+                ConsultaOftalmologica.ref_od_adicion.isnot(None),
+                ConsultaOftalmologica.ref_oi_esfera.isnot(None),
+                ConsultaOftalmologica.ref_oi_cilindro.isnot(None),
+                ConsultaOftalmologica.ref_oi_eje.isnot(None),
+                ConsultaOftalmologica.ref_oi_adicion.isnot(None),
+            ),
+        )
+        .order_by(ConsultaOftalmologica.fecha.desc(), ConsultaOftalmologica.id.desc())
+        .first()
+    )
+
     ultima_graduacion = None
-    if ultima_grad:
+    fecha_presupuesto = ultima_grad_presupuesto.fecha if ultima_grad_presupuesto and ultima_grad_presupuesto.fecha else None
+    consulta_row = ultima_grad_consulta[0] if ultima_grad_consulta else None
+    consulta_doctor = ultima_grad_consulta[1] if ultima_grad_consulta else None
+    fecha_consulta = consulta_row.fecha if consulta_row and consulta_row.fecha else None
+
+    if fecha_consulta and (not fecha_presupuesto or fecha_consulta >= fecha_presupuesto):
         ultima_graduacion = GraduacionClienteFichaOut(
-            presupuesto_id=ultima_grad.id,
-            codigo_presupuesto=ultima_grad.codigo,
-            fecha_presupuesto=ultima_grad.fecha,
-            fecha_receta=ultima_grad.fecha_receta,
-            doctor=ultima_grad.doctor_receta,
-            observaciones=ultima_grad.observaciones,
-            od_esfera=ultima_grad.graduacion_od_esfera,
-            od_cilindro=ultima_grad.graduacion_od_cilindro,
-            od_eje=ultima_grad.graduacion_od_eje,
-            od_adicion=ultima_grad.graduacion_od_adicion,
-            oi_esfera=ultima_grad.graduacion_oi_esfera,
-            oi_cilindro=ultima_grad.graduacion_oi_cilindro,
-            oi_eje=ultima_grad.graduacion_oi_eje,
-            oi_adicion=ultima_grad.graduacion_oi_adicion,
+            presupuesto_id=consulta_row.id,
+            codigo_presupuesto=f"CONS-{consulta_row.id}",
+            fecha_presupuesto=consulta_row.fecha,
+            fecha_receta=consulta_row.fecha,
+            doctor=consulta_doctor,
+            observaciones=consulta_row.observaciones,
+            od_esfera=consulta_row.ref_od_esfera,
+            od_cilindro=consulta_row.ref_od_cilindro,
+            od_eje=consulta_row.ref_od_eje,
+            od_adicion=consulta_row.ref_od_adicion,
+            oi_esfera=consulta_row.ref_oi_esfera,
+            oi_cilindro=consulta_row.ref_oi_cilindro,
+            oi_eje=consulta_row.ref_oi_eje,
+            oi_adicion=consulta_row.ref_oi_adicion,
+        )
+    elif ultima_grad_presupuesto:
+        ultima_graduacion = GraduacionClienteFichaOut(
+            presupuesto_id=ultima_grad_presupuesto.id,
+            codigo_presupuesto=ultima_grad_presupuesto.codigo,
+            fecha_presupuesto=ultima_grad_presupuesto.fecha,
+            fecha_receta=ultima_grad_presupuesto.fecha_receta,
+            doctor=ultima_grad_presupuesto.doctor_receta,
+            observaciones=ultima_grad_presupuesto.observaciones,
+            od_esfera=ultima_grad_presupuesto.graduacion_od_esfera,
+            od_cilindro=ultima_grad_presupuesto.graduacion_od_cilindro,
+            od_eje=ultima_grad_presupuesto.graduacion_od_eje,
+            od_adicion=ultima_grad_presupuesto.graduacion_od_adicion,
+            oi_esfera=ultima_grad_presupuesto.graduacion_oi_esfera,
+            oi_cilindro=ultima_grad_presupuesto.graduacion_oi_cilindro,
+            oi_eje=ultima_grad_presupuesto.graduacion_oi_eje,
+            oi_adicion=ultima_grad_presupuesto.graduacion_oi_adicion,
         )
 
     keywords = ["ARMAZON", "ARMAZONES", "ARMAZON ", "MONTURA", "MARCO", "GABINETE"]

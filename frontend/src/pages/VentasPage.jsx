@@ -5,6 +5,7 @@ import { api, useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye } from 'lucide-react'
 import { hasActionAccess } from '../utils/roles'
+import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -102,7 +103,7 @@ function GraduacionBox({ titulo, data }) {
     )
 }
 
-function AjusteVentaModal({ venta, onClose, onSaved }) {
+function AjusteVentaModal({ venta, onClose, onSaved, onBusyChange }) {
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
     const [form, setForm] = useState({
@@ -110,6 +111,12 @@ function AjusteVentaModal({ venta, onClose, onSaved }) {
         monto: venta?.saldo ? String(venta.saldo) : '',
         motivo: '',
     })
+    const confirmNavigation = usePendingNavigationGuard(saving, 'El ajuste de venta aun se esta registrando. ¿Seguro que desea salir de esta vista?')
+
+    useEffect(() => {
+        onBusyChange?.(saving)
+        return () => onBusyChange?.(false)
+    }, [onBusyChange, saving])
 
     const submit = async (event) => {
         event.preventDefault()
@@ -129,7 +136,7 @@ function AjusteVentaModal({ venta, onClose, onSaved }) {
                 motivo: form.motivo,
             })
             window.dispatchEvent(new CustomEvent('hesaka:ajuste-venta-creado'))
-            onSaved()
+            await onSaved()
         } catch (err) {
             setError(getErrorText(err, 'No se pudo registrar el ajuste.'))
         } finally {
@@ -192,7 +199,7 @@ function AjusteVentaModal({ venta, onClose, onSaved }) {
             )}
 
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={saving}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>
                     {saving ? 'Guardando...' : 'Registrar ajuste'}
                 </button>
@@ -250,7 +257,7 @@ const estadoBadge = (estado) => {
 }
 
 // ─── Modal de Gestión de Pagos (Historial y Nuevo) ─────────────────────────
-function GestionPagosModal({ ventaId, onClose }) {
+function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     const qc = useQueryClient()
     const [monto, setMonto] = useState('')
     const [metodo, setMetodo] = useState('EFECTIVO')
@@ -269,11 +276,13 @@ function GestionPagosModal({ ventaId, onClose }) {
 
     const cobrar = useMutation({
         mutationFn: d => api.post(`/ventas/${ventaId}/pagos`, d),
-        onSuccess: () => {
-            qc.invalidateQueries(['venta', ventaId])
-            qc.invalidateQueries(['ventas'])
-            qc.invalidateQueries(['ventas-optimizado'])
-            qc.invalidateQueries(['saldo-caja'])
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries(['venta', ventaId]),
+                qc.invalidateQueries(['ventas']),
+                qc.invalidateQueries(['ventas-optimizado']),
+                qc.invalidateQueries(['saldo-caja'])
+            ])
             setMonto(''); setNota('')
         }
     })
@@ -283,18 +292,27 @@ function GestionPagosModal({ ventaId, onClose }) {
         onMutate: pagoId => {
             setDeletingPagoId(pagoId)
         },
-        onSuccess: () => {
-            qc.invalidateQueries(['venta', ventaId])
-            qc.invalidateQueries(['ventas'])
-            qc.invalidateQueries(['ventas-optimizado'])
-            qc.invalidateQueries(['saldo-caja'])
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries(['venta', ventaId]),
+                qc.invalidateQueries(['ventas']),
+                qc.invalidateQueries(['ventas-optimizado']),
+                qc.invalidateQueries(['saldo-caja'])
+            ])
         },
         onSettled: () => {
             setDeletingPagoId(null)
         }
     })
+    const confirmNavigation = usePendingNavigationGuard(Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId), 'La gestion de pagos aun se esta procesando. ¿Seguro que desea salir de esta vista?')
 
     if (isLoading || !venta) return <div className="flex-center p-20"><div className="spinner"></div></div>
+
+    useEffect(() => {
+        const busy = Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId)
+        onBusyChange?.(busy)
+        return () => onBusyChange?.(false)
+    }, [cobrar.isPending, deletingPagoId, onBusyChange, pdfOpeningPagoId])
 
     const handleSubmit = e => {
         e.preventDefault()
@@ -596,7 +614,12 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
     const anularBusy = anularBusyId === venta.id
     const toggleEntrega = useMutation({
         mutationFn: estado => api.patch(`/ventas/${venta.id}/estado_entrega`, { estado_entrega: estado }),
-        onSuccess: () => { qc.invalidateQueries(['ventas']); qc.invalidateQueries(['ventas-optimizado']) }
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries(['ventas']),
+                qc.invalidateQueries(['ventas-optimizado'])
+            ])
+        }
     })
     const actionBusy = exporting || toggleEntrega.isPending || anularBusy
 
@@ -636,46 +659,52 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
     return (
         <div style={{ position: 'relative' }}>
             <div ref={triggerRef} style={{ display: 'flex', gap: 6 }}>
-                <button className="btn btn-secondary btn-sm" onClick={() => setOpen(!open)}>Acciones ▾</button>
+                <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { if (!actionBusy) setOpen(!open) }}
+                    disabled={actionBusy}
+                >
+                    {actionBusy ? 'Procesando...' : 'Acciones ▾'}
+                </button>
             </div>
 
             {open && menuPosition && (
                 <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setOpen(false)} />
                     <div style={{ position: 'fixed', top: menuPosition.top, left: menuPosition.left, transform: 'translate(-100%, -100%)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', padding: '4px 0', minWidth: 210, zIndex: 100 }}>
-                        <button className="dropdown-item" onClick={() => handleAction(() => onVerFicha(venta))}>
+                        <button className="dropdown-item" onClick={() => handleAction(() => onVerFicha(venta))} disabled={actionBusy}>
                             <Eye size={14} style={{ marginRight: 8 }} /> Ficha cliente
                         </button>
                         {puedeCobrar && (
-                            <button className="dropdown-item" onClick={() => handleAction(() => onPagar(venta))}>
+                            <button className="dropdown-item" onClick={() => handleAction(() => onPagar(venta))} disabled={actionBusy}>
                                 <CreditCard size={14} style={{ marginRight: 8 }} /> Gestión de Pagos
                             </button>
                         )}
                         {puedeExportar && (
-                            <button className="dropdown-item" onClick={() => handleAction(handleExport)} disabled={exporting}>
+                            <button className="dropdown-item" onClick={() => handleAction(handleExport)} disabled={actionBusy}>
                                 <Printer size={14} style={{ marginRight: 8 }} /> {exporting ? 'Abriendo PDF...' : 'Imprimir Detalles Venta'}
                             </button>
                         )}
                         {puedeAjustar && venta.estado !== 'ANULADA' && (
-                            <button className="dropdown-item" onClick={() => handleAction(() => onAjustar(venta))}>
+                            <button className="dropdown-item" onClick={() => handleAction(() => onAjustar(venta))} disabled={actionBusy}>
                                 <Settings size={14} style={{ marginRight: 8 }} /> Ajustar venta
                             </button>
                         )}
                         {(puedeEntrega || puedeAnular) && <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />}
 
                         {puedeEntrega && venta.estado !== 'ANULADA' && venta.estado_entrega !== 'ENTREGADO' && (
-                            <button className="dropdown-item" style={{ color: 'var(--success)' }} onClick={() => handleAction(() => toggleEntrega.mutate('ENTREGADO'))} disabled={toggleEntrega.isPending}>
+                            <button className="dropdown-item" style={{ color: 'var(--success)' }} onClick={() => handleAction(() => toggleEntrega.mutate('ENTREGADO'))} disabled={actionBusy}>
                                 <CheckCircle size={14} style={{ marginRight: 8 }} /> {toggleEntrega.isPending ? 'Guardando...' : 'Marcar Entregado'}
                             </button>
                         )}
                         {puedeEntrega && venta.estado !== 'ANULADA' && venta.estado_entrega === 'ENTREGADO' && (
-                            <button className="dropdown-item" onClick={() => handleAction(() => toggleEntrega.mutate('EN_LABORATORIO'))} disabled={toggleEntrega.isPending}>
+                            <button className="dropdown-item" onClick={() => handleAction(() => toggleEntrega.mutate('EN_LABORATORIO'))} disabled={actionBusy}>
                                 <Clock size={14} style={{ marginRight: 8 }} /> {toggleEntrega.isPending ? 'Guardando...' : 'Deshacer Entrega'}
                             </button>
                         )}
 
                         {puedeAnular && (
-                            <button className="dropdown-item" style={{ color: 'var(--danger)' }} disabled={anularBusy} onClick={() => handleAction(() => {
+                            <button className="dropdown-item" style={{ color: 'var(--danger)' }} disabled={actionBusy} onClick={() => handleAction(() => {
                                 if (confirm(`¿ANULAR VENTA ${venta.codigo}?\n- Revierte todos los cobros.\n- Devuelve el stock.\n- No se puede deshacer.`)) {
                                     onAnular(venta.id)
                                 }
@@ -704,11 +733,14 @@ export default function VentasPage() {
     const [ventaPagos, setVentaPagos] = useState(null)
     const [ventaAjuste, setVentaAjuste] = useState(null)
     const [clienteFichaId, setClienteFichaId] = useState(null)
+    const [ventaPagosModalBusy, setVentaPagosModalBusy] = useState(false)
+    const [ventaAjusteModalBusy, setVentaAjusteModalBusy] = useState(false)
     const [seleccionadas, setSeleccionadas] = useState([])
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
     const [pdfConjuntoBusy, setPdfConjuntoBusy] = useState(false)
     const [anularBusyId, setAnularBusyId] = useState(null)
+    const confirmPageNavigation = usePendingNavigationGuard(Boolean(pdfConjuntoBusy || anularBusyId), 'Hay una accion de venta aun en proceso. ¿Seguro que desea salir de esta vista?')
 
     useEffect(() => {
         const timer = setTimeout(() => setBuscarDebounced(buscar.trim()), 350)
@@ -758,7 +790,13 @@ export default function VentasPage() {
 
     const anular = useMutation({
         mutationFn: id => api.post(`/ventas/${id}/anular`),
-        onSuccess: () => { qc.invalidateQueries(['ventas']); qc.invalidateQueries(['ventas-optimizado']); qc.invalidateQueries(['saldo-caja']) }
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries(['ventas']),
+                qc.invalidateQueries(['ventas-optimizado']),
+                qc.invalidateQueries(['saldo-caja'])
+            ])
+        }
         ,
         onSettled: () => setAnularBusyId(null)
     })
@@ -979,18 +1017,21 @@ export default function VentasPage() {
 
             {ventaPagos && (
                 <Modal title={`Gestión de Pagos: ${ventaPagos.codigo}`} onClose={() => setVentaPagos(null)} maxWidth="550px">
-                    <GestionPagosModal ventaId={ventaPagos.id} onClose={() => setVentaPagos(null)} />
+                    <GestionPagosModal ventaId={ventaPagos.id} onClose={() => setVentaPagos(null)} onBusyChange={setVentaPagosModalBusy} />
                 </Modal>
             )}
             {ventaAjuste && (
-                <Modal title={`Ajustar Venta: ${ventaAjuste.codigo}`} onClose={() => setVentaAjuste(null)} maxWidth="640px">
+                <Modal title={`Ajustar Venta: ${ventaAjuste.codigo}`} onClose={() => setVentaAjuste(null)} maxWidth="640px" closeDisabled={ventaAjusteModalBusy} onCloseAttempt={() => window.alert('El ajuste de venta aun se esta registrando. Espera a que termine antes de cerrar.')}>
                     <AjusteVentaModal
                         venta={ventaAjuste}
                         onClose={() => setVentaAjuste(null)}
-                        onSaved={() => {
+                        onBusyChange={setVentaAjusteModalBusy}
+                        onSaved={async () => {
+                            await Promise.all([
+                                qc.invalidateQueries(['ventas']),
+                                qc.invalidateQueries(['ventas-optimizado'])
+                            ])
                             setVentaAjuste(null)
-                            qc.invalidateQueries(['ventas'])
-                            qc.invalidateQueries(['ventas-optimizado'])
                         }}
                     />
                 </Modal>

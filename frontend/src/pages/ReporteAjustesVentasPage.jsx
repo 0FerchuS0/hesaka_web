@@ -66,22 +66,33 @@ function AjusteFormModal({ mode = 'create', ajuste = null, onClose, onSaved }) {
 
     useEffect(() => {
         if (mode === 'edit') return
-        const timer = setTimeout(async () => {
+        let active = true
+        const cargarVentas = async () => {
             const term = ventaBusqueda.trim()
             try {
-                setVentasLoading(true)
+                if (active) setVentasLoading(true)
                 const params = new URLSearchParams({ page: '1', page_size: '20' })
                 if (term) params.append('search', term)
                 const response = await api.get(`/ventas/listado-optimizado?${params.toString()}`)
-                setVentas(response.data.items || [])
+                if (active) setVentas(response.data.items || [])
             } catch (err) {
                 console.error('Error cargando ventas para ajuste:', err)
-                setVentas([])
+                if (active) setVentas([])
             } finally {
-                setVentasLoading(false)
+                if (active) setVentasLoading(false)
             }
-        }, 250)
-        return () => clearTimeout(timer)
+        }
+
+        if (!ventaBusqueda.trim()) {
+            cargarVentas()
+            return () => { active = false }
+        }
+
+        const timer = setTimeout(cargarVentas, 250)
+        return () => {
+            active = false
+            clearTimeout(timer)
+        }
     }, [mode, ventaBusqueda])
 
     const submit = async event => {
@@ -143,7 +154,7 @@ function AjusteFormModal({ mode = 'create', ajuste = null, onClose, onSaved }) {
                             loading={ventasLoading}
                             placeholder="Buscar venta por codigo o cliente..."
                             emptyMessage="No se encontraron ventas"
-                            promptMessage="Seleccione o escriba para buscar venta"
+                            promptMessage="Seleccione una venta reciente o escriba para buscar"
                             minChars={0}
                         />
                     ) : (

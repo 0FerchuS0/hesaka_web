@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList } from 'lucide-react'
+import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -97,7 +98,7 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
 }
 
 // Modal para convertir presupuesto en venta
-function ConvertirVentaModal({ presupuesto, onClose }) {
+function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
     const qc = useQueryClient()
     const [metodo, setMetodo] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
@@ -109,8 +110,20 @@ function ConvertirVentaModal({ presupuesto, onClose }) {
 
     const convertir = useMutation({
         mutationFn: pagos => api.post(`/presupuestos/${presupuesto.id}/convertir-venta`, pagos),
-        onSuccess: () => { qc.invalidateQueries(['presupuestos']); qc.invalidateQueries(['ventas']); onClose() }
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries(['presupuestos']),
+                qc.invalidateQueries(['ventas'])
+            ])
+            onClose()
+        }
     })
+    const confirmNavigation = usePendingNavigationGuard(convertir.isPending, 'La conversion a venta aun se esta procesando. ¿Seguro que desea salir de esta vista?')
+
+    useEffect(() => {
+        onBusyChange?.(convertir.isPending)
+        return () => onBusyChange?.(false)
+    }, [convertir.isPending, onBusyChange])
 
     const handleSubmit = e => {
         e.preventDefault()
@@ -147,11 +160,11 @@ function ConvertirVentaModal({ presupuesto, onClose }) {
                     <div className="grid-2 mb-16">
                         <div className="form-group">
                             <label className="form-label">Monto cobrado (Gs.)</label>
-                            <input className="form-input" type="number" value={monto} onChange={e => setMonto(e.target.value)} placeholder="0" max={presupuesto.total} min={0} step="any" />
+                            <input className="form-input" type="number" value={monto} onChange={e => setMonto(e.target.value)} placeholder="0" max={presupuesto.total} min={0} step="any" disabled={convertir.isPending} />
                         </div>
                         <div className="form-group">
                             <label className="form-label">Método</label>
-                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)}>
+                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={convertir.isPending}>
                                 <option value="EFECTIVO">💵 Efectivo</option>
                                 <option value="TARJETA">💳 Tarjeta</option>
                                 <option value="TRANSFERENCIA">🏦 Transferencia</option>
@@ -161,7 +174,7 @@ function ConvertirVentaModal({ presupuesto, onClose }) {
                     {['TARJETA', 'TRANSFERENCIA'].includes(metodo) && (
                         <div className="form-group mb-16">
                             <label className="form-label">Banco *</label>
-                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required>
+                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={convertir.isPending}>
                                 <option value="">Seleccionar banco...</option>
                                 {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre_banco}</option>)}
                             </select>
@@ -170,7 +183,7 @@ function ConvertirVentaModal({ presupuesto, onClose }) {
                     )}
                     <div className="form-group mb-16">
                         <label className="form-label">Nota</label>
-                        <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Opcional..." />
+                        <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Opcional..." disabled={convertir.isPending} />
                     </div>
                 </>
             )}
@@ -180,16 +193,16 @@ function ConvertirVentaModal({ presupuesto, onClose }) {
                 </div>
             )}
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={convertir.isPending}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={convertir.isPending}>
-                    {convertir.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><ShoppingBag size={15} /> Confirmar Venta</>}
+                    {convertir.isPending ? 'Confirmando venta...' : <><ShoppingBag size={15} /> Confirmar Venta</>}
                 </button>
             </div>
         </form>
     )
 }
 
-function AsignacionComercialModal({ presupuesto, onClose }) {
+function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
     const qc = useQueryClient()
     const [vendedor, setVendedor] = useState(presupuesto?.vendedor_id ? String(presupuesto.vendedor_id) : '')
     const [canalVenta, setCanalVenta] = useState(presupuesto?.canal_venta_id ? String(presupuesto.canal_venta_id) : '')
@@ -210,6 +223,11 @@ function AsignacionComercialModal({ presupuesto, onClose }) {
         }
     })
 
+    useEffect(() => {
+        onBusyChange?.(guardar.isPending)
+        return () => onBusyChange?.(false)
+    }, [guardar.isPending, onBusyChange])
+
     const submit = event => {
         event.preventDefault()
         setError('')
@@ -217,6 +235,18 @@ function AsignacionComercialModal({ presupuesto, onClose }) {
             vendedor_id: vendedor ? parseInt(vendedor, 10) : null,
             canal_venta_id: canalVenta ? parseInt(canalVenta, 10) : null,
         })
+    }
+
+    const handleAbrirPdf = async (presupuestoId) => {
+        if (pdfOpeningId === presupuestoId) return
+        setPdfOpeningId(presupuestoId)
+        try {
+            abrirPresupuestoPdf(presupuestoId)
+        } finally {
+            setTimeout(() => {
+                setPdfOpeningId(current => (current === presupuestoId ? null : current))
+            }, 1500)
+        }
     }
 
     return (
@@ -256,7 +286,7 @@ function AsignacionComercialModal({ presupuesto, onClose }) {
             )}
 
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={crear.isPending}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={guardar.isPending}>
                     {guardar.isPending ? 'Guardando...' : 'Guardar asignacion'}
                 </button>
@@ -272,7 +302,7 @@ const presupuestoCoincideConFiltro = (presupuesto, estadoFiltro, vendedorFiltro,
     return true
 }
 
-function NuevoPresupuestoModal({ onClose, presupuesto }) {
+function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const qc = useQueryClient()
     const esEdicion = !!presupuesto
     const [cliente, setCliente] = useState(presupuesto ? String(presupuesto.cliente_id) : '')
@@ -301,6 +331,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
     const [canalVenta, setCanalVenta] = useState(presupuesto?.canal_venta_id ? String(presupuesto.canal_venta_id) : '')
     const [comision, setComision] = useState(presupuesto?.comision_monto || 0)
     const [comisionAlerta, setComisionAlerta] = useState(false)
+    const [importandoGraduacion, setImportandoGraduacion] = useState(false)
     const [fecha, setFecha] = useState(
         presupuesto?.fecha ? presupuesto.fecha.split('T')[0] : new Date().toISOString().split('T')[0]
     )
@@ -311,11 +342,23 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
     const { data: canalesVenta = [] } = useQuery({ queryKey: ['canales-venta-select'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=100').then(r => r.data), retry: false })
     const { data: estadoConfig } = useQuery({ queryKey: ['configuracion-general-estado'], queryFn: () => api.get('/configuracion-general/estado').then(r => r.data), retry: false })
     // Cargar último presupuesto del cliente para sugerir graduación
-    const { data: ultimosPresupuestos = [] } = useQuery({
-        queryKey: ['presupuestos-cliente', cliente],
-        queryFn: () => api.get(`/presupuestos/?cliente_id=${cliente}&limit=5`).then(r => r.data),
+    const { data: clienteFicha, isFetching: clienteFichaLoading } = useQuery({
+        queryKey: ['cliente-ficha-presupuesto', cliente],
+        queryFn: () => api.get(`/clientes/${cliente}/ficha`).then(r => r.data),
         enabled: !!cliente, retry: false
     })
+    const ultimosPresupuestos = clienteFicha?.ultima_graduacion ? [{
+        graduacion_od_esfera: clienteFicha.ultima_graduacion.od_esfera || '',
+        graduacion_od_cilindro: clienteFicha.ultima_graduacion.od_cilindro || '',
+        graduacion_od_eje: clienteFicha.ultima_graduacion.od_eje || '',
+        graduacion_od_adicion: clienteFicha.ultima_graduacion.od_adicion || '',
+        graduacion_oi_esfera: clienteFicha.ultima_graduacion.oi_esfera || '',
+        graduacion_oi_cilindro: clienteFicha.ultima_graduacion.oi_cilindro || '',
+        graduacion_oi_eje: clienteFicha.ultima_graduacion.oi_eje || '',
+        graduacion_oi_adicion: clienteFicha.ultima_graduacion.oi_adicion || '',
+        doctor_receta: clienteFicha.ultima_graduacion.doctor || '',
+        observaciones: clienteFicha.ultima_graduacion.observaciones || '',
+    }] : []
 
     // Cuando se selecciona un cliente: auto-asignar referidor
     useEffect(() => {
@@ -342,10 +385,14 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
         setShowCliList(false)
     }
 
-    const importarGraduacion = () => {
-        const conGrad = ultimosPresupuestos.find(p =>
-            p.graduacion_od_esfera || p.graduacion_oi_esfera
-        )
+    const importarGraduacion = async () => {
+        if (!cliente || importandoGraduacion) return
+        setImportandoGraduacion(true)
+        try {
+            const ficha = clienteFicha || await api.get(`/clientes/${cliente}/ficha`).then(r => r.data)
+            const conGrad = ficha?.ultima_graduacion || ultimosPresupuestos.find(p =>
+                p.graduacion_od_esfera || p.graduacion_oi_esfera
+            )
         if (!conGrad) { alert('No se encontró historial de graduación para este cliente.'); return }
         setGrad({
             od_esfera: conGrad.graduacion_od_esfera || '',
@@ -358,7 +405,39 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
             oi_adicion: conGrad.graduacion_oi_adicion || '',
         })
         if (conGrad.doctor_receta) setDoctor(conGrad.doctor_receta)
+        if (conGrad.observaciones) setObs(conGrad.observaciones)
         setShowGrad(true)
+        } finally {
+            setImportandoGraduacion(false)
+        }
+    }
+
+    const importarGraduacionDesdeFicha = async () => {
+        if (!cliente || importandoGraduacion) return
+        setImportandoGraduacion(true)
+        try {
+            const ficha = clienteFicha || await api.get(`/clientes/${cliente}/ficha`).then(r => r.data)
+            const gradFicha = ficha?.ultima_graduacion
+            if (!gradFicha) {
+                alert('No se encontró historial de graduación para este cliente.')
+                return
+            }
+            setGrad({
+                od_esfera: gradFicha.od_esfera || '',
+                od_cilindro: gradFicha.od_cilindro || '',
+                od_eje: gradFicha.od_eje || '',
+                od_adicion: gradFicha.od_adicion || '',
+                oi_esfera: gradFicha.oi_esfera || '',
+                oi_cilindro: gradFicha.oi_cilindro || '',
+                oi_eje: gradFicha.oi_eje || '',
+                oi_adicion: gradFicha.oi_adicion || '',
+            })
+            if (gradFicha.doctor) setDoctor(gradFicha.doctor)
+            if (gradFicha.observaciones) setObs(gradFicha.observaciones)
+            setShowGrad(true)
+        } finally {
+            setImportandoGraduacion(false)
+        }
     }
 
     const actualizarCachePresupuestos = (presupuestoActualizado) => {
@@ -393,13 +472,24 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
         mutationFn: d => esEdicion
             ? api.put(`/presupuestos/${presupuesto.id}`, d)
             : api.post('/presupuestos/', d),
-        onSuccess: (response) => {
+        onSuccess: async (response) => {
             const presupuestoActualizado = response?.data
             if (presupuestoActualizado) actualizarCachePresupuestos(presupuestoActualizado)
-            qc.invalidateQueries({ queryKey: ['presupuestos'] })
+            await qc.invalidateQueries({ queryKey: ['presupuestos'] })
             onClose()
         }
     })
+    const confirmNavigation = usePendingNavigationGuard(
+        crear.isPending,
+        esEdicion
+            ? 'Los cambios del presupuesto aun se estan guardando. ¿Seguro que desea salir de esta vista?'
+            : 'El presupuesto aun se esta guardando. ¿Seguro que desea salir de esta vista?'
+    )
+
+    useEffect(() => {
+        onBusyChange?.(crear.isPending)
+        return () => onBusyChange?.(false)
+    }, [crear.isPending, onBusyChange])
 
     const total = items.reduce((s, i) => s + (i.subtotal || 0), 0)
     const addItem = () => setItems(p => [...p, blankItem()])
@@ -513,11 +603,11 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         {cliente && (
                             <span
-                                onClick={e => { e.stopPropagation(); importarGraduacion() }}
+                                onClick={e => { e.stopPropagation(); importarGraduacionDesdeFicha() }}
                                 style={{ fontSize: '0.7rem', color: 'var(--info)', background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}
-                                title="Importar graduación del último presupuesto del cliente"
+                                title="Importar la última graduación disponible del cliente"
                             >
-                                📝 Importar historial
+                                {importandoGraduacion || clienteFichaLoading ? 'Cargando historial...' : '📝 Importar historial'}
                             </span>
                         )}
                         <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'inline-block', transform: showGrad ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
@@ -651,7 +741,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto }) {
             )}
 
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={crear.isPending}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={crear.isPending}>
                     {crear.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <>{esEdicion ? '💾 Guardar Cambios' : <><FileText size={15} /> Guardar Presupuesto</>}</>}
                 </button>
@@ -670,6 +760,16 @@ export default function PresupuestosPage() {
     const [vendedorFiltro, setVendedorFiltro] = useState('')
     const [canalFiltro, setCanalFiltro] = useState('')
     const [convertirPre, setConvertirPre] = useState(null)
+    const [pdfOpeningId, setPdfOpeningId] = useState(null)
+    const [convertingId, setConvertingId] = useState(null)
+    const [editingId, setEditingId] = useState(null)
+    const [cancelingId, setCancelingId] = useState(null)
+    const [deletingId, setDeletingId] = useState(null)
+    const [presupuestoModalBusy, setPresupuestoModalBusy] = useState(false)
+    const [convertirModalBusy, setConvertirModalBusy] = useState(false)
+    const [asignacionModalBusy, setAsignacionModalBusy] = useState(false)
+    const hasPendingNavigation = Boolean(pdfOpeningId || cancelingId || deletingId)
+    const confirmNavigation = usePendingNavigationGuard(hasPendingNavigation, 'Hay una accion de presupuesto aun en proceso. ¿Seguro que desea salir de esta vista?')
 
     const { data: vendedoresFiltro = [] } = useQuery({ queryKey: ['presupuestos-vendedores-filtro'], queryFn: () => api.get('/vendedores/?solo_activos=true&limit=200').then(r => r.data), retry: false })
     const { data: canalesFiltro = [] } = useQuery({ queryKey: ['presupuestos-canales-filtro'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data), retry: false })
@@ -692,16 +792,20 @@ export default function PresupuestosPage() {
 
     const cambiarEstado = useMutation({
         mutationFn: ({ id, estado }) => api.patch(`/presupuestos/${id}/estado?estado=${estado}`),
-        onSuccess: () => qc.invalidateQueries(['presupuestos'])
+        onSuccess: () => qc.invalidateQueries(['presupuestos']),
+        onSettled: () => setCancelingId(null)
     })
 
     const eliminar = useMutation({
         mutationFn: (id) => api.delete(`/presupuestos/${id}`),
-        onSuccess: () => qc.invalidateQueries(['presupuestos'])
+        onSuccess: () => qc.invalidateQueries(['presupuestos']),
+        onSettled: () => setDeletingId(null)
     })
 
     const handleEliminar = (p) => {
+        if (deletingId === p.id) return
         if (window.confirm(`¿Eliminar el presupuesto ${p.codigo}? Esta acción no se puede deshacer.`)) {
+            setDeletingId(p.id)
             eliminar.mutate(p.id)
         }
     }
@@ -755,7 +859,9 @@ export default function PresupuestosPage() {
                                 <tr><th>Código</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Canal</th><th>OD</th><th>OI</th><th>Total</th><th>Estado</th><th>Acciones</th></tr>
                             </thead>
                             <tbody>
-                                {filtrados.map(p => (
+                                {filtrados.map(p => {
+                                    const rowBusy = pdfOpeningId === p.id || cancelingId === p.id || deletingId === p.id
+                                    return (
                                     <tr key={p.id}>
                                         <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{p.codigo}</td>
                                         <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{fmtDate(p.fecha)}</td>
@@ -773,33 +879,34 @@ export default function PresupuestosPage() {
                                         <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                             {['PENDIENTE', 'BORRADOR'].includes(p.estado) && (
                                                 <>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => abrirPresupuestoPdf(p.id)}>
-                                                        <FileText size={12} /> PDF
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
+                                                        <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
                                                     </button>
-                                                    <button className="btn btn-primary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setConvertirPre(p)}>
+                                                    <button className="btn btn-primary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setConvertirPre(p)} disabled={rowBusy}>
                                                         <ShoppingBag size={12} /> Vender
                                                     </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setEditarPre(p)}>
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setEditarPre(p)} disabled={rowBusy}>
                                                         ✏️ Editar
                                                     </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem', color: 'var(--warning)' }} onClick={() => cambiarEstado.mutate({ id: p.id, estado: 'CANCELADO' })}>
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem', color: 'var(--warning)' }} onClick={() => { setCancelingId(p.id); cambiarEstado.mutate({ id: p.id, estado: 'CANCELADO' }) }} disabled={rowBusy}>
                                                         Cancelar
                                                     </button>
                                                 </>
                                             )}
                                             {p.estado !== 'VENDIDO' && (
-                                                <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleEliminar(p)} title="Eliminar">
+                                                <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleEliminar(p)} title="Eliminar" disabled={rowBusy}>
                                                     <X size={12} />
                                                 </button>
                                             )}
                                             {p.estado === 'VENDIDO' && (
-                                                <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => abrirPresupuestoPdf(p.id)}>
-                                                    <FileText size={12} /> PDF
+                                                <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
+                                                    <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
                                                 </button>
                                             )}
                                         </td>
                                     </tr>
-                                ))}
+                                    )
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -807,26 +914,51 @@ export default function PresupuestosPage() {
             </div>
 
             {modal && (
-                <Modal title="Nuevo Presupuesto" onClose={() => setModal(false)} maxWidth="860px">
-                    <NuevoPresupuestoModal onClose={() => setModal(false)} />
+                <Modal
+                    title="Nuevo Presupuesto"
+                    onClose={() => setModal(false)}
+                    maxWidth="860px"
+                    closeDisabled={presupuestoModalBusy}
+                    onCloseAttempt={() => window.alert('El presupuesto aun se esta guardando. Espera a que termine antes de cerrar.')}
+                >
+                    <NuevoPresupuestoModal onClose={() => setModal(false)} onBusyChange={setPresupuestoModalBusy} />
                 </Modal>
             )}
             {editarPre && (
-                <Modal title={`Editar ${editarPre.codigo}`} onClose={() => setEditarPre(null)} maxWidth="860px">
+                <Modal
+                    title={`Editar ${editarPre.codigo}`}
+                    onClose={() => { setEditingId(null); setEditarPre(null) }}
+                    maxWidth="860px"
+                    closeDisabled={presupuestoModalBusy}
+                    onCloseAttempt={() => window.alert('Los cambios del presupuesto aun se estan guardando. Espera a que termine antes de cerrar.')}
+                >
                     <NuevoPresupuestoModal
                         presupuesto={editarPre}
-                        onClose={() => setEditarPre(null)}
+                        onClose={() => { setEditingId(null); setEditarPre(null) }}
+                        onBusyChange={setPresupuestoModalBusy}
                     />
                 </Modal>
             )}
             {convertirPre && (
-                <Modal title={`Convertir ${convertirPre.codigo} en Venta`} onClose={() => setConvertirPre(null)} maxWidth="500px">
-                    <ConvertirVentaModal presupuesto={convertirPre} onClose={() => setConvertirPre(null)} />
+                <Modal
+                    title={`Convertir ${convertirPre.codigo} en Venta`}
+                    onClose={() => { setConvertingId(null); setConvertirPre(null) }}
+                    maxWidth="500px"
+                    closeDisabled={convertirModalBusy}
+                    onCloseAttempt={() => window.alert('La conversion a venta aun se esta procesando. Espera a que termine antes de cerrar.')}
+                >
+                    <ConvertirVentaModal presupuesto={convertirPre} onClose={() => { setConvertingId(null); setConvertirPre(null) }} onBusyChange={setConvertirModalBusy} />
                 </Modal>
             )}
             {asignacionPre && (
-                <Modal title={`Asignacion comercial ${asignacionPre.codigo}`} onClose={() => setAsignacionPre(null)} maxWidth="560px">
-                    <AsignacionComercialModal presupuesto={asignacionPre} onClose={() => setAsignacionPre(null)} />
+                <Modal
+                    title={`Asignacion comercial ${asignacionPre.codigo}`}
+                    onClose={() => setAsignacionPre(null)}
+                    maxWidth="560px"
+                    closeDisabled={asignacionModalBusy}
+                    onCloseAttempt={() => window.alert('La asignacion comercial aun se esta guardando. Espera a que termine antes de cerrar.')}
+                >
+                    <AsignacionComercialModal presupuesto={asignacionPre} onClose={() => setAsignacionPre(null)} onBusyChange={setAsignacionModalBusy} />
                 </Modal>
             )}
         </div>

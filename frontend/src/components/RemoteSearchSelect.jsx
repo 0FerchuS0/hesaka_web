@@ -19,6 +19,8 @@ export default function RemoteSearchSelect({
 }) {
     const labelFor = getOptionLabel ?? defaultGetOptionLabel
     const valueFor = getOptionValue ?? defaultGetOptionValue
+    const normalizedMinChars = Number.isFinite(Number(minChars)) ? Number(minChars) : 1
+    const allowsEmptySearch = normalizedMinChars <= 0
     const containerRef = useRef(null)
     const [open, setOpen] = useState(false)
     const [query, setQuery] = useState(value ? labelFor(value) : '')
@@ -89,29 +91,29 @@ export default function RemoteSearchSelect({
         if (!open) {
             return
         }
-        if (query.trim().length < minChars) {
+        if (!allowsEmptySearch && query.trim().length < normalizedMinChars) {
             return
         }
         onSearch(query)
-    }, [query, open, onSearch])
+    }, [allowsEmptySearch, normalizedMinChars, onSearch, open, query])
 
     useEffect(() => {
-        if (query.trim().length < minChars) {
+        if (!allowsEmptySearch && query.trim().length < normalizedMinChars) {
             onSearch('')
         }
-    }, [minChars, onSearch, query])
+    }, [allowsEmptySearch, normalizedMinChars, onSearch, query])
 
-    const hasSearchTerm = query.trim().length >= minChars
+    const hasSearchTerm = allowsEmptySearch || query.trim().length >= normalizedMinChars
 
     const visibleMessage = useMemo(() => {
-        if (query.trim().length < minChars) {
+        if (!allowsEmptySearch && query.trim().length < normalizedMinChars) {
             return promptMessage
         }
         if (loading) {
             return 'Buscando...'
         }
         return emptyMessage
-    }, [emptyMessage, loading, minChars, promptMessage, query])
+    }, [allowsEmptySearch, emptyMessage, loading, normalizedMinChars, promptMessage, query])
 
     return (
         <div ref={containerRef} style={{ position: 'relative', width: '100%', minWidth: 0 }}>

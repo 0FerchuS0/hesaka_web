@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, case
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from app.database import get_session_for_tenant
-from app.models.models import Banco, CanalVenta, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra
+from app.models.models import Banco, CanalVenta, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem
 from app.utils.auth import get_current_user
 from app.middleware.tenant import get_tenant_slug
 from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
@@ -304,18 +304,121 @@ def _clasificar_movimiento(origen: str, movimiento) -> str:
     return f"MOVIMIENTO_{origen}"
 
 
+def _construir_query_base_ventas(
+    session: Session,
+    fecha_desde: Optional[datetime] = None,
+    fecha_hasta: Optional[datetime] = None,
+    cliente_id: Optional[int] = None,
+    estado_pago: Optional[str] = None,
+    vendedor_id: Optional[int] = None,
+    canal_venta_id: Optional[int] = None,
+):
+    query = session.query(
+        Venta.id.label("venta_id"),
+        Venta.fecha.label("fecha"),
+        Venta.codigo.label("codigo"),
+        Venta.cliente_id.label("cliente_id"),
+        Venta.vendedor_id.label("vendedor_id"),
+        Venta.canal_venta_id.label("canal_venta_id"),
+        Venta.estado.label("estado"),
+        Venta.total.label("total"),
+        Venta.comision_monto.label("comision_monto"),
+        Venta.presupuesto_id.label("presupuesto_id"),
+    ).filter(Venta.estado.notin_(['ANULADO', 'ANULADA']))
+
+    if fecha_desde:
+        query = query.filter(Venta.fecha >= fecha_desde)
+    if fecha_hasta:
+        query = query.filter(Venta.fecha <= fecha_hasta)
+    if cliente_id:
+        query = query.filter(Venta.cliente_id == cliente_id)
+    if vendedor_id:
+        query = query.filter(Venta.vendedor_id == vendedor_id)
+    if canal_venta_id:
+        query = query.filter(Venta.canal_venta_id == canal_venta_id)
+    if estado_pago:
+        query = query.filter(Venta.estado == estado_pago)
+    return query
+
+
+def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fecha_hasta: datetime):
+    base_sq = _construir_query_base_ventas(session, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta).subquery()
+
+    costos_sq = (
+        session.query(
+            base_sq.c.venta_id.label("venta_id"),
+            func.coalesce(func.sum(PresupuestoItem.costo_unitario * PresupuestoItem.cantidad), 0.0).label("costo_total"),
+        )
+        .select_from(base_sq)
+        .outerjoin(Presupuesto, Presupuesto.id == base_sq.c.presupuesto_id)
+        .outerjoin(PresupuestoItem, PresupuestoItem.presupuesto_id == Presupuesto.id)
+        .group_by(base_sq.c.venta_id)
+        .subquery()
+    )
+
+    comisiones_banco_sq = (
+        session.query(
+            base_sq.c.venta_id.label("venta_id"),
+            func.coalesce(func.sum(
+                case(
+                    (Pago.metodo_pago == 'TARJETA', Pago.monto * (func.coalesce(Banco.porcentaje_comision, 3.3) / 100.0)),
+                    else_=0.0,
+                )
+            ), 0.0).label("comision_bancaria"),
+        )
+        .select_from(base_sq)
+        .outerjoin(Pago, Pago.venta_id == base_sq.c.venta_id)
+        .outerjoin(Banco, Banco.id == Pago.banco_id)
+        .group_by(base_sq.c.venta_id)
+        .subquery()
+    )
+
+    resumen = (
+        session.query(
+            func.count(base_sq.c.venta_id).label("cantidad_ventas"),
+            func.coalesce(func.sum(base_sq.c.total), 0.0).label("total_ventas"),
+            func.coalesce(func.sum(costos_sq.c.costo_total), 0.0).label("total_costos"),
+            func.coalesce(func.sum(base_sq.c.comision_monto), 0.0).label("total_comisiones_referidor"),
+            func.coalesce(func.sum(comisiones_banco_sq.c.comision_bancaria), 0.0).label("total_comisiones_bancarias"),
+        )
+        .select_from(base_sq)
+        .outerjoin(costos_sq, costos_sq.c.venta_id == base_sq.c.venta_id)
+        .outerjoin(comisiones_banco_sq, comisiones_banco_sq.c.venta_id == base_sq.c.venta_id)
+        .one()
+    )
+
+    total_ventas = float(resumen.total_ventas or 0.0)
+    total_costos = float(resumen.total_costos or 0.0)
+    total_comisiones_referidor = float(resumen.total_comisiones_referidor or 0.0)
+    total_comisiones_bancarias = float(resumen.total_comisiones_bancarias or 0.0)
+    utilidad_bruta = total_ventas - total_costos
+    total_comisiones = total_comisiones_referidor + total_comisiones_bancarias
+    utilidad_neta = utilidad_bruta - total_comisiones
+    cantidad_ventas = int(resumen.cantidad_ventas or 0)
+    ticket_promedio = (total_ventas / cantidad_ventas) if cantidad_ventas > 0 else 0.0
+
+    return {
+        'cantidad_ventas': cantidad_ventas,
+        'total_ventas': total_ventas,
+        'total_costos': total_costos,
+        'utilidad_bruta': float(utilidad_bruta),
+        'total_comisiones': float(total_comisiones),
+        'utilidad_neta': float(utilidad_neta),
+        'ticket_promedio': float(ticket_promedio),
+    }
+
+
 def _sumar_ventas_periodo(session: Session, fecha_desde: datetime, fecha_hasta: datetime) -> float:
     total = (
-        session.query(Venta)
+        session.query(func.coalesce(func.sum(Venta.total), 0.0))
         .filter(
             Venta.fecha >= fecha_desde,
             Venta.fecha <= fecha_hasta,
             Venta.estado.notin_(['ANULADO', 'ANULADA'])
         )
-        .with_entities(Venta.total)
-        .all()
+        .scalar()
     )
-    return float(sum((row[0] or 0.0) for row in total))
+    return float(total or 0.0)
 
 
 def _detalle_trabajo_laboratorio(venta: Venta) -> str:
@@ -737,28 +840,74 @@ def _obtener_datos_reporte_ventas(
     vendedor_id: Optional[int] = None,
     canal_venta_id: Optional[int] = None,
 ):
-    query = session.query(Venta).filter(Venta.estado.notin_(['ANULADO', 'ANULADA']))
-        
-    if fecha_desde:
-        query = query.filter(Venta.fecha >= datetime.combine(fecha_desde, datetime.min.time()))
-        
-    if fecha_hasta:
-        query = query.filter(Venta.fecha <= datetime.combine(fecha_hasta, datetime.max.time()))
-        
-    if cliente_id:
-        query = query.filter(Venta.cliente_id == cliente_id)
+    fecha_desde_dt = datetime.combine(fecha_desde, datetime.min.time()) if fecha_desde else None
+    fecha_hasta_dt = datetime.combine(fecha_hasta, datetime.max.time()) if fecha_hasta else None
+    base_sq = _construir_query_base_ventas(
+        session,
+        fecha_desde=fecha_desde_dt,
+        fecha_hasta=fecha_hasta_dt,
+        cliente_id=cliente_id,
+        estado_pago=estado_pago,
+        vendedor_id=vendedor_id,
+        canal_venta_id=canal_venta_id,
+    ).subquery()
 
-    if vendedor_id:
-        query = query.filter(Venta.vendedor_id == vendedor_id)
+    costos_sq = (
+        session.query(
+            base_sq.c.venta_id.label("venta_id"),
+            func.coalesce(func.sum(PresupuestoItem.costo_unitario * PresupuestoItem.cantidad), 0.0).label("costo_total"),
+        )
+        .select_from(base_sq)
+        .outerjoin(Presupuesto, Presupuesto.id == base_sq.c.presupuesto_id)
+        .outerjoin(PresupuestoItem, PresupuestoItem.presupuesto_id == Presupuesto.id)
+        .group_by(base_sq.c.venta_id)
+        .subquery()
+    )
 
-    if canal_venta_id:
-        query = query.filter(Venta.canal_venta_id == canal_venta_id)
-        
-    if estado_pago:
-        query = query.filter(Venta.estado == estado_pago)
-        
-    ventas_db = query.order_by(Venta.fecha.desc()).all()
-    
+    comisiones_banco_sq = (
+        session.query(
+            base_sq.c.venta_id.label("venta_id"),
+            func.coalesce(func.sum(
+                case(
+                    (Pago.metodo_pago == 'TARJETA', Pago.monto * (func.coalesce(Banco.porcentaje_comision, 3.3) / 100.0)),
+                    else_=0.0,
+                )
+            ), 0.0).label("comision_bancaria"),
+        )
+        .select_from(base_sq)
+        .outerjoin(Pago, Pago.venta_id == base_sq.c.venta_id)
+        .outerjoin(Banco, Banco.id == Pago.banco_id)
+        .group_by(base_sq.c.venta_id)
+        .subquery()
+    )
+
+    ventas_rows = (
+        session.query(
+            base_sq.c.venta_id,
+            base_sq.c.fecha,
+            base_sq.c.codigo,
+            base_sq.c.cliente_id,
+            base_sq.c.vendedor_id,
+            base_sq.c.canal_venta_id,
+            base_sq.c.estado,
+            base_sq.c.total,
+            base_sq.c.comision_monto,
+            Cliente.nombre.label("cliente_nombre"),
+            Vendedor.nombre.label("vendedor_nombre"),
+            CanalVenta.nombre.label("canal_venta_nombre"),
+            func.coalesce(costos_sq.c.costo_total, 0.0).label("costo_total"),
+            func.coalesce(comisiones_banco_sq.c.comision_bancaria, 0.0).label("comision_bancaria"),
+        )
+        .select_from(base_sq)
+        .outerjoin(Cliente, Cliente.id == base_sq.c.cliente_id)
+        .outerjoin(Vendedor, Vendedor.id == base_sq.c.vendedor_id)
+        .outerjoin(CanalVenta, CanalVenta.id == base_sq.c.canal_venta_id)
+        .outerjoin(costos_sq, costos_sq.c.venta_id == base_sq.c.venta_id)
+        .outerjoin(comisiones_banco_sq, comisiones_banco_sq.c.venta_id == base_sq.c.venta_id)
+        .order_by(base_sq.c.fecha.desc(), base_sq.c.venta_id.desc())
+        .all()
+    )
+
     resultado_ventas = []
     ventas_data = [] # For PDF/Excel format
     suma_ventas = 0.0
@@ -770,86 +919,59 @@ def _obtener_datos_reporte_ventas(
     resumen_canales = {}
     canal_default = obtener_canal_principal(session)
     
-    for venta in ventas_db:
-        presupuesto = venta.presupuesto_rel
-        
-        # Calcular costo
-        costo_total = 0.0
-        if presupuesto and presupuesto.items:
-            for item in presupuesto.items:
-                costo = item.costo_unitario if hasattr(item, 'costo_unitario') and item.costo_unitario else 0.0
-                costo_total += costo * item.cantidad
-                
-        utilidad_bruta = venta.total - costo_total
-        margen_bruto = (utilidad_bruta / venta.total * 100) if venta.total > 0 else 0.0
-        
-        # Comisiones referidor
-        com_ref = venta.comision_monto if venta.comision_monto else 0.0
-        
-        # Comisiones bancarias
-        com_ban = 0.0
-        if venta.pagos:
-            for pago in venta.pagos:
-                if pago.metodo_pago == 'TARJETA':
-                    # Default 3.3% o lo que dicte el banco
-                    porcentaje_comision = 3.3
-                    banco = pago.banco_rel
-                    if banco and hasattr(banco, 'porcentaje_comision') and banco.porcentaje_comision:
-                        porcentaje_comision = banco.porcentaje_comision
-                    com_ban += pago.monto * (porcentaje_comision / 100.0)
+    for row in ventas_rows:
+        total_venta = float(row.total or 0.0)
+        costo_total = float(row.costo_total or 0.0)
+        utilidad_bruta = total_venta - costo_total
+        margen_bruto = (utilidad_bruta / total_venta * 100) if total_venta > 0 else 0.0
+        com_ref = float(row.comision_monto or 0.0)
+        com_ban = float(row.comision_bancaria or 0.0)
         
         # Sumar a totales
-        suma_ventas += venta.total
+        suma_ventas += total_venta
         suma_costos += costo_total
         suma_utilidad_bruta += utilidad_bruta
         suma_comisiones_referidor += com_ref
         suma_comisiones_bancarias += com_ban
         
-        cliente_text = venta.cliente_rel.nombre if venta.cliente_rel else "Sin cliente"
+        cliente_text = row.cliente_nombre or "Sin cliente"
         
         resultado_ventas.append(ReporteVentaOut(
-            venta_id=venta.id,
-            fecha=venta.fecha,
-            codigo=venta.codigo,
+            venta_id=row.venta_id,
+            fecha=row.fecha,
+            codigo=row.codigo,
             cliente_nombre=cliente_text,
-            vendedor_nombre=venta.vendedor_rel.nombre if getattr(venta, 'vendedor_rel', None) else None,
-            canal_venta_nombre=venta.canal_venta_rel.nombre if getattr(venta, 'canal_venta_rel', None) else None,
-            estado=venta.estado,
-            total_venta=venta.total,
+            vendedor_nombre=row.vendedor_nombre,
+            canal_venta_nombre=row.canal_venta_nombre,
+            estado=row.estado,
+            total_venta=total_venta,
             costo_total=costo_total,
             utilidad_bruta=utilidad_bruta,
             margen_bruto=margen_bruto,
             total_comisiones_referidor=com_ref,
             total_comisiones_bancarias=com_ban
         ))
-        
-        ventas_data.append({
-            'venta': venta,
-            'costo_total': costo_total,
-            'utilidad_bruta': utilidad_bruta,
-            'margen_bruto': margen_bruto
-        })
 
         utilidad_neta_venta = utilidad_bruta - (com_ref + com_ban)
-        etiqueta_vendedor = venta.vendedor_rel.nombre if getattr(venta, 'vendedor_rel', None) else 'Sin vendedor'
-        clave_vendedor = f"vendedor:{venta.vendedor_id or 0}"
+        etiqueta_vendedor = row.vendedor_nombre or 'Sin vendedor'
+        clave_vendedor = f"vendedor:{row.vendedor_id or 0}"
         bucket_vendedor = resumen_vendedores.setdefault(
             clave_vendedor,
             {"clave": clave_vendedor, "etiqueta": etiqueta_vendedor, "cantidad_ventas": 0, "total_ventas": 0.0, "total_costos": 0.0, "utilidad_neta": 0.0},
         )
         bucket_vendedor["cantidad_ventas"] += 1
-        bucket_vendedor["total_ventas"] += float(venta.total or 0.0)
+        bucket_vendedor["total_ventas"] += total_venta
         bucket_vendedor["total_costos"] += float(costo_total or 0.0)
         bucket_vendedor["utilidad_neta"] += float(utilidad_neta_venta or 0.0)
 
-        etiqueta_canal = venta.canal_venta_rel.nombre if getattr(venta, 'canal_venta_rel', None) else (canal_default.nombre if canal_default else 'Canal principal')
-        clave_canal = f"canal:{venta.canal_venta_id or 0}"
+        etiqueta_canal = row.canal_venta_nombre or (canal_default.nombre if canal_default else 'Canal principal')
+        clave_canal = f"canal:{row.canal_venta_id or 0}"
         bucket_canal = resumen_canales.setdefault(
             clave_canal,
             {"clave": clave_canal, "etiqueta": etiqueta_canal, "cantidad_ventas": 0, "total_ventas": 0.0, "total_costos": 0.0, "utilidad_neta": 0.0},
         )
         bucket_canal["cantidad_ventas"] += 1
-        bucket_canal["total_ventas"] += float(venta.total or 0.0)
+        bucket_canal["total_ventas"] += total_venta
         bucket_canal["total_costos"] += float(costo_total or 0.0)
         bucket_canal["utilidad_neta"] += float(utilidad_neta_venta or 0.0)
         
@@ -893,7 +1015,35 @@ def _obtener_datos_reporte_ventas(
         por_vendedor=por_vendedor,
         por_canal=por_canal,
     )
-    
+
+    # Para exportaciones mantenemos el formato esperado actual, pero evitando cargar
+    # relaciones pesadas en el endpoint interactivo.
+    if resultado_ventas:
+        ventas_ids = [row.venta_id for row in ventas_rows]
+        ventas_export = (
+            session.query(Venta)
+            .filter(Venta.id.in_(ventas_ids))
+            .order_by(Venta.fecha.desc(), Venta.id.desc())
+            .all()
+        )
+        metricas_por_venta = {
+            row.venta_id: {
+                "costo_total": float(row.costo_total or 0.0),
+                "utilidad_bruta": float((row.total or 0.0) - (row.costo_total or 0.0)),
+                "margen_bruto": float((((row.total or 0.0) - (row.costo_total or 0.0)) / row.total) * 100.0) if (row.total or 0.0) > 0 else 0.0,
+            }
+            for row in ventas_rows
+        }
+        ventas_data = [
+            {
+                "venta": venta,
+                "costo_total": metricas_por_venta.get(venta.id, {}).get("costo_total", 0.0),
+                "utilidad_bruta": metricas_por_venta.get(venta.id, {}).get("utilidad_bruta", 0.0),
+                "margen_bruto": metricas_por_venta.get(venta.id, {}).get("margen_bruto", 0.0),
+            }
+            for venta in ventas_export
+        ]
+
     return resumen_json, ventas_data, suma_comisiones_referidor, suma_comisiones_bancarias
 
 

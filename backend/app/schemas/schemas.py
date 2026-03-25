@@ -706,6 +706,37 @@ class CompraDetalleOut(BaseModel):
         from_attributes = True
 
 
+class PresupuestoListItemOut(BaseModel):
+    id: int
+    codigo: str
+    fecha: datetime
+    estado: str
+    cliente_id: int
+    cliente_nombre: Optional[str] = None
+    total: float
+    graduacion_od_esfera: Optional[str] = None
+    graduacion_od_cilindro: Optional[str] = None
+    graduacion_od_eje: Optional[str] = None
+    graduacion_oi_esfera: Optional[str] = None
+    graduacion_oi_cilindro: Optional[str] = None
+    graduacion_oi_eje: Optional[str] = None
+    vendedor_id: Optional[int] = None
+    vendedor_nombre: Optional[str] = None
+    canal_venta_id: Optional[int] = None
+    canal_venta_nombre: Optional[str] = None
+    referidor_id: Optional[int] = None
+    referidor_nombre: Optional[str] = None
+    comision_monto: float = 0.0
+
+
+class PresupuestoListResponseOut(BaseModel):
+    items: List[PresupuestoListItemOut]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class PresupuestoAsignacionComercialIn(BaseModel):
     vendedor_id: Optional[int] = None
     canal_venta_id: Optional[int] = None

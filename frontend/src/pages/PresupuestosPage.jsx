@@ -108,14 +108,57 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
 
     const { data: bancos = [] } = useQuery({ queryKey: ['bancos'], queryFn: () => api.get('/bancos/').then(r => r.data) })
 
+    const removerPresupuestoDeCache = presupuestoId => {
+        const queries = qc.getQueriesData({ queryKey: ['presupuestos'] })
+        for (const [queryKey, current] of queries) {
+            const currentItems = Array.isArray(current)
+                ? current
+                : (Array.isArray(current?.items) ? current.items : null)
+            if (!currentItems) continue
+            const nextItems = currentItems.filter(item => item.id !== presupuestoId)
+            qc.setQueryData(queryKey, Array.isArray(current) ? nextItems : { ...current, items: nextItems })
+        }
+    }
+
+    const insertarVentaEnCache = ventaNueva => {
+        if (!ventaNueva?.id) return
+        const queries = qc.getQueriesData({ queryKey: ['ventas-optimizado'] })
+        for (const [queryKey, current] of queries) {
+            const currentItems = Array.isArray(current?.items) ? current.items : null
+            if (!currentItems) continue
+            const [, buscar = '', estado = '', entrega = '', vendedorId = '', canalId = '', soloPendientes = false, page = 1] = Array.isArray(queryKey) ? queryKey : []
+            const coincideBusqueda = !buscar || `${ventaNueva.codigo || ''} ${ventaNueva.cliente_nombre || ''}`.toLowerCase().includes(String(buscar).toLowerCase())
+            const coincideEstado = !estado || ventaNueva.estado === estado
+            const coincideEntrega = !entrega || ventaNueva.estado_entrega === entrega
+            const coincideVendedor = !vendedorId || String(ventaNueva.vendedor_id || '') === String(vendedorId)
+            const coincideCanal = !canalId || String(ventaNueva.canal_venta_id || '') === String(canalId)
+            const saldoVenta = Number(ventaNueva.saldo_pendiente ?? ventaNueva.saldo ?? 0)
+            const coincidePendiente = !soloPendientes || saldoVenta > 0
+            const coincidePrimeraPagina = Number(page) === 1
+            if (!coincideBusqueda || !coincideEstado || !coincideEntrega || !coincideVendedor || !coincideCanal || !coincidePendiente || !coincidePrimeraPagina) continue
+            const existe = currentItems.some(item => item.id === ventaNueva.id)
+            if (existe) continue
+            const nextItems = [ventaNueva, ...currentItems]
+            qc.setQueryData(queryKey, {
+                ...current,
+                items: nextItems,
+                total: typeof current?.total === 'number' ? current.total + 1 : current?.total,
+            })
+        }
+    }
+
     const convertir = useMutation({
         mutationFn: pagos => api.post(`/presupuestos/${presupuesto.id}/convertir-venta`, pagos),
-        onSuccess: async () => {
-            await Promise.all([
-                qc.invalidateQueries(['presupuestos']),
-                qc.invalidateQueries(['ventas'])
-            ])
-            onClose()
+        onSuccess: response => {
+            const ventaNueva = response?.data
+            removerPresupuestoDeCache(presupuesto.id)
+            insertarVentaEnCache(ventaNueva)
+            onClose(ventaNueva)
+            Promise.all([
+                qc.invalidateQueries({ queryKey: ['presupuestos'] }),
+                qc.invalidateQueries({ queryKey: ['ventas-optimizado'] }),
+                qc.invalidateQueries({ queryKey: ['ventas'] }),
+            ]).catch(() => {})
         }
     })
     const confirmNavigation = usePendingNavigationGuard(convertir.isPending, 'La conversion a venta aun se esta procesando. ¿Seguro que desea salir de esta vista?')
@@ -443,27 +486,33 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const actualizarCachePresupuestos = (presupuestoActualizado) => {
         const queries = qc.getQueriesData({ queryKey: ['presupuestos'] })
         for (const [queryKey, current] of queries) {
-            if (!Array.isArray(current)) continue
+            const currentItems = Array.isArray(current)
+                ? current
+                : (Array.isArray(current?.items) ? current.items : null)
+            if (!currentItems) continue
             const [, estadoActual = '', vendedorActual = '', canalActual = ''] = Array.isArray(queryKey) ? queryKey : []
             const coincide = presupuestoCoincideConFiltro(presupuestoActualizado, estadoActual, vendedorActual, canalActual)
-            const existente = current.some(item => item.id === presupuestoActualizado.id)
+            const existente = currentItems.some(item => item.id === presupuestoActualizado.id)
 
             if (esEdicion) {
                 if (existente && !coincide) {
-                    qc.setQueryData(queryKey, current.filter(item => item.id !== presupuestoActualizado.id))
+                    const nextItems = currentItems.filter(item => item.id !== presupuestoActualizado.id)
+                    qc.setQueryData(queryKey, Array.isArray(current) ? nextItems : { ...current, items: nextItems })
                     continue
                 }
                 if (coincide) {
                     const actualizado = existente
-                        ? current.map(item => item.id === presupuestoActualizado.id ? presupuestoActualizado : item)
-                        : [presupuestoActualizado, ...current]
-                    qc.setQueryData(queryKey, actualizado.slice(0, 100))
+                        ? currentItems.map(item => item.id === presupuestoActualizado.id ? presupuestoActualizado : item)
+                        : [presupuestoActualizado, ...currentItems]
+                    const limited = actualizado.slice(0, 100)
+                    qc.setQueryData(queryKey, Array.isArray(current) ? limited : { ...current, items: limited })
                 }
                 continue
             }
 
             if (coincide && !existente) {
-                qc.setQueryData(queryKey, [presupuestoActualizado, ...current].slice(0, 100))
+                const nextItems = [presupuestoActualizado, ...currentItems].slice(0, 100)
+                qc.setQueryData(queryKey, Array.isArray(current) ? nextItems : { ...current, items: nextItems })
             }
         }
     }
@@ -774,21 +823,21 @@ export default function PresupuestosPage() {
     const { data: vendedoresFiltro = [] } = useQuery({ queryKey: ['presupuestos-vendedores-filtro'], queryFn: () => api.get('/vendedores/?solo_activos=true&limit=200').then(r => r.data), retry: false })
     const { data: canalesFiltro = [] } = useQuery({ queryKey: ['presupuestos-canales-filtro'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data), retry: false })
 
-    const { data: presupuestos = [], isLoading } = useQuery({
-        queryKey: ['presupuestos', estadoFiltro, vendedorFiltro, canalFiltro],
+    const { data: presupuestosData, isLoading } = useQuery({
+        queryKey: ['presupuestos', estadoFiltro, vendedorFiltro, canalFiltro, buscar],
         queryFn: () => {
-            const params = new URLSearchParams({ limit: '100' })
+            const params = new URLSearchParams({ page: '1', page_size: '100' })
             if (estadoFiltro) params.append('estado', estadoFiltro)
             if (vendedorFiltro) params.append('vendedor_id', vendedorFiltro)
             if (canalFiltro) params.append('canal_venta_id', canalFiltro)
-            return api.get(`/presupuestos/?${params.toString()}`).then(r => r.data)
+            if (buscar.trim()) params.append('search', buscar.trim())
+            return api.get(`/presupuestos/listado-optimizado?${params.toString()}`).then(r => r.data)
         },
         retry: false,
     })
 
-    const filtrados = buscar
-        ? presupuestos.filter(p => p.cliente_nombre?.toLowerCase().includes(buscar.toLowerCase()) || p.codigo?.includes(buscar))
-        : presupuestos
+    const presupuestos = Array.isArray(presupuestosData?.items) ? presupuestosData.items : []
+    const filtrados = presupuestos
 
     const cambiarEstado = useMutation({
         mutationFn: ({ id, estado }) => api.patch(`/presupuestos/${id}/estado?estado=${estado}`),

@@ -253,6 +253,21 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         if "idx_producto_marca_id" not in index_names:
             connection.execute(text("CREATE INDEX idx_producto_marca_id ON productos (marca_id)"))
 
+        if "presupuestos" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_presupuesto_estado_fecha ON presupuestos (estado, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_presupuesto_cliente_fecha ON presupuestos (cliente_id, fecha)"))
+
+        if "ventas" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_venta_fecha_estado ON ventas (fecha, estado)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_venta_cliente_fecha ON ventas (cliente_id, fecha)"))
+
+        if "pagos" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_pago_venta_fecha ON pagos (venta_id, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_pago_grupo_fecha ON pagos (grupo_pago_id, fecha)"))
+
+        if "movimientos_banco" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_banco_fecha ON movimientos_banco (banco_id, fecha)"))
+
     _tenant_schema_checked.add(tenant_slug)
 
 

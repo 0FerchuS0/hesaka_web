@@ -175,6 +175,8 @@ class Presupuesto(Base):
         Index('idx_presupuesto_fecha', 'fecha'),
         Index('idx_presupuesto_estado', 'estado'),
         Index('idx_presupuesto_cliente', 'cliente_id'),
+        Index('idx_presupuesto_estado_fecha', 'estado', 'fecha'),
+        Index('idx_presupuesto_cliente_fecha', 'cliente_id', 'fecha'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     codigo = Column(String(50), unique=True, nullable=False)
@@ -232,6 +234,8 @@ class Venta(Base):
         Index('idx_venta_fecha', 'fecha'),
         Index('idx_venta_estado', 'estado'),
         Index('idx_venta_cliente', 'cliente_id'),
+        Index('idx_venta_fecha_estado', 'fecha', 'estado'),
+        Index('idx_venta_cliente_fecha', 'cliente_id', 'fecha'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     codigo = Column(String(50), unique=True, nullable=False)
@@ -263,6 +267,8 @@ class Pago(Base):
     __table_args__ = (
         Index('idx_pago_fecha', 'fecha'),
         Index('idx_pago_venta', 'venta_id'),
+        Index('idx_pago_venta_fecha', 'venta_id', 'fecha'),
+        Index('idx_pago_grupo_fecha', 'grupo_pago_id', 'fecha'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     venta_id = Column(Integer, ForeignKey('ventas.id'), nullable=False)
@@ -342,6 +348,7 @@ class MovimientoBanco(Base):
         Index('idx_mov_banco_fecha', 'fecha'),
         Index('idx_mov_banco_tipo', 'tipo'),
         Index('idx_mov_banco_banco_id', 'banco_id'),
+        Index('idx_mov_banco_banco_fecha', 'banco_id', 'fecha'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     banco_id = Column(Integer, ForeignKey('bancos.id'), nullable=False)

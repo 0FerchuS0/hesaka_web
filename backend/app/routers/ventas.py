@@ -20,6 +20,7 @@ from app.schemas.schemas import (
     VentaOut, VentaCreate, PresupuestoOut, PresupuestoCreate,
     PagoCreate, PagoOut, PagoMultipleCreate, PagoMultipleItem, GrupoPagoOut,
     VentaListItemOut, VentaListResponseOut,
+    PresupuestoListItemOut, PresupuestoListResponseOut,
     VentasPdfMultipleRequest, AjusteVentaCreate, AjusteVentaUpdate,
     AjusteVentaOut, AjusteVentaListResponseOut, PresupuestoAsignacionComercialIn
 )
@@ -300,6 +301,113 @@ def listar_presupuestos(
             q = q.filter(Presupuesto.canal_venta_id == canal_venta_id)
         pres = q.order_by(Presupuesto.fecha.desc()).offset(skip).limit(limit).all()
         return [_build_presupuesto_out(p) for p in pres]
+    finally:
+        session.close()
+
+
+@pre_router.get("/listado-optimizado", response_model=PresupuestoListResponseOut)
+def listar_presupuestos_optimizado(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    estado: Optional[str] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = (
+            session.query(
+                Presupuesto.id,
+                Presupuesto.codigo,
+                Presupuesto.fecha,
+                Presupuesto.estado,
+                Presupuesto.cliente_id,
+                Cliente.nombre.label("cliente_nombre"),
+                Presupuesto.total,
+                Presupuesto.graduacion_od_esfera,
+                Presupuesto.graduacion_od_cilindro,
+                Presupuesto.graduacion_od_eje,
+                Presupuesto.graduacion_oi_esfera,
+                Presupuesto.graduacion_oi_cilindro,
+                Presupuesto.graduacion_oi_eje,
+                Presupuesto.vendedor_id,
+                Vendedor.nombre.label("vendedor_nombre"),
+                Presupuesto.canal_venta_id,
+                CanalVenta.nombre.label("canal_venta_nombre"),
+                Presupuesto.referidor_id,
+                Referidor.nombre.label("referidor_nombre"),
+                Presupuesto.comision_monto,
+            )
+            .outerjoin(Cliente, Presupuesto.cliente_id == Cliente.id)
+            .outerjoin(Vendedor, Presupuesto.vendedor_id == Vendedor.id)
+            .outerjoin(CanalVenta, Presupuesto.canal_venta_id == CanalVenta.id)
+            .outerjoin(Referidor, Presupuesto.referidor_id == Referidor.id)
+        )
+
+        if estado:
+            query = query.filter(Presupuesto.estado == estado)
+        if vendedor_id:
+            query = query.filter(Presupuesto.vendedor_id == vendedor_id)
+        if canal_venta_id:
+            query = query.filter(Presupuesto.canal_venta_id == canal_venta_id)
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Presupuesto.codigo.ilike(term),
+                    Cliente.nombre.ilike(term),
+                    Vendedor.nombre.ilike(term),
+                    CanalVenta.nombre.ilike(term),
+                )
+            )
+
+        total = query.order_by(None).count()
+        total_pages = ceil(total / page_size) if total else 1
+        offset = (page - 1) * page_size
+        rows = (
+            query
+            .order_by(Presupuesto.fecha.desc(), Presupuesto.id.desc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+
+        items = [
+            PresupuestoListItemOut(
+                id=row.id,
+                codigo=row.codigo,
+                fecha=row.fecha,
+                estado=row.estado,
+                cliente_id=row.cliente_id,
+                cliente_nombre=row.cliente_nombre,
+                total=float(row.total or 0.0),
+                graduacion_od_esfera=row.graduacion_od_esfera,
+                graduacion_od_cilindro=row.graduacion_od_cilindro,
+                graduacion_od_eje=row.graduacion_od_eje,
+                graduacion_oi_esfera=row.graduacion_oi_esfera,
+                graduacion_oi_cilindro=row.graduacion_oi_cilindro,
+                graduacion_oi_eje=row.graduacion_oi_eje,
+                vendedor_id=row.vendedor_id,
+                vendedor_nombre=row.vendedor_nombre,
+                canal_venta_id=row.canal_venta_id,
+                canal_venta_nombre=row.canal_venta_nombre,
+                referidor_id=row.referidor_id,
+                referidor_nombre=row.referidor_nombre,
+                comision_monto=float(row.comision_monto or 0.0),
+            )
+            for row in rows
+        ]
+
+        return PresupuestoListResponseOut(
+            items=items,
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        )
     finally:
         session.close()
 

@@ -13,6 +13,10 @@ export default defineConfig({
           // En desarrollo, simular un tenant via header
           'X-Tenant-Slug': 'demo'
         }
+      },
+      '/media': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
       }
     }
   }

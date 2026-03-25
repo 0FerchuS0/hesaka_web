@@ -12,6 +12,7 @@ export default function LoginPage() {
     const [form, setForm] = useState({ email: '', password: '' })
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
+    const [logoRequestVersion] = useState(() => Date.now())
 
     const { data: configPublica } = useQuery({
         queryKey: ['configuracion-general-publica'],
@@ -30,9 +31,13 @@ export default function LoginPage() {
     const logoUrl = useMemo(() => {
         const logoPath = configPublica?.logo_path
         if (!logoPath) return ''
-        if (/^https?:\/\//i.test(logoPath)) return logoPath
-        return `${backendBaseUrl}${logoPath}`
-    }, [backendBaseUrl, configPublica?.logo_path])
+        const apiBase = api.defaults.baseURL || ''
+        const baseUrl = /^https?:\/\//i.test(logoPath)
+            ? logoPath
+            : (typeof apiBase === 'string' && /^https?:\/\//i.test(apiBase) ? `${backendBaseUrl}${logoPath}` : logoPath)
+        const separator = baseUrl.includes('?') ? '&' : '?'
+        return `${baseUrl}${separator}v=${logoRequestVersion}`
+    }, [backendBaseUrl, configPublica?.logo_path, logoRequestVersion])
 
     const handleSubmit = async event => {
         event.preventDefault()

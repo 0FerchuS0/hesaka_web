@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import time_ns
 
 from fastapi import HTTPException, UploadFile
 
@@ -35,7 +36,7 @@ def save_logo_for_tenant(tenant_slug: str, upload: UploadFile) -> str:
     for existing in logo_dir.glob("logo.*"):
         existing.unlink(missing_ok=True)
 
-    destination = logo_dir / f"logo{ext}"
+    destination = logo_dir / f"logo-{time_ns()}{ext}"
     size = 0
     with destination.open("wb") as output:
         while True:

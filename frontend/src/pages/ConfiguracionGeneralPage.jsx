@@ -12,6 +12,7 @@ export default function ConfiguracionGeneralPage() {
     const queryClient = useQueryClient()
     const { user } = useAuth()
     const logoInputRef = useRef(null)
+    const [logoRequestVersion, setLogoRequestVersion] = useState(() => Date.now())
     const [form, setForm] = useState({
         nombre: '',
         ruc: '',
@@ -49,9 +50,13 @@ export default function ConfiguracionGeneralPage() {
 
     const logoPreviewUrl = useMemo(() => {
         if (!form.logo_path) return ''
-        if (/^https?:\/\//i.test(form.logo_path)) return form.logo_path
-        return `${backendBaseUrl}${form.logo_path}`
-    }, [backendBaseUrl, form.logo_path])
+        const apiBase = api.defaults.baseURL || ''
+        const baseUrl = /^https?:\/\//i.test(form.logo_path)
+            ? form.logo_path
+            : (typeof apiBase === 'string' && /^https?:\/\//i.test(apiBase) ? `${backendBaseUrl}${form.logo_path}` : form.logo_path)
+        const separator = baseUrl.includes('?') ? '&' : '?'
+        return `${baseUrl}${separator}v=${logoRequestVersion}`
+    }, [backendBaseUrl, form.logo_path, logoRequestVersion])
 
     const guardar = useMutation({
         mutationFn: payload => api.put('/configuracion-general/', payload).then(response => response.data),
@@ -74,6 +79,8 @@ export default function ConfiguracionGeneralPage() {
         onSuccess: response => {
             queryClient.setQueryData(['configuracion-general'], response)
             queryClient.invalidateQueries({ queryKey: ['configuracion-general'] })
+            queryClient.invalidateQueries({ queryKey: ['configuracion-general-publica'] })
+            setLogoRequestVersion(Date.now())
             setForm(prev => ({ ...prev, logo_path: response.logo_path || '' }))
         },
     })

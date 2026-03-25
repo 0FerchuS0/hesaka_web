@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, CheckSquare, Eye, FileText, PackagePlus, Pencil, Plus, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react'
+import { AlertCircle, CheckSquare, Eye, FileText, PackagePlus, Pencil, Plus, Search, ShoppingCart, Trash2, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
 
 import Modal from '../components/Modal'
 import { api, useAuth } from '../context/AuthContext'
@@ -775,12 +776,11 @@ function EstadoEntregaModal({ compra, onClose }) {
     )
 }
 
-function CompraRowActions({ compra, onVer, onEditar, onPagar, onEntrega, onPDF, onEliminar, user, pdfOpeningId, deletingId }) {
+function CompraRowActions({ compra, onVer, onEditar, onEntrega, onPDF, onEliminar, user, pdfOpeningId, deletingId }) {
     const [open, setOpen] = useState(false)
     const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
     const buttonRef = useRef(null)
     const puedeEditar = hasActionAccess(user, 'compras.editar', 'compras')
-    const puedePagar = hasActionAccess(user, 'compras.pagar', 'compras')
     const puedeEntrega = hasActionAccess(user, 'compras.entrega', 'compras')
     const puedeExportar = hasActionAccess(user, 'compras.exportar', 'compras')
     const puedeAnular = hasActionAccess(user, 'compras.anular', 'compras')
@@ -789,9 +789,14 @@ function CompraRowActions({ compra, onVer, onEditar, onPagar, onEntrega, onPDF, 
         if (!open && buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect()
             const menuWidth = 210
+            const menuHeight = 220
             const viewportWidth = window.innerWidth
+            const viewportHeight = window.innerHeight
             const left = Math.max(12, Math.min(rect.right - menuWidth, viewportWidth - menuWidth - 12))
-            setMenuPos({ top: rect.bottom + 6, left })
+            const top = rect.bottom + menuHeight + 12 > viewportHeight
+                ? Math.max(12, rect.top - menuHeight - 6)
+                : rect.bottom + 6
+            setMenuPos({ top, left })
         }
         setOpen(prev => !prev)
     }
@@ -804,7 +809,16 @@ function CompraRowActions({ compra, onVer, onEditar, onPagar, onEntrega, onPDF, 
     const deletingBusy = deletingId === compra.id
 
     return (
-        <div style={{ position: 'relative', display: 'flex', justifyContent: 'flex-end', gap: 8, minWidth: 170 }}>
+        <div
+            style={{
+                position: 'relative',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 8,
+                minWidth: 170,
+                zIndex: open ? 140 : 1,
+            }}
+        >
             <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -823,24 +837,24 @@ function CompraRowActions({ compra, onVer, onEditar, onPagar, onEntrega, onPDF, 
                  Acciones v
               </button>
 
-            {open && (
+            {open && createPortal(
                 <>
                     <div
-                        style={{ position: 'fixed', inset: 0, zIndex: 90 }}
+                        style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
                         onClick={() => setOpen(false)}
                     />
-                      <div
-                          style={{
-                              position: 'fixed',
-                              top: menuPos.top,
-                              left: menuPos.left,
-                              minWidth: 210,
-                              background: 'var(--bg-card)',
-                              border: '1px solid var(--border)',
+                    <div
+                        style={{
+                            position: 'fixed',
+                            top: menuPos.top,
+                            left: menuPos.left,
+                            minWidth: 210,
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border)',
                             borderRadius: 10,
                             boxShadow: '0 14px 34px rgba(0,0,0,0.45)',
                             padding: '6px 0',
-                            zIndex: 100,
+                            zIndex: 9999,
                         }}
                     >
                         {puedeEditar && (
@@ -851,11 +865,6 @@ function CompraRowActions({ compra, onVer, onEditar, onPagar, onEntrega, onPDF, 
                         {puedeEntrega && (
                             <button className="dropdown-item" onClick={() => handleAction(() => onEntrega(compra))}>
                                 <CheckSquare size={14} style={{ marginRight: 8 }} /> Cambiar entrega
-                            </button>
-                        )}
-                        {puedePagar && compra.saldo > 0 && (
-                            <button className="dropdown-item" onClick={() => handleAction(() => onPagar(compra))}>
-                                <Wallet size={14} style={{ marginRight: 8 }} /> Gestionar pagos
                             </button>
                         )}
                         {puedeExportar && (
@@ -877,7 +886,8 @@ function CompraRowActions({ compra, onVer, onEditar, onPagar, onEntrega, onPDF, 
                             </>
                         )}
                     </div>
-                </>
+                </>,
+                document.body
             )}
         </div>
     )
@@ -891,7 +901,6 @@ export default function ComprasPage() {
     const [estadoFiltro, setEstadoFiltro] = useState('')
     const [showCreate, setShowCreate] = useState(false)
     const [compraFormId, setCompraFormId] = useState(null)
-    const [compraPago, setCompraPago] = useState(null)
     const [compraDetalle, setCompraDetalle] = useState(null)
     const [compraEntrega, setCompraEntrega] = useState(null)
     const [page, setPage] = useState(1)
@@ -1024,29 +1033,40 @@ export default function ComprasPage() {
                 ) : filtradas.length === 0 ? (
                     <div className="empty-state"><ShoppingCart size={40} /><p>{estadoFiltro === 'PENDIENTE' ? 'No hay compras pendientes.' : 'No hay compras.'}</p></div>
                 ) : (
-                    <div className="table-container" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
-                        <table style={{ minWidth: 1180, tableLayout: 'fixed' }}>
+                    <div className="table-container" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden' }}>
+                        <table style={{ minWidth: 980, tableLayout: 'fixed' }}>
                             <thead>
                                 <tr>
                                     <th style={{ width: 90 }}>Fecha</th>
-                                    <th style={{ width: 220 }}>Proveedor</th>
-                                    <th style={{ width: 130 }}>Nro. OS</th>
+                                    <th style={{ width: 150 }}>Proveedor</th>
+                                    <th style={{ width: 80 }}>OS</th>
                                     <th style={{ width: 240 }}>Clientes</th>
-                                    <th style={{ width: 220 }}>Documento actual</th>
+                                    <th style={{ width: 150 }}>Doc.</th>
                                     <th style={{ width: 110 }}>Total</th>
                                     <th style={{ width: 110 }}>Saldo</th>
                                     <th style={{ width: 110 }}>Condicion</th>
                                     <th style={{ width: 110 }}>Estado</th>
                                     <th style={{ width: 110 }}>Entrega</th>
-                                    <th style={{ width: 190 }}>Acciones</th>
+                                    <th
+                                        style={{
+                                            width: 190,
+                                            position: 'sticky',
+                                            right: 0,
+                                            zIndex: 3,
+                                            background: 'var(--bg-card)',
+                                            boxShadow: '-10px 0 18px rgba(15, 23, 42, 0.24)',
+                                        }}
+                                    >
+                                        Acciones
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filtradas.map(compra => (
                                     <tr key={compra.id}>
                                         <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>{fmtDate(compra.fecha)}</td>
-                                        <td style={{ fontWeight: 500, whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{compra.proveedor_nombre || '-'}</td>
-                                        <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontFamily: 'monospace', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>
+                                        <td style={{ fontWeight: 500, whiteSpace: 'normal', lineHeight: 1.2, wordBreak: 'break-word' }}>{compra.proveedor_nombre || '-'}</td>
+                                        <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontFamily: 'monospace', whiteSpace: 'normal', lineHeight: 1.15, wordBreak: 'break-word' }}>
                                             {(
                                                 ((compra.tipo_documento_original || '').toUpperCase() === 'ORDEN_SERVICIO') ||
                                                 ((compra.tipo_documento || '').toUpperCase() === 'ORDEN_SERVICIO') ||
@@ -1058,20 +1078,33 @@ export default function ComprasPage() {
                                         <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>
                                             {compra.clientes_nombres?.length ? compra.clientes_nombres.join(', ') : '-'}
                                         </td>
-                                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>
-                                            {compra.tipo_documento} {compra.nro_factura || '-'}
+                                        <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-secondary)', whiteSpace: 'normal', lineHeight: 1.1, wordBreak: 'break-word' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                <span style={{ fontWeight: 700, letterSpacing: '0.04em' }}>
+                                                    {String(compra.tipo_documento || '').toUpperCase() === 'ORDEN_SERVICIO' ? 'OS' : 'FACT'}
+                                                </span>
+                                                <span>{compra.nro_factura || '-'}</span>
+                                            </div>
                                         </td>
                                         <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>Gs. {fmt(compra.total)}</td>
                                         <td style={{ color: compra.saldo > 0 ? 'var(--warning)' : 'var(--success)', fontWeight: compra.saldo > 0 ? 700 : 500, whiteSpace: 'nowrap' }}>{compra.saldo > 0 ? `Gs. ${fmt(compra.saldo)}` : 'OK'}</td>
                                         <td>{estadoBadge(compra.condicion_pago)}</td>
                                         <td>{estadoBadge(compra.estado)}</td>
                                         <td>{estadoBadge(compra.estado_entrega)}</td>
-                                        <td style={{ whiteSpace: 'nowrap' }}>
+                                        <td
+                                            style={{
+                                                whiteSpace: 'nowrap',
+                                                position: 'sticky',
+                                                right: 0,
+                                                zIndex: 2,
+                                                background: 'var(--bg-card)',
+                                                boxShadow: '-10px 0 18px rgba(15, 23, 42, 0.18)',
+                                            }}
+                                        >
                                             <CompraRowActions
                                                 compra={compra}
                                                 onVer={() => setCompraDetalle(compra)}
                                                 onEditar={() => setCompraFormId(compra.id)}
-                                                onPagar={() => setCompraPago(compra)}
                                                 onEntrega={() => setCompraEntrega(compra)}
                                                 onPDF={abrirPDF}
                                                 onEliminar={item => {
@@ -1109,7 +1142,6 @@ export default function ComprasPage() {
 
             {showCreate && <Modal title="Nueva Compra" onClose={() => setShowCreate(false)} maxWidth="1100px"><CompraFormModal onClose={() => setShowCreate(false)} /></Modal>}
             {compraFormId && <Modal title={`Editar Compra #${compraFormId}`} onClose={() => setCompraFormId(null)} maxWidth="1100px"><CompraFormModal compraId={compraFormId} onClose={() => setCompraFormId(null)} /></Modal>}
-            {compraPago && <Modal title={`Gestion de Pagos: ${compraPago.proveedor_nombre || 'Compra'}`} onClose={() => setCompraPago(null)} maxWidth="720px"><PagoCompraModal compra={compraPago} onClose={() => setCompraPago(null)} /></Modal>}
             {compraDetalle && <Modal title={`Detalle Compra #${compraDetalle.id}`} onClose={() => setCompraDetalle(null)} maxWidth="980px"><DetalleCompraModal compraId={compraDetalle.id} onClose={() => setCompraDetalle(null)} /></Modal>}
             {compraEntrega && <Modal title={`Estado de Entrega: Compra #${compraEntrega.id}`} onClose={() => setCompraEntrega(null)} maxWidth="520px"><EstadoEntregaModal compra={compraEntrega} onClose={() => setCompraEntrega(null)} /></Modal>}
         </div>

@@ -8,7 +8,13 @@ import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
-const abrirPresupuestoPdf = presupuestoId => window.open(`${api.defaults.baseURL}/presupuestos/${presupuestoId}/pdf`, '_blank', 'noopener,noreferrer')
+const abrirPresupuestoPdf = async presupuestoId => {
+    const response = await api.get(`/presupuestos/${presupuestoId}/pdf`, { responseType: 'blob' })
+    const file = new Blob([response.data], { type: 'application/pdf' })
+    const fileURL = URL.createObjectURL(file)
+    window.open(fileURL, '_blank')
+    setTimeout(() => URL.revokeObjectURL(fileURL), 30000)
+}
 const estadoBadge = e => {
     const m = { PENDIENTE: 'badge-yellow', VENDIDO: 'badge-green', VENCIDO: 'badge-red', CANCELADO: 'badge-gray' }
     return <span className={`badge ${m[e] || 'badge-gray'}`}>{e}</span>
@@ -280,18 +286,6 @@ function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
         })
     }
 
-    const handleAbrirPdf = async (presupuestoId) => {
-        if (pdfOpeningId === presupuestoId) return
-        setPdfOpeningId(presupuestoId)
-        try {
-            abrirPresupuestoPdf(presupuestoId)
-        } finally {
-            setTimeout(() => {
-                setPdfOpeningId(current => (current === presupuestoId ? null : current))
-            }, 1500)
-        }
-    }
-
     return (
         <form onSubmit={submit}>
             <div style={{ background: 'rgba(26,86,219,0.06)', border: '1px solid rgba(26,86,219,0.15)', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
@@ -329,7 +323,7 @@ function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
             )}
 
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={crear.isPending}>Cancelar</button>
+                <button type="button" className="btn btn-secondary" onClick={onClose} disabled={guardar.isPending}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={guardar.isPending}>
                     {guardar.isPending ? 'Guardando...' : 'Guardar asignacion'}
                 </button>
@@ -851,6 +845,33 @@ export default function PresupuestosPage() {
         onSettled: () => setDeletingId(null)
     })
 
+    const handleAbrirPdf = async (presupuestoId) => {
+        if (pdfOpeningId === presupuestoId) return
+        setPdfOpeningId(presupuestoId)
+        try {
+            await abrirPresupuestoPdf(presupuestoId)
+        } catch (error) {
+            window.alert(error?.response?.data?.detail || 'No se pudo cargar el PDF del presupuesto.')
+        } finally {
+            setTimeout(() => {
+                setPdfOpeningId(current => (current === presupuestoId ? null : current))
+            }, 1500)
+        }
+    }
+
+    const handleEditar = async (presupuestoId) => {
+        if (editingId === presupuestoId) return
+        setEditingId(presupuestoId)
+        try {
+            const response = await api.get(`/presupuestos/${presupuestoId}`)
+            setEditarPre(response.data)
+        } catch (error) {
+            window.alert(error?.response?.data?.detail || 'No se pudo cargar el presupuesto para editar.')
+        } finally {
+            setEditingId(null)
+        }
+    }
+
     const handleEliminar = (p) => {
         if (deletingId === p.id) return
         if (window.confirm(`¿Eliminar el presupuesto ${p.codigo}? Esta acción no se puede deshacer.`)) {
@@ -909,7 +930,7 @@ export default function PresupuestosPage() {
                             </thead>
                             <tbody>
                                 {filtrados.map(p => {
-                                    const rowBusy = pdfOpeningId === p.id || cancelingId === p.id || deletingId === p.id
+                                    const rowBusy = pdfOpeningId === p.id || cancelingId === p.id || deletingId === p.id || editingId === p.id || convertingId === p.id
                                     return (
                                     <tr key={p.id}>
                                         <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{p.codigo}</td>
@@ -934,8 +955,8 @@ export default function PresupuestosPage() {
                                                     <button className="btn btn-primary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setConvertirPre(p)} disabled={rowBusy}>
                                                         <ShoppingBag size={12} /> Vender
                                                     </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setEditarPre(p)} disabled={rowBusy}>
-                                                        ✏️ Editar
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleEditar(p.id)} disabled={rowBusy}>
+                                                        {editingId === p.id ? 'Cargando...' : '✏️ Editar'}
                                                     </button>
                                                     <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem', color: 'var(--warning)' }} onClick={() => { setCancelingId(p.id); cambiarEstado.mutate({ id: p.id, estado: 'CANCELADO' }) }} disabled={rowBusy}>
                                                         Cancelar

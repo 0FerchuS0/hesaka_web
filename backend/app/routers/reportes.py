@@ -7,7 +7,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from app.database import get_session_for_tenant
-from app.models.models import Banco, CanalVenta, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem
+from app.models.models import Banco, CanalVenta, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem, CompraDetalle
 from app.utils.auth import get_current_user
 from app.middleware.tenant import get_tenant_slug
 from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
@@ -341,20 +341,48 @@ def _construir_query_base_ventas(
     return query
 
 
-def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fecha_hasta: datetime):
-    base_sq = _construir_query_base_ventas(session, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta).subquery()
+def _build_compra_costos_por_item_sq(session: Session):
+    return (
+        session.query(
+            CompraDetalle.presupuesto_item_id.label("presupuesto_item_id"),
+            func.coalesce(func.sum(CompraDetalle.subtotal), 0.0).label("costo_real_total"),
+        )
+        .filter(CompraDetalle.presupuesto_item_id.isnot(None))
+        .group_by(CompraDetalle.presupuesto_item_id)
+        .subquery()
+    )
 
-    costos_sq = (
+
+def _build_costos_por_venta_sq(session: Session, base_sq):
+    compra_costos_sq = _build_compra_costos_por_item_sq(session)
+    return (
         session.query(
             base_sq.c.venta_id.label("venta_id"),
-            func.coalesce(func.sum(PresupuestoItem.costo_unitario * PresupuestoItem.cantidad), 0.0).label("costo_total"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            compra_costos_sq.c.presupuesto_item_id.isnot(None),
+                            compra_costos_sq.c.costo_real_total,
+                        ),
+                        else_=func.coalesce(PresupuestoItem.costo_unitario, 0.0) * func.coalesce(PresupuestoItem.cantidad, 0),
+                    )
+                ),
+                0.0,
+            ).label("costo_total"),
         )
         .select_from(base_sq)
         .outerjoin(Presupuesto, Presupuesto.id == base_sq.c.presupuesto_id)
         .outerjoin(PresupuestoItem, PresupuestoItem.presupuesto_id == Presupuesto.id)
+        .outerjoin(compra_costos_sq, compra_costos_sq.c.presupuesto_item_id == PresupuestoItem.id)
         .group_by(base_sq.c.venta_id)
         .subquery()
     )
+
+
+def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fecha_hasta: datetime):
+    base_sq = _construir_query_base_ventas(session, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta).subquery()
+    costos_sq = _build_costos_por_venta_sq(session, base_sq)
 
     comisiones_banco_sq = (
         session.query(
@@ -541,6 +569,16 @@ def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fe
     total_costos = 0.0
     total_comisiones_referidor = 0.0
     total_comisiones_bancarias = 0.0
+    compra_costos_por_item = {
+        int(row.presupuesto_item_id): float(row.costo_real_total or 0.0)
+        for row in session.query(
+            CompraDetalle.presupuesto_item_id.label("presupuesto_item_id"),
+            func.coalesce(func.sum(CompraDetalle.subtotal), 0.0).label("costo_real_total"),
+        )
+        .filter(CompraDetalle.presupuesto_item_id.isnot(None))
+        .group_by(CompraDetalle.presupuesto_item_id)
+        .all()
+    }
 
     for venta in ventas_db:
         total_ventas += float(venta.total or 0.0)
@@ -548,9 +586,13 @@ def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fe
         presupuesto = venta.presupuesto_rel
         if presupuesto and presupuesto.items:
             for item in presupuesto.items:
-                costo_unitario = float(getattr(item, 'costo_unitario', 0.0) or 0.0)
-                cantidad = int(getattr(item, 'cantidad', 0) or 0)
-                total_costos += costo_unitario * cantidad
+                costo_compra_real = compra_costos_por_item.get(int(item.id), None)
+                if costo_compra_real is not None:
+                    total_costos += costo_compra_real
+                else:
+                    costo_unitario = float(getattr(item, 'costo_unitario', 0.0) or 0.0)
+                    cantidad = int(getattr(item, 'cantidad', 0) or 0)
+                    total_costos += costo_unitario * cantidad
 
         total_comisiones_referidor += float(getattr(venta, 'comision_monto', 0.0) or 0.0)
 
@@ -852,17 +894,7 @@ def _obtener_datos_reporte_ventas(
         canal_venta_id=canal_venta_id,
     ).subquery()
 
-    costos_sq = (
-        session.query(
-            base_sq.c.venta_id.label("venta_id"),
-            func.coalesce(func.sum(PresupuestoItem.costo_unitario * PresupuestoItem.cantidad), 0.0).label("costo_total"),
-        )
-        .select_from(base_sq)
-        .outerjoin(Presupuesto, Presupuesto.id == base_sq.c.presupuesto_id)
-        .outerjoin(PresupuestoItem, PresupuestoItem.presupuesto_id == Presupuesto.id)
-        .group_by(base_sq.c.venta_id)
-        .subquery()
-    )
+    costos_sq = _build_costos_por_venta_sq(session, base_sq)
 
     comisiones_banco_sq = (
         session.query(

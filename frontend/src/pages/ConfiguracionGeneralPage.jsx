@@ -22,6 +22,9 @@ export default function ConfiguracionGeneralPage() {
         logo_path: '',
     })
 
+    const role = String(user?.rol || '').toUpperCase()
+    const canEdit = role === 'ADMIN'
+
     const { data, isLoading, isError, error } = useQuery({
         queryKey: ['configuracion-general'],
         queryFn: () => api.get('/configuracion-general/').then(response => response.data),
@@ -60,10 +63,10 @@ export default function ConfiguracionGeneralPage() {
 
     const guardar = useMutation({
         mutationFn: payload => api.put('/configuracion-general/', payload).then(response => response.data),
-        onSuccess: response => {
+        onSuccess: async response => {
             queryClient.setQueryData(['configuracion-general'], response)
-            queryClient.invalidateQueries({ queryKey: ['configuracion-general'] })
-            queryClient.invalidateQueries({ queryKey: ['configuracion-general-estado'] })
+            await queryClient.invalidateQueries({ queryKey: ['configuracion-general'] })
+            await queryClient.invalidateQueries({ queryKey: ['configuracion-general-estado'] })
         },
     })
 
@@ -76,18 +79,16 @@ export default function ConfiguracionGeneralPage() {
             })
             return response.data
         },
-        onSuccess: response => {
+        onSuccess: async response => {
             queryClient.setQueryData(['configuracion-general'], response)
-            queryClient.invalidateQueries({ queryKey: ['configuracion-general'] })
-            queryClient.invalidateQueries({ queryKey: ['configuracion-general-publica'] })
+            await queryClient.invalidateQueries({ queryKey: ['configuracion-general'] })
+            await queryClient.invalidateQueries({ queryKey: ['configuracion-general-publica'] })
             setLogoRequestVersion(Date.now())
             setForm(prev => ({ ...prev, logo_path: response.logo_path || '' }))
         },
     })
 
     const setField = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
-    const role = String(user?.rol || '').toUpperCase()
-    const canEdit = role === 'ADMIN'
     const nombrePreview = form.nombre.trim() || 'Canal principal pendiente'
 
     const handleSubmit = event => {

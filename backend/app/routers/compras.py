@@ -248,19 +248,9 @@ def _recalcular_estado_compra(compra: Compra):
 
 
 def _recalcular_costo_producto(session, producto_id: int):
-    producto = session.query(Producto).filter(Producto.id == producto_id).first()
-    if not producto:
-        return
-
-    detalle = (
-        session.query(CompraDetalle)
-        .join(Compra, Compra.id == CompraDetalle.compra_id)
-        .filter(CompraDetalle.producto_id == producto_id)
-        .order_by(Compra.fecha.desc(), CompraDetalle.id.desc())
-        .first()
-    )
-    if detalle and detalle.cantidad:
-        producto.costo = detalle.subtotal / detalle.cantidad
+    # El costo maestro del producto se mantiene estable y no debe ser pisado
+    # por compras promocionales o transitorias.
+    return
 
 
 def _calcular_estado_entrega_venta(session, venta: Venta) -> Optional[str]:
@@ -600,17 +590,12 @@ def _aplicar_items_compra(session, compra: Compra, items_data) -> dict[int, floa
             if producto:
                 producto.stock_actual = (producto.stock_actual or 0) + item_data.cantidad
                 costo_real = (item_data.subtotal / item_data.cantidad) if item_data.cantidad > 0 else item_data.costo_unitario
-                producto.costo = costo_real
                 costos_reales[item_data.producto_id] = costo_real
     return costos_reales
 
 
 def _actualizar_ventas_y_costos(session, ventas: List[Venta], costos_reales: dict[int, float]):
     for venta in ventas:
-        if venta.presupuesto_rel:
-            for presupuesto_item in venta.presupuesto_rel.items:
-                if presupuesto_item.producto_id in costos_reales:
-                    presupuesto_item.costo_unitario = costos_reales[presupuesto_item.producto_id]
         nuevo_estado = _calcular_estado_entrega_venta(session, venta)
         if nuevo_estado:
             venta.estado_entrega = nuevo_estado

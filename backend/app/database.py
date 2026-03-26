@@ -20,6 +20,68 @@ _engines: dict = {}
 _tenant_schema_checked: set[str] = set()
 _tenant_init_lock = Lock()
 
+TIMESTAMP_FALLBACKS = {
+    "categorias": None,
+    "atributos": None,
+    "proveedores": None,
+    "marcas": None,
+    "productos": None,
+    "referidores": None,
+    "vendedores": None,
+    "canales_venta": None,
+    "clientes": "fecha_registro",
+    "presupuesto_grupos": "fecha_creacion",
+    "presupuestos": "fecha",
+    "presupuesto_items": None,
+    "ventas": "fecha",
+    "pagos": "fecha",
+    "ajustes_venta": "fecha",
+    "ajustes_venta_items": None,
+    "comisiones": "fecha",
+    "bancos": None,
+    "movimientos_banco": "fecha",
+    "compra_ventas": None,
+    "compras": "fecha",
+    "compra_detalles": None,
+    "pagos_compras": "fecha",
+    "categorias_gasto": None,
+    "gastos_operativos": "fecha",
+    "movimientos_caja": "fecha",
+    "configuracion_caja": None,
+    "configuracion_empresa": None,
+    "usuarios": "creado_en",
+}
+
+
+def ensure_sync_timestamp_columns(engine, inspector, table_names):
+    """Agrega y normaliza created_at/updated_at en tablas clave para sync incremental."""
+    with engine.begin() as connection:
+        for table_name, fallback_column in TIMESTAMP_FALLBACKS.items():
+            if table_name not in table_names:
+                continue
+
+            columns = {column["name"] for column in inspector.get_columns(table_name)}
+            if "created_at" not in columns:
+                connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN created_at TIMESTAMP"))
+            if "updated_at" not in columns:
+                connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN updated_at TIMESTAMP"))
+
+            timestamp_expr = "NOW()"
+            if fallback_column and fallback_column in columns:
+                timestamp_expr = fallback_column
+
+            connection.execute(text(
+                f"""
+                UPDATE {table_name}
+                SET created_at = COALESCE(created_at, {timestamp_expr}),
+                    updated_at = COALESCE(updated_at, created_at, {timestamp_expr})
+                WHERE created_at IS NULL OR updated_at IS NULL
+                """
+            ))
+            connection.execute(text(
+                f"CREATE INDEX IF NOT EXISTS idx_{table_name}_updated_at ON {table_name} (updated_at)"
+            ))
+
 
 def ensure_tenant_schema(engine, tenant_slug: str):
     """Aplica ajustes menores de esquema para tenants existentes."""
@@ -268,6 +330,10 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         if "movimientos_banco" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_banco_fecha ON movimientos_banco (banco_id, fecha)"))
 
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+    ensure_sync_timestamp_columns(engine, inspector, table_names)
+
     _tenant_schema_checked.add(tenant_slug)
 
 
@@ -300,6 +366,13 @@ def get_session_for_tenant(tenant_slug: str):
     engine = get_engine_for_tenant(tenant_slug)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal()
+
+
+def dispose_tenant_engine(tenant_slug: str):
+    engine = _engines.get(tenant_slug)
+    if engine is not None:
+        engine.dispose()
+    _tenant_schema_checked.discard(tenant_slug)
 
 
 def init_tenant_db(tenant_slug: str):

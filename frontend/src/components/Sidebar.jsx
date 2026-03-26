@@ -37,9 +37,10 @@ const navGroups = [
             {
                 to: '/configuracion-general',
                 icon: Building2,
-                label: 'Configuracion General',
+                label: 'Configuracion',
                 subItems: [
                     { to: '/configuracion-general', label: 'Datos Generales' },
+                    { to: '/configuracion-general/backups', label: 'Backups' },
                     { to: '/usuarios', label: 'Usuarios', icon: Shield },
                 ]
             },
@@ -186,6 +187,9 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                             if (sub.to === '/configuracion-general') {
                                 return normalizeRole(user?.rol) === 'ADMIN'
                             }
+                            if (sub.to === '/configuracion-general/backups') {
+                                return normalizeRole(user?.rol) === 'ADMIN'
+                            }
                             if (sub.to === '/usuarios') {
                                 return hasModuleAccess(user, 'usuarios')
                             }
@@ -294,9 +298,13 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                                             style={{ width: '100%', display: 'flex', justifyContent: collapsed ? 'center' : 'space-between' }}
                                             title={collapsed ? item.label : undefined}
                                         >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
                                                 <item.icon size={18} />
-                                                {!collapsed && item.label}
+                                                {!collapsed && (
+                                                    <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {item.label}
+                                                    </span>
+                                                )}
                                             </div>
                                             {!collapsed && (openMenus[item.to] ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
                                         </button>
@@ -330,7 +338,11 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                                         title={collapsed ? item.label : undefined}
                                     >
                                         <item.icon size={18} />
-                                        {!collapsed && item.label}
+                                        {!collapsed && (
+                                            <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {item.label}
+                                            </span>
+                                        )}
                                     </NavLink>
                                 )}
                             </div>

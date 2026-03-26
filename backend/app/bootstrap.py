@@ -6,7 +6,7 @@ import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 from app.config import settings
-from app.database import get_admin_session, init_tenant_db
+from app.database import get_admin_session, get_session_for_tenant, init_tenant_db
 from app.models.admin_models import Tenant
 from app.models.models import Usuario
 from app.utils.auth import hash_password
@@ -38,6 +38,39 @@ def _database_exists(cursor, db_name: str) -> bool:
     return cursor.fetchone() is not None
 
 
+def ensure_tenant_admin_user(tenant_slug: str) -> None:
+    admin_email = os.getenv("HESAKA_ADMIN_EMAIL", "admin@hesaka.com")
+    admin_password = os.getenv("HESAKA_ADMIN_PASSWORD", "admin123")
+    admin_name = os.getenv("HESAKA_ADMIN_NAME", "Admin HESAKA")
+
+    tenant_session = None
+    try:
+        tenant_session = get_session_for_tenant(tenant_slug)
+        has_users = tenant_session.query(Usuario.id).first() is not None
+        admin_user = tenant_session.query(Usuario).filter(Usuario.email == admin_email).first()
+
+        if admin_user:
+            admin_user.nombre_completo = admin_name
+            admin_user.rol = "ADMIN"
+            admin_user.activo = True
+            if not admin_user.hashed_password:
+                admin_user.hashed_password = hash_password(admin_password)
+        elif not has_users:
+            admin_user = Usuario(
+                email=admin_email,
+                hashed_password=hash_password(admin_password),
+                nombre_completo=admin_name,
+                rol="ADMIN",
+                activo=True,
+            )
+            tenant_session.add(admin_user)
+
+        tenant_session.commit()
+    finally:
+        if tenant_session:
+            tenant_session.close()
+
+
 def bootstrap_default_tenant():
     tenant_slug = settings.DEFAULT_TENANT_SLUG
     if not tenant_slug:
@@ -48,10 +81,6 @@ def bootstrap_default_tenant():
     tenant_email = os.getenv("HESAKA_TENANT_EMAIL", "demo@hesaka.com")
     tenant_phone = os.getenv("HESAKA_TENANT_PHONE", "")
     tenant_plan = os.getenv("HESAKA_TENANT_PLAN", "FULL")
-
-    admin_email = os.getenv("HESAKA_ADMIN_EMAIL", "admin@hesaka.com")
-    admin_password = os.getenv("HESAKA_ADMIN_PASSWORD", "admin123")
-    admin_name = os.getenv("HESAKA_ADMIN_NAME", "Admin HESAKA")
 
     maintenance_conn = _maintenance_connection()
     try:
@@ -88,30 +117,6 @@ def bootstrap_default_tenant():
         admin_session.close()
 
     init_tenant_db(tenant_slug)
-
-    tenant_session = None
-    try:
-        from app.database import get_session_for_tenant
-
-        tenant_session = get_session_for_tenant(tenant_slug)
-        admin_user = tenant_session.query(Usuario).filter(Usuario.email == admin_email).first()
-        if not admin_user:
-            admin_user = Usuario(
-                email=admin_email,
-                hashed_password=hash_password(admin_password),
-                nombre_completo=admin_name,
-                rol="ADMIN",
-                activo=True,
-            )
-            tenant_session.add(admin_user)
-        else:
-            admin_user.hashed_password = hash_password(admin_password)
-            admin_user.nombre_completo = admin_name
-            admin_user.rol = "ADMIN"
-            admin_user.activo = True
-        tenant_session.commit()
-    finally:
-        if tenant_session:
-            tenant_session.close()
+    ensure_tenant_admin_user(tenant_slug)
 
     logger.info("Bootstrap del tenant '%s' completado.", tenant_slug)

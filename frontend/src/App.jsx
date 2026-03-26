@@ -10,6 +10,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const UsuariosPage = lazy(() => import('./pages/UsuariosPage'))
 const ConfiguracionGeneralPage = lazy(() => import('./pages/ConfiguracionGeneralPage'))
+const ConfiguracionBackupsPage = lazy(() => import('./pages/ConfiguracionBackupsPage'))
 const ClientesPage = lazy(() => import('./pages/ClientesPage'))
 const ReferidoresPage = lazy(() => import('./pages/ReferidoresPage'))
 const VendedoresPage = lazy(() => import('./pages/VendedoresPage'))
@@ -133,7 +134,7 @@ function AppLayout() {
 
     const role = normalizeRole(user?.rol)
     const configIncomplete = estadoConfig && !estadoConfig.configuracion_completa
-    const inConfigRoute = location.pathname === '/configuracion-general'
+    const inConfigRoute = location.pathname.startsWith('/configuracion-general')
 
     if (loadingConfig) {
         return (
@@ -179,6 +180,7 @@ function AppLayout() {
                         <Route path="/" element={<HomeRoute />} />
                         <Route path="/usuarios" element={<RoleRoute allowedRoles="usuarios"><UsuariosPage /></RoleRoute>} />
                         <Route path="/configuracion-general" element={<ConfiguracionGeneralPage />} />
+                        <Route path="/configuracion-general/backups" element={<ConfiguracionBackupsPage />} />
                         <Route path="/clientes" element={<RoleRoute allowedRoles="catalogos"><ClientesPage /></RoleRoute>} />
                         <Route path="/clientes/saldos" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteSaldosClientesPage /></RoleRoute>} />
                         <Route path="/referidores" element={<RoleRoute allowedRoles="catalogos"><ReferidoresPage /></RoleRoute>} />

@@ -109,6 +109,30 @@ class ConfiguracionGeneralPublicaOut(BaseModel):
     canal_principal_nombre: Optional[str] = None
 
 
+class BackupItemOut(BaseModel):
+    filename: str
+    size_bytes: int
+    created_at: datetime
+
+
+class BackupListOut(BaseModel):
+    items: List[BackupItemOut]
+
+
+class BackupCreateOut(BaseModel):
+    message: str
+    backup: BackupItemOut
+
+
+class BackupRestoreIn(BaseModel):
+    confirm_filename: str
+
+
+class BackupRestoreOut(BaseModel):
+    message: str
+    backup: BackupItemOut
+
+
 # ──────────────────────────────────────────────
 # CATEGORÍAS & ATRIBUTOS
 # ──────────────────────────────────────────────

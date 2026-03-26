@@ -3,7 +3,7 @@ from datetime import datetime
 from math import ceil
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -29,6 +29,11 @@ from app.models.models import (
     Venta,
 )
 from app.schemas.schemas import (
+    BackupCreateOut,
+    BackupItemOut,
+    BackupListOut,
+    BackupRestoreIn,
+    BackupRestoreOut,
     ConfiguracionGeneralEstadoOut,
     ConfiguracionGeneralOut,
     ConfiguracionGeneralPublicaOut,
@@ -54,6 +59,7 @@ from app.schemas.schemas import (
     VendedorListResponseOut,
     VendedorOut,
 )
+from app.utils.backup_restore import create_backup, list_backups, restore_backup, restore_uploaded_backup
 from app.utils.auth import get_current_user, require_admin
 from app.utils.configuracion_general import (
     configuracion_general_completa,
@@ -206,6 +212,14 @@ def _serializar_configuracion_general(session, config: ConfiguracionEmpresa) -> 
     )
 
 
+def _serializar_backup(info) -> BackupItemOut:
+    return BackupItemOut(
+        filename=info.filename,
+        size_bytes=info.size_bytes,
+        created_at=info.created_at,
+    )
+
+
 @config_router.get("/", response_model=ConfiguracionGeneralOut)
 def obtener_configuracion_general(
     tenant_slug: str = Depends(get_tenant_slug),
@@ -298,6 +312,80 @@ def subir_logo_configuracion_general(
         return _serializar_configuracion_general(session, config)
     finally:
         session.close()
+
+
+@config_router.get("/backups", response_model=BackupListOut)
+def obtener_backups_configuracion_general(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    backups = [_serializar_backup(item) for item in list_backups(tenant_slug)]
+    return BackupListOut(items=backups)
+
+
+@config_router.post("/backups", response_model=BackupCreateOut)
+def crear_backup_configuracion_general(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    try:
+        backup = create_backup(tenant_slug)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return BackupCreateOut(
+        message="Backup generado correctamente.",
+        backup=_serializar_backup(backup),
+    )
+
+
+@config_router.post("/backups/{filename}/restore", response_model=BackupRestoreOut)
+def restaurar_backup_configuracion_general(
+    filename: str,
+    data: BackupRestoreIn,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    if data.confirm_filename != filename:
+        raise HTTPException(
+            status_code=400,
+            detail="La confirmacion no coincide con el backup seleccionado.",
+        )
+
+    try:
+        backup = restore_backup(tenant_slug, filename)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return BackupRestoreOut(
+        message="Backup restaurado correctamente.",
+        backup=_serializar_backup(backup),
+    )
+
+
+@config_router.post("/backups/restore-upload", response_model=BackupRestoreOut)
+def restaurar_backup_subido_configuracion_general(
+    confirm_filename: str = Form(...),
+    backup_file: UploadFile = File(...),
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    uploaded_name = (backup_file.filename or "").strip()
+    if confirm_filename != uploaded_name:
+        raise HTTPException(
+            status_code=400,
+            detail="La confirmacion no coincide con el archivo seleccionado.",
+        )
+
+    try:
+        backup = restore_uploaded_backup(tenant_slug, backup_file)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return BackupRestoreOut(
+        message="Backup externo restaurado correctamente.",
+        backup=_serializar_backup(backup),
+    )
 
 
 def _build_cliente_ficha(session, cliente: Cliente):

@@ -530,7 +530,7 @@ def crear_presupuesto(data: PresupuestoCreate, tenant_slug: str = Depends(get_te
             costo = prod.costo if prod and prod.costo else 0.0
 
             item_dict = item_d.model_dump()
-            item_dict["costo_unitario"] = costo
+            item_dict["costo_unitario"] = item_dict.get("costo_unitario") if item_dict.get("costo_unitario") is not None else costo
 
             item = PresupuestoItem(presupuesto_id=presupuesto.id, **item_dict)
             session.add(item)
@@ -605,7 +605,7 @@ def editar_presupuesto(pre_id: int, data: PresupuestoCreate, tenant_slug: str = 
             prod = session.query(Producto).filter(Producto.id == item_d.producto_id).first()
             costo = prod.costo if prod and prod.costo else 0.0
             item_dict = item_d.model_dump()
-            item_dict["costo_unitario"] = item_dict.get("costo_unitario") or costo
+            item_dict["costo_unitario"] = item_dict.get("costo_unitario") if item_dict.get("costo_unitario") is not None else costo
             item_id = item_dict.pop("id", None)
             if item_id and item_id in existentes:
                 item = existentes[item_id]

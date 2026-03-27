@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+    CalendarDays,
     Eye,
     FileText,
     MapPin,
@@ -29,6 +30,7 @@ const CLINICA_PALETTE = {
 
 const CLINICA_TABS = [
     { key: 'dashboard', label: 'Dashboard Clinico', path: '/clinica/dashboard', icon: Stethoscope },
+    { key: 'agenda', label: 'Agenda', path: '/clinica/agenda', icon: CalendarDays },
     { key: 'pacientes', label: 'Pacientes', path: '/clinica/pacientes', icon: Users },
     { key: 'doctores', label: 'Doctores', path: '/clinica/doctores', icon: UserRound },
     { key: 'consulta', label: 'Nueva consulta', path: '/clinica/consulta', icon: Plus },
@@ -112,11 +114,107 @@ const DIAGNOSTICOS_FRECUENTES = [
     'Estrabismo',
 ]
 
+const MOTIVOS_OFTALMOLOGIA_RAPIDOS = [
+    'Vision borrosa de lejos',
+    'Vision borrosa de cerca',
+    'Cansancio visual',
+    'Cefalea asociada al uso de pantallas',
+    'Control de graduacion',
+]
+
+const PLANES_OFTALMOLOGIA_RAPIDOS = [
+    'Indico correccion optica permanente.',
+    'Indico descanso visual y lubricacion ocular.',
+    'Indico control clinico segun evolucion.',
+    'Indico uso de lentes con filtro de luz azul.',
+]
+
+const ESTUDIOS_OFTALMOLOGIA_RAPIDOS = [
+    'Tonometria',
+    'Retinografia',
+    'Campo visual',
+    'OCT',
+]
+
+const RESUMENES_CONTACTOLOGIA_RAPIDOS = [
+    'Buena adaptacion al lente de prueba.',
+    'Requiere ajuste de parametros y nuevo control.',
+    'Tolera bien el uso diario sugerido.',
+    'Se explica higiene, conservacion y signos de alarma.',
+]
+
+const PLANES_CONTACTOLOGIA_RAPIDOS = [
+    'Indico prueba de lente y control cercano.',
+    'Indico uso progresivo hasta completar adaptacion.',
+    'Indico suspension del uso ante dolor o enrojecimiento.',
+]
+
+const DIAGNOSTICOS_RECETA_RAPIDOS = [
+    'Conjuntivitis alergica',
+    'Ojo seco',
+    'Blefaritis',
+    'Infeccion ocular',
+]
+
+const POSOLOGIAS_RAPIDAS = [
+    '1 gota cada 8 horas',
+    '1 gota cada 12 horas',
+    '1 gota cada 6 horas',
+    '1 gota segun necesidad',
+]
+
+const DURACIONES_RAPIDAS = [
+    '5 dias',
+    '7 dias',
+    '10 dias',
+    '14 dias',
+]
+
+const ESTADOS_TURNO = [
+    { value: 'PENDIENTE', label: 'Pendiente' },
+    { value: 'CONFIRMADO', label: 'Confirmado' },
+    { value: 'EN_CURSO', label: 'En curso' },
+    { value: 'ATENDIDO', label: 'Atendido' },
+    { value: 'CANCELADO', label: 'Cancelado' },
+]
+
 function splitCommaValues(text) {
     return String(text || '')
         .split(',')
         .map(item => item.trim())
         .filter(Boolean)
+}
+
+function appendTemplateText(currentValue, snippet) {
+    const current = String(currentValue || '').trim()
+    const text = String(snippet || '').trim()
+    if (!text) return currentValue || ''
+    if (!current) return text
+    if (current.toLowerCase().includes(text.toLowerCase())) return current
+    const needsBreak = /[.!?]$/.test(current)
+    return `${current}${needsBreak ? '\n' : '\n'}${text}`
+}
+
+function QuickTemplateButtons({ label = 'Textos rapidos', options, onApply, disabled = false }) {
+    if (!options?.length) return null
+    return (
+        <div className="card" style={{ padding: 12, marginTop: 10, background: 'rgba(255,255,255,0.02)' }}>
+            <div style={{ fontWeight: 700, fontSize: '0.86rem', marginBottom: 10 }}>{label}</div>
+            <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                {options.map(option => (
+                    <button
+                        key={option}
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => onApply(option)}
+                        disabled={disabled}
+                    >
+                        {option}
+                    </button>
+                ))}
+            </div>
+        </div>
+    )
 }
 
 function escapeRegex(text) {
@@ -273,6 +371,7 @@ function DashboardClinicoSection() {
     const dashboardQuery = useQuery({
         queryKey: ['clinica', 'dashboard'],
         queryFn: async () => (await api.get('/clinica/dashboard/resumen')).data,
+        staleTime: 60 * 1000,
     })
 
     if (dashboardQuery.isLoading) {
@@ -341,6 +440,421 @@ function DashboardClinicoSection() {
                     </div>
                 </div>
             </div>
+        </>
+    )
+}
+
+function TurnoClinicoForm({
+    initialData,
+    pacienteOptions,
+    doctorOptions,
+    lugarOptions,
+    onSearchPaciente,
+    pacienteLoading,
+    onSave,
+    onCancel,
+    saving,
+}) {
+    const [form, setForm] = useState(() => ({
+        paciente: initialData?.paciente_id
+            ? {
+                id: initialData.paciente_id,
+                nombre_completo: initialData.paciente_nombre,
+                ci_pasaporte: initialData.paciente_ci,
+            }
+            : null,
+        paciente_nombre_libre: initialData?.paciente_nombre_libre || (!initialData?.paciente_id ? initialData?.paciente_nombre || '' : ''),
+        doctor_id: initialData?.doctor_id || '',
+        lugar_atencion_id: initialData?.lugar_atencion_id || '',
+        fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : new Date().toISOString().slice(0, 16),
+        estado: initialData?.estado || 'PENDIENTE',
+        motivo: initialData?.motivo || '',
+        notas: initialData?.notas || '',
+    }))
+
+    useEffect(() => {
+        setForm({
+            paciente: initialData?.paciente_id
+                ? {
+                    id: initialData.paciente_id,
+                    nombre_completo: initialData.paciente_nombre,
+                    ci_pasaporte: initialData.paciente_ci,
+                }
+                : null,
+            paciente_nombre_libre: initialData?.paciente_nombre_libre || (!initialData?.paciente_id ? initialData?.paciente_nombre || '' : ''),
+            doctor_id: initialData?.doctor_id || '',
+            lugar_atencion_id: initialData?.lugar_atencion_id || '',
+            fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : new Date().toISOString().slice(0, 16),
+            estado: initialData?.estado || 'PENDIENTE',
+            motivo: initialData?.motivo || '',
+            notas: initialData?.notas || '',
+        })
+    }, [initialData])
+
+    const submit = event => {
+        event.preventDefault()
+        if (!form.paciente?.id && !form.paciente_nombre_libre.trim()) {
+            window.alert('Debes seleccionar un paciente o cargar un nombre temporal.')
+            return
+        }
+        onSave({
+            paciente_id: form.paciente?.id || null,
+            paciente_nombre_libre: form.paciente?.id ? null : (form.paciente_nombre_libre.trim() || null),
+            doctor_id: form.doctor_id === '' ? null : Number(form.doctor_id),
+            lugar_atencion_id: form.lugar_atencion_id === '' ? null : Number(form.lugar_atencion_id),
+            fecha_hora: new Date(form.fecha_hora).toISOString(),
+            estado: form.estado,
+            motivo: form.motivo.trim() || null,
+            notas: form.notas.trim() || null,
+        })
+    }
+
+    return (
+        <form onSubmit={submit}>
+            <div className="grid-2">
+                <div className="form-group">
+                    <label className="form-label">Paciente</label>
+                    <RemoteSearchSelect
+                        value={form.paciente}
+                        onChange={option => setForm(prev => ({ ...prev, paciente: option, paciente_nombre_libre: option ? '' : prev.paciente_nombre_libre }))}
+                        onSearch={onSearchPaciente}
+                        options={pacienteOptions}
+                        loading={pacienteLoading}
+                        placeholder="Buscar paciente..."
+                        promptMessage="Escriba para buscar paciente"
+                        emptyMessage="Sin pacientes"
+                        minChars={0}
+                        floating={false}
+                        getOptionLabel={option => option?.nombre_completo || ''}
+                        getOptionValue={option => option?.id}
+                    />
+                    <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                        Si todavia no existe, puedes dejar este campo vacio y usar un nombre temporal.
+                    </div>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Fecha y hora</label>
+                    <input className="form-input" type="datetime-local" value={form.fecha_hora} onChange={event => setForm(prev => ({ ...prev, fecha_hora: event.target.value }))} />
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Nombre temporal del turno</label>
+                    <input
+                        className="form-input"
+                        value={form.paciente_nombre_libre}
+                        onChange={event => setForm(prev => ({ ...prev, paciente_nombre_libre: event.target.value, paciente: null }))}
+                        placeholder="Ej.: Juan Perez"
+                        disabled={Boolean(form.paciente?.id)}
+                    />
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Doctor</label>
+                    <select className="form-select" value={form.doctor_id} onChange={event => setForm(prev => ({ ...prev, doctor_id: event.target.value }))}>
+                        <option value="">Sin doctor</option>
+                        {doctorOptions.map(item => <option key={item.id} value={item.id}>{item.nombre_completo}</option>)}
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Lugar de atencion</label>
+                    <select className="form-select" value={form.lugar_atencion_id} onChange={event => setForm(prev => ({ ...prev, lugar_atencion_id: event.target.value }))}>
+                        <option value="">Sin lugar</option>
+                        {lugarOptions.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Estado</label>
+                    <select className="form-select" value={form.estado} onChange={event => setForm(prev => ({ ...prev, estado: event.target.value }))}>
+                        {ESTADOS_TURNO.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Motivo breve</label>
+                    <input className="form-input" value={form.motivo} onChange={event => setForm(prev => ({ ...prev, motivo: event.target.value }))} />
+                </div>
+            </div>
+            <div className="form-group">
+                <label className="form-label">Notas</label>
+                <textarea className="form-input" value={form.notas} onChange={event => setForm(prev => ({ ...prev, notas: event.target.value }))} style={{ minHeight: 96, resize: 'none' }} />
+            </div>
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
+                <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar turno'}</button>
+            </div>
+        </form>
+    )
+}
+
+function AgendaClinicaSection() {
+    const { user } = useAuth()
+    const navigate = useNavigate()
+    const queryClient = useQueryClient()
+    const today = useMemo(() => new Date(), [])
+    const plusDays = useMemo(() => {
+        const next = new Date(today)
+        next.setDate(next.getDate() + 7)
+        return next.toISOString().slice(0, 10)
+    }, [today])
+    const [buscar, setBuscar] = useState('')
+    const [estado, setEstado] = useState('')
+    const [fechaDesde, setFechaDesde] = useState(today.toISOString().slice(0, 10))
+    const [fechaHasta, setFechaHasta] = useState(plusDays)
+    const [page, setPage] = useState(1)
+    const [pageSize, setPageSize] = useState(25)
+    const [modalTurno, setModalTurno] = useState(null)
+    const [pacienteSearch, setPacienteSearch] = useState('')
+
+    const agendaQuery = useQuery({
+        queryKey: ['clinica', 'agenda', { buscar, estado, fechaDesde, fechaHasta, page, pageSize }],
+        queryFn: async () => (
+            await api.get(`/clinica/agenda?${queryString({
+                buscar,
+                estado,
+                fecha_desde: fechaDesde,
+                fecha_hasta: fechaHasta,
+                page,
+                page_size: pageSize,
+            })}`)
+        ).data,
+    })
+
+    const pacientesQuery = useQuery({
+        queryKey: ['clinica', 'agenda-pacientes', pacienteSearch],
+        queryFn: async () => (await api.get(`/clinica/pacientes?${queryString({ buscar: pacienteSearch, page: 1, page_size: 12 })}`)).data,
+        enabled: Boolean(modalTurno),
+        staleTime: 60 * 1000,
+    })
+
+    const doctoresQuery = useQuery({
+        queryKey: ['clinica', 'doctores-simple'],
+        queryFn: async () => (await api.get('/clinica/doctores/simple')).data,
+        enabled: hasActionAccess(user, 'clinica.doctores', 'clinica'),
+        staleTime: 5 * 60 * 1000,
+    })
+
+    const lugaresQuery = useQuery({
+        queryKey: ['clinica', 'lugares-simple'],
+        queryFn: async () => (await api.get('/clinica/lugares/simple')).data,
+        enabled: hasActionAccess(user, 'clinica.lugares', 'clinica'),
+        staleTime: 5 * 60 * 1000,
+    })
+
+    const saveTurnoMutation = useMutation({
+        mutationFn: async payload => {
+            if (modalTurno?.mode === 'edit') return (await api.put(`/clinica/agenda/${modalTurno.data.id}`, payload)).data
+            return (await api.post('/clinica/agenda', payload)).data
+        },
+        onSuccess: async () => {
+            setModalTurno(null)
+            setPacienteSearch('')
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
+        },
+    })
+
+    const deleteTurnoMutation = useMutation({
+        mutationFn: async turnoId => { await api.delete(`/clinica/agenda/${turnoId}`) },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
+        },
+    })
+
+    const cambiarEstadoMutation = useMutation({
+        mutationFn: async ({ item, nextEstado }) => (
+            await api.put(`/clinica/agenda/${item.id}`, {
+                paciente_id: item.paciente_id,
+                paciente_nombre_libre: item.paciente_nombre_libre,
+                doctor_id: item.doctor_id,
+                lugar_atencion_id: item.lugar_atencion_id,
+                fecha_hora: item.fecha_hora,
+                estado: nextEstado,
+                motivo: item.motivo,
+                notas: item.notas,
+            })
+        ).data,
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
+        },
+    })
+
+    const atenderTurno = async item => {
+        try {
+            const actualizado = await cambiarEstadoMutation.mutateAsync({ item, nextEstado: 'ATENDIDO' })
+            if (actualizado?.paciente_id) {
+                navigate('/clinica/consulta', {
+                    state: {
+                        selectedPatient: {
+                            id: actualizado.paciente_id,
+                            nombre_completo: actualizado.paciente_nombre,
+                            ci_pasaporte: actualizado.paciente_ci || null,
+                        },
+                        autoOpenConsulta: true,
+                        agendaTurnoId: actualizado?.id || item.id,
+                    },
+                })
+                return
+            }
+            navigate('/clinica/pacientes', {
+                state: {
+                    openNewFromAgenda: {
+                        agendaTurnoId: actualizado?.id || item.id,
+                        nombre_completo: actualizado?.paciente_nombre || item.paciente_nombre || '',
+                        turno: actualizado || { ...item, estado: 'ATENDIDO' },
+                    },
+                },
+            })
+        } catch (error) {
+            window.alert(formatError(error, 'No se pudo marcar el turno como atendido.'))
+        }
+    }
+
+    const items = agendaQuery.data?.items || []
+    const aplicarFiltroRapido = tipo => {
+        const base = new Date()
+        const from = new Date(base)
+        const to = new Date(base)
+        if (tipo === 'manana') {
+            from.setDate(from.getDate() + 1)
+            to.setDate(to.getDate() + 1)
+        } else if (tipo === 'semana') {
+            to.setDate(to.getDate() + 7)
+        }
+        setFechaDesde(from.toISOString().slice(0, 10))
+        setFechaHasta(to.toISOString().slice(0, 10))
+        setPage(1)
+    }
+
+    return (
+        <>
+            <div className="card" style={{ marginTop: 22 }}>
+                <SectionHeader
+                    title="Agenda Clinica"
+                    subtitle="Base operativa de turnos por paciente, doctor, lugar, fecha y estado."
+                    actions={hasActionAccess(user, 'clinica.consultas_crear', 'clinica') ? <button className="btn btn-primary" onClick={() => setModalTurno({ mode: 'create', data: null })}><Plus size={16} /> Nuevo turno</button> : null}
+                />
+                <div className="filters-bar" style={{ marginBottom: 18, alignItems: 'end' }}>
+                    <div className="form-group" style={{ flex: 1, minWidth: 240 }}>
+                        <label className="form-label">Buscar</label>
+                        <input className="form-input" value={buscar} onChange={event => { setBuscar(event.target.value); setPage(1) }} placeholder="Paciente, CI, telefono o motivo..." />
+                    </div>
+                    <div className="form-group" style={{ width: 160 }}>
+                        <label className="form-label">Estado</label>
+                        <select className="form-select" value={estado} onChange={event => { setEstado(event.target.value); setPage(1) }}>
+                            <option value="">Todos</option>
+                            {ESTADOS_TURNO.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+                        </select>
+                    </div>
+                    <div className="form-group" style={{ width: 170 }}>
+                        <label className="form-label">Desde</label>
+                        <input className="form-input" type="date" value={fechaDesde} onChange={event => { setFechaDesde(event.target.value); setPage(1) }} />
+                    </div>
+                    <div className="form-group" style={{ width: 170 }}>
+                        <label className="form-label">Hasta</label>
+                        <input className="form-input" type="date" value={fechaHasta} onChange={event => { setFechaHasta(event.target.value); setPage(1) }} />
+                    </div>
+                    <select className="form-select" style={{ width: 130 }} value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1) }}>
+                        <option value={10}>10 / pag.</option>
+                        <option value={25}>25 / pag.</option>
+                        <option value={50}>50 / pag.</option>
+                    </select>
+                </div>
+                <div className="flex gap-12" style={{ marginBottom: 18, flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('hoy')}>Hoy</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('manana')}>Manana</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('semana')}>Prox. 7 dias</button>
+                </div>
+
+                {agendaQuery.isLoading ? (
+                    <div className="empty-state" style={{ padding: '60px 20px' }}>Cargando agenda clinica...</div>
+                ) : agendaQuery.isError ? (
+                    <div className="alert alert-error">{formatError(agendaQuery.error, 'No se pudo cargar la agenda clinica.')}</div>
+                ) : (
+                    <>
+                        <div className="table-container">
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Fecha y hora</th>
+                                        <th>Paciente</th>
+                                        <th>Doctor</th>
+                                        <th>Lugar</th>
+                                        <th>Motivo</th>
+                                        <th>Estado</th>
+                                        <th style={{ width: 260 }}>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.length ? items.map(item => (
+                                        <tr key={item.id}>
+                                            <td>{fmtDateTime(item.fecha_hora)}</td>
+                                            <td style={{ fontWeight: 700 }}>{item.paciente_nombre}</td>
+                                            <td>{item.doctor_nombre || '-'}</td>
+                                            <td>{item.lugar_nombre || '-'}</td>
+                                            <td>{item.motivo || '-'}</td>
+                                            <td><span className={`badge ${item.estado === 'ATENDIDO' ? 'badge-green' : item.estado === 'CANCELADO' ? 'badge-gray' : 'badge-blue'}`}>{item.estado}</span></td>
+                                            <td>
+                                                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setModalTurno({ mode: 'edit', data: item })}>
+                                                        <Pencil size={14} /> Editar
+                                                    </button>
+                                                    {item.estado !== 'CONFIRMADO' && (
+                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CONFIRMADO' })} disabled={cambiarEstadoMutation.isPending}>
+                                                            Confirmar
+                                                        </button>
+                                                    )}
+                                                    {item.estado !== 'ATENDIDO' && (
+                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => atenderTurno(item)} disabled={cambiarEstadoMutation.isPending}>
+                                                            Atender
+                                                        </button>
+                                                    )}
+                                                    {item.estado !== 'CANCELADO' && (
+                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CANCELADO' })} disabled={cambiarEstadoMutation.isPending}>
+                                                            Cancelar
+                                                        </button>
+                                                    )}
+                                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setModalTurno({ mode: 'edit', data: item })}>
+                                                        Reprogramar
+                                                    </button>
+                                                    <button type="button" className="btn btn-danger btn-sm" onClick={() => {
+                                                        if (!window.confirm('Se eliminara este turno. Desea continuar?')) return
+                                                        deleteTurnoMutation.mutate(item.id)
+                                                    }} disabled={deleteTurnoMutation.isPending}>
+                                                        <Trash2 size={14} /> Eliminar
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )) : <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No hay turnos para los filtros seleccionados.</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="flex-between" style={{ marginTop: 16, gap: 16, flexWrap: 'wrap' }}>
+                            <div style={{ color: 'var(--text-muted)' }}>Mostrando pagina {agendaQuery.data.page} de {agendaQuery.data.total_pages} - {agendaQuery.data.total} turnos</div>
+                            <div className="flex gap-12">
+                                <button className="btn btn-secondary" onClick={() => setPage(prev => Math.max(1, prev - 1))} disabled={page <= 1}>Anterior</button>
+                                <button className="btn btn-secondary" onClick={() => setPage(prev => Math.min(agendaQuery.data.total_pages, prev + 1))} disabled={page >= agendaQuery.data.total_pages}>Siguiente</button>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {modalTurno && (
+                <Modal title={modalTurno.mode === 'edit' ? 'Editar turno clinico' : 'Nuevo turno clinico'} onClose={() => setModalTurno(null)} maxWidth="860px">
+                    <TurnoClinicoForm
+                        initialData={modalTurno.data}
+                        pacienteOptions={pacientesQuery.data?.items || []}
+                        doctorOptions={doctoresQuery.data || []}
+                        lugarOptions={lugaresQuery.data || []}
+                        onSearchPaciente={setPacienteSearch}
+                        pacienteLoading={pacientesQuery.isFetching}
+                        onSave={payload => saveTurnoMutation.mutate(payload)}
+                        onCancel={() => setModalTurno(null)}
+                        saving={saveTurnoMutation.isPending}
+                    />
+                </Modal>
+            )}
         </>
     )
 }
@@ -586,6 +1100,7 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
             tipo_lente: type === 'OFTALMOLOGIA' ? (recommendationPayload.tipo_lente || null) : (form.tipo_lente || null),
             material_lente: type === 'OFTALMOLOGIA' ? (recommendationPayload.material_lente || null) : undefined,
             tratamientos: type === 'OFTALMOLOGIA' ? (recommendationPayload.tratamientos || null) : undefined,
+            fecha_control: form.fecha_control || null,
             av_sc_lejos_od: type === 'OFTALMOLOGIA' ? (form.av_sc_lejos_od || null) : undefined,
             av_sc_lejos_oi: type === 'OFTALMOLOGIA' ? (form.av_sc_lejos_oi || null) : undefined,
             av_cc_lejos_od: type === 'OFTALMOLOGIA' ? (form.av_cc_lejos_od || null) : undefined,
@@ -646,7 +1161,6 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
             diseno: type === 'CONTACTOLOGIA' ? (form.diseno || null) : undefined,
             resumen_resultados: type === 'CONTACTOLOGIA' ? (form.resumen_resultados || null) : undefined,
             marca_recomendada: type === 'CONTACTOLOGIA' ? (form.marca_recomendada || null) : undefined,
-            fecha_control: type === 'CONTACTOLOGIA' ? (form.fecha_control || null) : undefined,
         }
         const doctorNombre = doctores?.find(item => Number(item.id) === Number(form.doctor_id))?.nombre_completo || ''
         const tratamientosSugeridos = patologiaDetalleQuery.data?.tratamientos || []
@@ -687,6 +1201,10 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                         {lugares.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
                     </select>
                 </div>
+                <div className="form-group">
+                    <label className="form-label">Proximo control</label>
+                    <input className="form-input" type="date" value={form.fecha_control} onChange={event => setForm(prev => ({ ...prev, fecha_control: event.target.value }))} disabled={readOnly} />
+                </div>
             </div>
 
             {type === 'OFTALMOLOGIA' ? (
@@ -694,6 +1212,12 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                     <div className="form-group">
                         <label className="form-label">Motivo</label>
                         <input className="form-input" value={form.motivo} onChange={event => setForm(prev => ({ ...prev, motivo: event.target.value }))} disabled={readOnly} />
+                        <QuickTemplateButtons
+                            label="Motivos rapidos"
+                            options={MOTIVOS_OFTALMOLOGIA_RAPIDOS}
+                            onApply={snippet => setForm(prev => ({ ...prev, motivo: appendTemplateText(prev.motivo, snippet) }))}
+                            disabled={readOnly}
+                        />
                     </div>
                     <div className="card" style={{ padding: 16, marginBottom: 16, background: 'rgba(255,255,255,0.02)' }}>
                         <div style={{ fontWeight: 700, marginBottom: 12 }}>Importar patologia</div>
@@ -973,6 +1497,12 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                         <div className="form-group" style={{ marginTop: 16 }}>
                             <label className="form-label">Estudios solicitados / indicaciones complementarias</label>
                             <textarea className="form-input" value={form.estudios_solicitados} onChange={event => setForm(prev => ({ ...prev, estudios_solicitados: event.target.value }))} disabled={readOnly} style={{ minHeight: 88, resize: 'none' }} />
+                            <QuickTemplateButtons
+                                label="Estudios rapidos"
+                                options={ESTUDIOS_OFTALMOLOGIA_RAPIDOS}
+                                onApply={snippet => setForm(prev => ({ ...prev, estudios_solicitados: appendTemplateText(prev.estudios_solicitados, snippet) }))}
+                                disabled={readOnly}
+                            />
                         </div>
                     </div>
                 </>
@@ -987,14 +1517,16 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                             <label className="form-label">Marca recomendada</label>
                             <input className="form-input" value={form.marca_recomendada} onChange={event => setForm(prev => ({ ...prev, marca_recomendada: event.target.value }))} disabled={readOnly} />
                         </div>
-                        <div className="form-group">
-                            <label className="form-label">Fecha control</label>
-                            <input className="form-input" type="date" value={form.fecha_control} onChange={event => setForm(prev => ({ ...prev, fecha_control: event.target.value }))} disabled={readOnly} />
-                        </div>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Resumen resultados</label>
                         <textarea className="form-input" value={form.resumen_resultados} onChange={event => setForm(prev => ({ ...prev, resumen_resultados: event.target.value }))} disabled={readOnly} style={{ minHeight: 88, resize: 'none' }} />
+                        <QuickTemplateButtons
+                            label="Resumenes rapidos"
+                            options={RESUMENES_CONTACTOLOGIA_RAPIDOS}
+                            onApply={snippet => setForm(prev => ({ ...prev, resumen_resultados: appendTemplateText(prev.resumen_resultados, snippet) }))}
+                            disabled={readOnly}
+                        />
                     </div>
                 </>
             )}
@@ -1027,6 +1559,12 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
             <div className="form-group">
                 <label className="form-label">Plan de tratamiento</label>
                 <textarea className="form-input" value={form.plan_tratamiento} onChange={event => setForm(prev => ({ ...prev, plan_tratamiento: event.target.value }))} disabled={readOnly} style={{ minHeight: 84, resize: 'none' }} />
+                <QuickTemplateButtons
+                    label="Planes rapidos"
+                    options={type === 'OFTALMOLOGIA' ? PLANES_OFTALMOLOGIA_RAPIDOS : PLANES_CONTACTOLOGIA_RAPIDOS}
+                    onApply={snippet => setForm(prev => ({ ...prev, plan_tratamiento: appendTemplateText(prev.plan_tratamiento, snippet) }))}
+                    disabled={readOnly}
+                />
             </div>
             <div className="form-group">
                 <label className="form-label">Observaciones</label>
@@ -1584,6 +2122,33 @@ function ConsultaIntegralModal({
                                 saving={saving}
                                 saved={Boolean(successData?.id)}
                             />
+                            <div
+                                className="card"
+                                style={{
+                                    marginTop: 16,
+                                    padding: 16,
+                                    display: 'grid',
+                                    gap: 10,
+                                    background: 'rgba(255,255,255,0.03)',
+                                    border: '1px solid rgba(255,255,255,0.08)',
+                                }}
+                            >
+                                <div style={{ fontWeight: 700 }}>Receta de medicamentos</div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                                    La acción queda visible durante toda la carga de la consulta. Se habilita cuando la consulta ya fue guardada.
+                                </div>
+                                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={onOpenRecetaMedicamentos}
+                                        disabled={!successData}
+                                        title={successData ? '' : 'Primero debes guardar la consulta'}
+                                    >
+                                        <Plus size={16} /> Receta de medicamentos
+                                    </button>
+                                </div>
+                            </div>
                             {successData && (
                                 <div
                                     ref={documentsRef}
@@ -1602,7 +2167,7 @@ function ConsultaIntegralModal({
                                             Paso siguiente: documentos de esta consulta
                                         </div>
                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                                            La consulta ya quedó guardada. Desde aquí puedes emitir la receta óptica, las indicaciones o abrir la receta de medicamentos.
+                                            La consulta ya quedó guardada. Desde aquí puedes emitir la receta óptica o las indicaciones.
                                         </div>
                                     </div>
                                     <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
@@ -1613,9 +2178,6 @@ function ConsultaIntegralModal({
                                         )}
                                         <button type="button" className="btn btn-secondary" onClick={onOpenIndicacionesPdf}>
                                             <FileText size={16} /> Indicaciones PDF
-                                        </button>
-                                        <button type="button" className="btn btn-primary" onClick={onOpenRecetaMedicamentos}>
-                                            <Plus size={16} /> Receta de medicamentos
                                         </button>
                                     </div>
                                 </div>
@@ -1806,10 +2368,22 @@ function RecetaMedicamentoForm({
                 <div className="form-group">
                     <label className="form-label">Diagnostico</label>
                     <textarea className="form-input" value={form.diagnostico} onChange={event => setForm(prev => ({ ...prev, diagnostico: event.target.value }))} style={{ minHeight: 96, resize: 'none', width: '100%' }} disabled={readOnly} />
+                    <QuickTemplateButtons
+                        label="Diagnosticos rapidos"
+                        options={DIAGNOSTICOS_RECETA_RAPIDOS}
+                        onApply={snippet => setForm(prev => ({ ...prev, diagnostico: appendTemplateText(prev.diagnostico, snippet) }))}
+                        disabled={readOnly}
+                    />
                 </div>
                 <div className="form-group">
                     <label className="form-label">Observaciones</label>
                     <textarea className="form-input" value={form.observaciones} onChange={event => setForm(prev => ({ ...prev, observaciones: event.target.value }))} style={{ minHeight: 96, resize: 'none', width: '100%' }} disabled={readOnly} />
+                    <QuickTemplateButtons
+                        label="Indicaciones rapidas"
+                        options={PLANES_CONTACTOLOGIA_RAPIDOS}
+                        onApply={snippet => setForm(prev => ({ ...prev, observaciones: appendTemplateText(prev.observaciones, snippet) }))}
+                        disabled={readOnly}
+                    />
                 </div>
             </div>
 
@@ -1848,10 +2422,22 @@ function RecetaMedicamentoForm({
                                 <div className="form-group">
                                     <label className="form-label">Posologia</label>
                                     <textarea className="form-input" value={detalle.posologia_personalizada} onChange={event => updateDetalle(detalle.key, { posologia_personalizada: event.target.value })} style={{ minHeight: 86, resize: 'none', width: '100%' }} disabled={readOnly} />
+                                    <QuickTemplateButtons
+                                        label="Posologias rapidas"
+                                        options={POSOLOGIAS_RAPIDAS}
+                                        onApply={snippet => updateDetalle(detalle.key, { posologia_personalizada: appendTemplateText(detalle.posologia_personalizada, snippet) })}
+                                        disabled={readOnly}
+                                    />
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label">Duracion</label>
                                     <input className="form-input" value={detalle.duracion_tratamiento} onChange={event => updateDetalle(detalle.key, { duracion_tratamiento: event.target.value })} disabled={readOnly} />
+                                    <QuickTemplateButtons
+                                        label="Duraciones rapidas"
+                                        options={DURACIONES_RAPIDAS}
+                                        onApply={snippet => updateDetalle(detalle.key, { duracion_tratamiento: snippet })}
+                                        disabled={readOnly}
+                                    />
                                 </div>
                             </div>
                             {!readOnly && (
@@ -1937,12 +2523,14 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
         queryKey: ['clinica', 'doctores-simple'],
         queryFn: async () => (await api.get('/clinica/doctores/simple')).data,
         enabled: open && hasActionAccess(user, 'clinica.doctores', 'clinica'),
+        staleTime: 5 * 60 * 1000,
     })
 
     const lugaresQuery = useQuery({
         queryKey: ['clinica', 'lugares-simple'],
         queryFn: async () => (await api.get('/clinica/lugares/simple')).data,
         enabled: open && hasActionAccess(user, 'clinica.lugares', 'clinica'),
+        staleTime: 5 * 60 * 1000,
     })
 
     const medicamentosQuery = useQuery({
@@ -1966,8 +2554,8 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
         enabled: open && Boolean(selectedId) && tab !== 'recetas_medicamentos',
     })
 
-    const invalidateAll = async () => {
-        await Promise.all([
+    const invalidateAll = () => {
+        void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'paciente-historial', pacienteId] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
@@ -1989,7 +2577,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
         },
         onSuccess: async () => {
             setConsultaSavePhase('refreshing')
-            await invalidateAll()
+            invalidateAll()
             setConsultaModal(null)
             setConsultaSavePhase('idle')
         },
@@ -2011,10 +2599,10 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
             if (recetaModal?.mode === 'edit') return (await api.put(`/clinica/recetas-medicamentos/${recetaModal.id}`, payload)).data
             return (await api.post('/clinica/recetas-medicamentos', payload)).data
         },
-        onSuccess: async () => {
+        onSuccess: () => {
             setRecetaModal(null)
             setMedicamentoSearch('')
-            await invalidateAll()
+            invalidateAll()
         },
     })
 
@@ -2043,6 +2631,9 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
     const oftCount = Array.isArray(historialQuery.data?.oftalmologia) ? historialQuery.data.oftalmologia.filter(Boolean).length : 0
     const contCount = Array.isArray(historialQuery.data?.contactologia) ? historialQuery.data.contactologia.filter(Boolean).length : 0
     const recetasCount = Array.isArray(historialQuery.data?.recetas_medicamentos) ? historialQuery.data.recetas_medicamentos.filter(Boolean).length : 0
+    const ultimaOftalmologia = historialQuery.data?.oftalmologia?.[0] || null
+    const ultimaContactologia = historialQuery.data?.contactologia?.[0] || null
+    const ultimaRecetaMedicamento = historialQuery.data?.recetas_medicamentos?.[0] || null
     const canCreate = hasActionAccess(user, 'clinica.consultas_crear', 'clinica')
     const canEdit = hasActionAccess(user, 'clinica.consultas_editar', 'clinica')
     const canView = hasActionAccess(user, 'clinica.consultas_ver', 'clinica')
@@ -2186,6 +2777,39 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                             <StatCard label="Oftalmologia" value={oftCount} detail="Consultas registradas" accent={CLINICA_PALETTE.accent} />
                             <StatCard label="Contactologia" value={contCount} detail="Consultas registradas" accent={CLINICA_PALETTE.accentAlt} />
                             <StatCard label="Recetas" value={recetasCount} detail="Medicamentos emitidos" accent="#f59e0b" />
+                        </div>
+
+                        <div className="card" style={{ padding: 16 }}>
+                            <SectionHeader
+                                title="Resumen longitudinal"
+                                subtitle="Vista rapida del ultimo movimiento clinico del paciente."
+                            />
+                            <div
+                                style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                                    gap: 12,
+                                }}
+                            >
+                                <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Ultima oftalmologia</div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>{fmtDateTime(ultimaOftalmologia?.fecha)}</div>
+                                    <div style={{ marginTop: 8 }}><strong>Diagnostico:</strong> {ultimaOftalmologia?.diagnostico || '-'}</div>
+                                    <div style={{ marginTop: 6 }}><strong>Plan:</strong> {ultimaOftalmologia?.plan_tratamiento || '-'}</div>
+                                </div>
+                                <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Ultima contactologia</div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>{fmtDateTime(ultimaContactologia?.fecha)}</div>
+                                    <div style={{ marginTop: 8 }}><strong>Resumen:</strong> {ultimaContactologia?.resumen || ultimaContactologia?.diagnostico || '-'}</div>
+                                    <div style={{ marginTop: 6 }}><strong>Proximo control:</strong> {fmtDate(ultimaContactologia?.fecha_control)}</div>
+                                </div>
+                                <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Ultima receta</div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>{fmtDateTime(ultimaRecetaMedicamento?.fecha_emision)}</div>
+                                    <div style={{ marginTop: 8 }}><strong>Diagnostico:</strong> {ultimaRecetaMedicamento?.diagnostico || '-'}</div>
+                                    <div style={{ marginTop: 6 }}><strong>Medicamentos:</strong> {ultimaRecetaMedicamento?.detalles?.length || 0}</div>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="card" style={{ padding: 14 }}>
@@ -2466,6 +3090,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
 
 function PacientesSection() {
     const { user } = useAuth()
+    const location = useLocation()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const [searchInput, setSearchInput] = useState('')
@@ -2486,6 +3111,20 @@ function PacientesSection() {
         return () => window.clearTimeout(timeout)
     }, [searchInput])
 
+    useEffect(() => {
+        const agendaDraft = location.state?.openNewFromAgenda
+        if (!agendaDraft) return
+        setModalPaciente({
+            open: true,
+            mode: 'create',
+            data: {
+                nombre_completo: agendaDraft.nombre_completo || '',
+            },
+            sourceAgendaTurno: agendaDraft.turno || null,
+        })
+        navigate(location.pathname, { replace: true, state: {} })
+    }, [location.pathname, location.state, navigate])
+
     const pacientesQuery = useQuery({
         queryKey: ['clinica', 'pacientes', { buscar, page, pageSize }],
         queryFn: async () => (await api.get(`/clinica/pacientes?${queryString({ buscar, page, page_size: pageSize })}`)).data,
@@ -2502,11 +3141,34 @@ function PacientesSection() {
             if (modalPaciente?.mode === 'edit') return (await api.put(`/clinica/pacientes/${modalPaciente.data.id}`, payload)).data
             return (await api.post('/clinica/pacientes', payload)).data
         },
-        onSuccess: async () => {
+        onSuccess: async result => {
+            if (modalPaciente?.sourceAgendaTurno?.id && result?.id) {
+                await api.put(`/clinica/agenda/${modalPaciente.sourceAgendaTurno.id}`, {
+                    paciente_id: result.id,
+                    paciente_nombre_libre: null,
+                    doctor_id: modalPaciente.sourceAgendaTurno.doctor_id || null,
+                    lugar_atencion_id: modalPaciente.sourceAgendaTurno.lugar_atencion_id || null,
+                    fecha_hora: modalPaciente.sourceAgendaTurno.fecha_hora,
+                    estado: 'ATENDIDO',
+                    motivo: modalPaciente.sourceAgendaTurno.motivo || null,
+                    notas: modalPaciente.sourceAgendaTurno.notas || null,
+                }).catch(() => null)
+            }
+            const sourceAgendaTurno = modalPaciente?.sourceAgendaTurno || null
             setModalPaciente(null)
             setReferidorSearch('')
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            if (sourceAgendaTurno && result?.id) {
+                navigate('/clinica/consulta', {
+                    state: {
+                        selectedPatient: result,
+                        autoOpenConsulta: true,
+                        agendaTurnoId: sourceAgendaTurno.id,
+                    },
+                })
+            }
         },
     })
 
@@ -3290,15 +3952,21 @@ function NuevaConsultaSection() {
     const [medicamentoSearch, setMedicamentoSearch] = useState('')
     const [postSaveActions, setPostSaveActions] = useState(null)
     const [consultaSaveError, setConsultaSaveError] = useState('')
+    const [agendaTurnoId, setAgendaTurnoId] = useState(null)
 
     useEffect(() => {
         const routePatient = location.state?.selectedPatient
         if (routePatient?.id) {
             setSelectedPatient(prev => (prev?.id === routePatient.id ? prev : routePatient))
+            setAgendaTurnoId(location.state?.agendaTurnoId || null)
             setLastCreated(null)
             setLastRecetaCreated(null)
             setConsultaSaveError('')
             setPostSaveActions(null)
+            if (location.state?.autoOpenConsulta) {
+                setRecentCreatedMedicamento(null)
+                setConsultaModalOpen(true)
+            }
             navigate(location.pathname, { replace: true, state: {} })
         }
     }, [location.pathname, location.state, navigate])
@@ -3307,18 +3975,21 @@ function NuevaConsultaSection() {
         queryKey: ['clinica', 'pacientes-select', patientSearch],
         queryFn: async () => (await api.get(`/clinica/pacientes?${queryString({ buscar: patientSearch, page: 1, page_size: 12 })}`)).data,
         enabled: true,
+        staleTime: 60 * 1000,
     })
 
     const doctoresQuery = useQuery({
         queryKey: ['clinica', 'doctores-simple'],
         queryFn: async () => (await api.get('/clinica/doctores/simple')).data,
         enabled: hasActionAccess(user, 'clinica.doctores', 'clinica'),
+        staleTime: 5 * 60 * 1000,
     })
 
     const lugaresQuery = useQuery({
         queryKey: ['clinica', 'lugares-simple'],
         queryFn: async () => (await api.get('/clinica/lugares/simple')).data,
         enabled: hasActionAccess(user, 'clinica.lugares', 'clinica'),
+        staleTime: 5 * 60 * 1000,
     })
 
     const anamnesisQuery = useQuery({
@@ -3330,7 +4001,8 @@ function NuevaConsultaSection() {
     const medicamentosQuery = useQuery({
         queryKey: ['clinica', 'medicamentos-simple', medicamentoSearch],
         queryFn: async () => (await api.get(`/clinica/vademecum/medicamentos/simple?${queryString({ buscar: medicamentoSearch, page_size: 12 })}`)).data,
-        enabled: Boolean(recetaModal),
+        enabled: Boolean(recetaModal) && medicamentoSearch.trim().length >= 1,
+        staleTime: 60 * 1000,
     })
 
     const saveConsultaMutation = useMutation({
@@ -3345,6 +4017,7 @@ function NuevaConsultaSection() {
             const endpoint = tipo === 'OFTALMOLOGIA' ? '/clinica/consultas/oftalmologia' : '/clinica/consultas/contactologia'
             const consultaFinal = {
                 ...consulta,
+                agenda_turno_id: agendaTurnoId || null,
                 motivo: tipo === 'OFTALMOLOGIA'
                     ? ((consulta.motivo || '').trim() || resumen || null)
                     : consulta.motivo,
@@ -3359,10 +4032,9 @@ function NuevaConsultaSection() {
             void Promise.all([
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] }),
-                queryClient.invalidateQueries({ queryKey: ['clinica', 'doctores'] }),
-                queryClient.invalidateQueries({ queryKey: ['clinica', 'lugares'] }),
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'paciente-historial', selectedPatient?.id] }),
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'anamnesis-ultima', selectedPatient?.id] }),
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] }),
             ])
             if (data?.id && selectedPatient?.id) {
                 setPostSaveActions({
@@ -3523,6 +4195,9 @@ function NuevaConsultaSection() {
                                     if (!selectedPatient) {
                                         setSelectorPacienteOpen(true)
                                         return
+                                    }
+                                    if (!location.state?.agendaTurnoId) {
+                                        setAgendaTurnoId(null)
                                     }
                                     setRecentCreatedMedicamento(null)
                                     setLastCreated(null)
@@ -3687,6 +4362,7 @@ function NuevaConsultaSection() {
                                                     className="btn btn-secondary"
                                                     onClick={() => {
                                                         setSelectedPatient(item)
+                                                        setAgendaTurnoId(null)
                                                         setLastCreated(null)
                                                         setSelectorPacienteOpen(false)
                                                     }}
@@ -3764,12 +4440,14 @@ function HistorialClinicoGeneralSection() {
         queryKey: ['clinica', 'doctores-simple'],
         queryFn: async () => (await api.get('/clinica/doctores/simple')).data,
         enabled: hasActionAccess(user, 'clinica.doctores', 'clinica'),
+        staleTime: 5 * 60 * 1000,
     })
 
     const lugaresQuery = useQuery({
         queryKey: ['clinica', 'lugares-simple'],
         queryFn: async () => (await api.get('/clinica/lugares/simple')).data,
         enabled: hasActionAccess(user, 'clinica.lugares', 'clinica'),
+        staleTime: 5 * 60 * 1000,
     })
 
     const medicamentosQuery = useQuery({
@@ -3845,8 +4523,8 @@ function HistorialClinicoGeneralSection() {
         })
     }
 
-    const invalidateAll = async () => {
-        await Promise.all([
+    const invalidateAll = () => {
+        void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['clinica', 'historial-general'] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
             queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] }),
@@ -3869,7 +4547,7 @@ function HistorialClinicoGeneralSection() {
         },
         onSuccess: async () => {
             setConsultaSavePhase('refreshing')
-            await invalidateAll()
+            invalidateAll()
             setConsultaModal(null)
             setConsultaSavePhase('idle')
         },
@@ -3895,10 +4573,10 @@ function HistorialClinicoGeneralSection() {
             if (!recetaModal?.id) throw new Error('Receta no seleccionada.')
             return (await api.put(`/clinica/recetas-medicamentos/${recetaModal.id}`, payload)).data
         },
-        onSuccess: async () => {
+        onSuccess: () => {
             setRecetaModal(null)
             setMedicamentoSearch('')
-            await invalidateAll()
+            invalidateAll()
         },
     })
 
@@ -4589,7 +5267,8 @@ function VademecumPatologiaForm({ initialData, onSave, onCancel, saving }) {
     const medicamentosQuery = useQuery({
         queryKey: ['clinica', 'vademecum-form-medicamentos', medicamentoSearch],
         queryFn: async () => (await api.get(`/clinica/vademecum/medicamentos/simple?${queryString({ buscar: medicamentoSearch, page_size: 12 })}`)).data,
-        enabled: medicamentoSearch.trim().length >= 0,
+        enabled: medicamentoSearch.trim().length >= 1,
+        staleTime: 60 * 1000,
     })
 
     const addTratamiento = () => {
@@ -4993,6 +5672,7 @@ export default function ClinicaPage() {
     return (
         <ClinicaShell currentKey={sectionKey} onNavigate={navigate}>
             {sectionKey === 'dashboard' && <DashboardClinicoSection />}
+            {sectionKey === 'agenda' && <AgendaClinicaSection />}
             {sectionKey === 'pacientes' && <PacientesSection />}
             {sectionKey === 'doctores' && <DoctoresSection />}
             {sectionKey === 'consulta' && <NuevaConsultaSection />}

@@ -215,6 +215,7 @@ function AppLayout() {
                         <Route path="/clinica/dashboard" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                         <Route path="/clinica/pacientes" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                         <Route path="/clinica/doctores" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                        <Route path="/clinica/agenda" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                         <Route path="/clinica/consulta" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                         <Route path="/clinica/historial" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                         <Route path="/clinica/lugares" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />

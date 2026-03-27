@@ -110,6 +110,8 @@ class ConsultaOftalmologica(Base):
     tipo_lente = Column(String(100))
     material_lente = Column(String(100))
     tratamientos = Column(String(200))
+    fecha_control = Column(Date)
+    agenda_turno_id = Column(Integer, ForeignKey("clinica_turnos.id"), nullable=True)
     av_sc_lejos_od = Column(String(50))
     av_sc_lejos_oi = Column(String(50))
     av_cc_lejos_od = Column(String(50))
@@ -193,6 +195,7 @@ class ConsultaContactologia(Base):
     resumen_resultados = Column(Text)
     marca_recomendada = Column(String(200))
     fecha_control = Column(Date)
+    agenda_turno_id = Column(Integer, ForeignKey("clinica_turnos.id"), nullable=True)
     observaciones = Column(Text)
 
     paciente_rel = relationship("Paciente", back_populates="consultas_contactologia", lazy="selectin")
@@ -342,3 +345,32 @@ class VademecumTratamiento(Base):
 
     patologia_rel = relationship("VademecumPatologia", back_populates="tratamientos", lazy="selectin")
     medicamento_rel = relationship("VademecumMedicamento", back_populates="tratamientos", lazy="selectin")
+
+
+class TurnoClinico(Base):
+    __tablename__ = "clinica_turnos"
+    __table_args__ = (
+        Index("idx_clinica_turno_fecha_hora", "fecha_hora"),
+        Index("idx_clinica_turno_estado", "estado"),
+        Index("idx_clinica_turno_doctor", "doctor_id"),
+        Index("idx_clinica_turno_lugar", "lugar_atencion_id"),
+        Index("idx_clinica_turno_paciente", "paciente_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paciente_id = Column(Integer, ForeignKey("clinica_pacientes.id"), nullable=True)
+    paciente_nombre_libre = Column(String(200), nullable=True)
+    doctor_id = Column(Integer, ForeignKey("clinica_doctores.id"), nullable=True)
+    lugar_atencion_id = Column(Integer, ForeignKey("clinica_lugares_atencion.id"), nullable=True)
+    fecha_hora = Column(DateTime, default=datetime.now, nullable=False)
+    estado = Column(String(30), default="PENDIENTE", nullable=False)
+    consulta_id = Column(Integer, nullable=True)
+    consulta_tipo = Column(String(30), nullable=True)
+    motivo = Column(String(255))
+    notas = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    paciente_rel = relationship("Paciente", lazy="selectin")
+    doctor_rel = relationship("Doctor", lazy="selectin")
+    lugar_atencion_rel = relationship("LugarAtencion", lazy="selectin")

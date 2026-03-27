@@ -1610,6 +1610,41 @@ class ClinicaLugarSimpleOut(BaseModel):
     nombre: str
 
 
+class ClinicaTurnoIn(BaseModel):
+    paciente_id: Optional[int] = None
+    paciente_nombre_libre: Optional[str] = None
+    doctor_id: Optional[int] = None
+    lugar_atencion_id: Optional[int] = None
+    fecha_hora: datetime
+    estado: Optional[str] = "PENDIENTE"
+    motivo: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class ClinicaTurnoOut(BaseModel):
+    id: int
+    paciente_id: Optional[int] = None
+    paciente_nombre: str
+    paciente_nombre_libre: Optional[str] = None
+    paciente_ci: Optional[str] = None
+    doctor_id: Optional[int] = None
+    doctor_nombre: Optional[str] = None
+    lugar_atencion_id: Optional[int] = None
+    lugar_nombre: Optional[str] = None
+    fecha_hora: datetime
+    estado: str
+    motivo: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class ClinicaTurnosListOut(BaseModel):
+    items: List[ClinicaTurnoOut] = []
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class ClinicaLugarIn(BaseModel):
     nombre: str
     direccion: Optional[str] = None
@@ -1718,6 +1753,7 @@ class ClinicaConsultaOftalmologicaIn(BaseModel):
     paciente_id: int
     doctor_id: Optional[int] = None
     lugar_atencion_id: Optional[int] = None
+    agenda_turno_id: Optional[int] = None
     fecha: Optional[datetime] = None
     motivo: Optional[str] = None
     diagnostico: Optional[str] = None
@@ -1725,6 +1761,7 @@ class ClinicaConsultaOftalmologicaIn(BaseModel):
     tipo_lente: Optional[str] = None
     material_lente: Optional[str] = None
     tratamientos: Optional[str] = None
+    fecha_control: Optional[date] = None
     av_sc_lejos_od: Optional[str] = None
     av_sc_lejos_oi: Optional[str] = None
     av_cc_lejos_od: Optional[str] = None
@@ -1788,6 +1825,7 @@ class ClinicaConsultaContactologiaIn(BaseModel):
     paciente_id: int
     doctor_id: Optional[int] = None
     lugar_atencion_id: Optional[int] = None
+    agenda_turno_id: Optional[int] = None
     fecha: Optional[datetime] = None
     tipo_lente: Optional[str] = None
     diseno: Optional[str] = None
@@ -1804,6 +1842,7 @@ class ClinicaConsultaDetalleOut(BaseModel):
     paciente_id: int
     tipo: str
     fecha: datetime
+    agenda_turno_id: Optional[int] = None
     doctor_id: Optional[int] = None
     doctor_nombre: Optional[str] = None
     lugar_atencion_id: Optional[int] = None
@@ -1814,6 +1853,7 @@ class ClinicaConsultaDetalleOut(BaseModel):
     tipo_lente: Optional[str] = None
     material_lente: Optional[str] = None
     tratamientos: Optional[str] = None
+    fecha_control: Optional[date] = None
     av_sc_lejos_od: Optional[str] = None
     av_sc_lejos_oi: Optional[str] = None
     av_cc_lejos_od: Optional[str] = None

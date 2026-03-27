@@ -265,6 +265,37 @@ def ensure_tenant_schema(engine, tenant_slug: str):
             if "consulta_tipo" not in receta_med_columns:
                 connection.execute(text("ALTER TABLE clinica_receta_medicamentos ADD COLUMN consulta_tipo VARCHAR(30)"))
 
+    if "clinica_pacientes" in table_names and "clinica_turnos" not in table_names:
+        Base.metadata.create_all(bind=engine, tables=[clinica_models.TurnoClinico.__table__])
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+    if "clinica_turnos" in table_names:
+        turno_columns = {column["name"] for column in inspector.get_columns("clinica_turnos")}
+        with engine.begin() as connection:
+            if "paciente_nombre_libre" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN paciente_nombre_libre VARCHAR(200)"))
+            if "consulta_id" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN consulta_id INTEGER"))
+            if "consulta_tipo" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN consulta_tipo VARCHAR(30)"))
+            connection.execute(text("ALTER TABLE clinica_turnos ALTER COLUMN paciente_id DROP NOT NULL"))
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+
+    if "clinica_consultas_oftalmologicas" in table_names:
+        oft_columns = {column["name"] for column in inspector.get_columns("clinica_consultas_oftalmologicas")}
+        with engine.begin() as connection:
+            if "fecha_control" not in oft_columns:
+                connection.execute(text("ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN fecha_control DATE"))
+            if "agenda_turno_id" not in oft_columns:
+                connection.execute(text("ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN agenda_turno_id INTEGER REFERENCES clinica_turnos(id)"))
+
+    if "clinica_consultas_contactologia" in table_names:
+        cont_columns = {column["name"] for column in inspector.get_columns("clinica_consultas_contactologia")}
+        with engine.begin() as connection:
+            if "agenda_turno_id" not in cont_columns:
+                connection.execute(text("ALTER TABLE clinica_consultas_contactologia ADD COLUMN agenda_turno_id INTEGER REFERENCES clinica_turnos(id)"))
+
     column_names = {column["name"] for column in inspector.get_columns("productos")}
 
     index_names = {index["name"] for index in inspector.get_indexes("productos")}

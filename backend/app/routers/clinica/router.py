@@ -3,7 +3,7 @@ from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, literal, or_, text, union_all
 from sqlalchemy.orm import noload, selectinload
 
 from app.database import get_session_for_tenant
@@ -18,6 +18,7 @@ from app.models.clinica_models import (
     RecetaMedicamento,
     RecetaMedicamentoDetalle,
     RecetaPDF,
+    TurnoClinico,
     VademecumMedicamento,
     VademecumPatologia,
     VademecumTratamiento,
@@ -59,6 +60,9 @@ from app.schemas.schemas import (
     ClinicaVademecumPatologiaOut,
     ClinicaVademecumPatologiasListOut,
     ClinicaVademecumTratamientoOut,
+    ClinicaTurnoIn,
+    ClinicaTurnoOut,
+    ClinicaTurnosListOut,
 )
 from app.utils.auth import require_action, require_clinica
 from app.utils.pdf_consulta_clinica_web import generar_pdf_consulta_clinica
@@ -106,13 +110,44 @@ def _normalizar_texto(value):
     return text_value or None
 
 
-def _serializar_vademecum_medicamento(session, medicamento):
-    tratamientos_count = _count_rows(
-        session.query(func.count(VademecumTratamiento.id)).filter(VademecumTratamiento.medicamento_id == medicamento.id)
+def _obtener_conteos_vademecum_medicamentos(session, medicamento_ids: list[int]):
+    if not medicamento_ids:
+        return {}, {}
+
+    tratamientos_rows = (
+        session.query(
+            VademecumTratamiento.medicamento_id,
+            func.count(VademecumTratamiento.id),
+        )
+        .filter(VademecumTratamiento.medicamento_id.in_(medicamento_ids))
+        .group_by(VademecumTratamiento.medicamento_id)
+        .all()
     )
-    recetas_count = _count_rows(
-        session.query(func.count(RecetaMedicamentoDetalle.id)).filter(RecetaMedicamentoDetalle.medicamento_id == medicamento.id)
+    recetas_rows = (
+        session.query(
+            RecetaMedicamentoDetalle.medicamento_id,
+            func.count(RecetaMedicamentoDetalle.id),
+        )
+        .filter(RecetaMedicamentoDetalle.medicamento_id.in_(medicamento_ids))
+        .group_by(RecetaMedicamentoDetalle.medicamento_id)
+        .all()
     )
+    tratamientos_map = {row[0]: row[1] or 0 for row in tratamientos_rows}
+    recetas_map = {row[0]: row[1] or 0 for row in recetas_rows}
+    return tratamientos_map, recetas_map
+
+
+def _serializar_vademecum_medicamento(session, medicamento, tratamientos_map=None, recetas_map=None):
+    if tratamientos_map is not None and recetas_map is not None:
+        tratamientos_count = tratamientos_map.get(medicamento.id, 0)
+        recetas_count = recetas_map.get(medicamento.id, 0)
+    else:
+        tratamientos_count = _count_rows(
+            session.query(func.count(VademecumTratamiento.id)).filter(VademecumTratamiento.medicamento_id == medicamento.id)
+        )
+        recetas_count = _count_rows(
+            session.query(func.count(RecetaMedicamentoDetalle.id)).filter(RecetaMedicamentoDetalle.medicamento_id == medicamento.id)
+        )
     return ClinicaVademecumMedicamentoOut(
         id=medicamento.id,
         nombre_comercial=medicamento.nombre_comercial,
@@ -147,6 +182,131 @@ def _serializar_vademecum_patologia(patologia):
         tratamiento_no_farmacologico=patologia.tratamiento_no_farmacologico,
         tratamientos=tratamientos,
     )
+
+
+def _query_historial_general_oftalmologia(session, desde_dt, hasta_dt, paciente_id=None, doctor_id=None, termino: str = ""):
+    query = (
+        session.query(
+            ConsultaOftalmologica.id.label("id"),
+            literal("OFTALMOLOGIA").label("tipo"),
+            ConsultaOftalmologica.fecha.label("fecha"),
+            ConsultaOftalmologica.paciente_id.label("paciente_id"),
+            Paciente.nombre_completo.label("paciente_nombre"),
+            Paciente.ci_pasaporte.label("paciente_ci"),
+            ConsultaOftalmologica.doctor_id.label("doctor_id"),
+            Doctor.nombre_completo.label("doctor_nombre"),
+            ConsultaOftalmologica.lugar_atencion_id.label("lugar_atencion_id"),
+            LugarAtencion.nombre.label("lugar_nombre"),
+            ConsultaOftalmologica.motivo.label("motivo"),
+            ConsultaOftalmologica.diagnostico.label("diagnostico"),
+            ConsultaOftalmologica.plan_tratamiento.label("resumen"),
+            literal(None).label("observaciones"),
+        )
+        .join(Paciente, Paciente.id == ConsultaOftalmologica.paciente_id)
+        .outerjoin(Doctor, Doctor.id == ConsultaOftalmologica.doctor_id)
+        .outerjoin(LugarAtencion, LugarAtencion.id == ConsultaOftalmologica.lugar_atencion_id)
+        .filter(ConsultaOftalmologica.fecha >= desde_dt, ConsultaOftalmologica.fecha < hasta_dt)
+    )
+    if paciente_id:
+        query = query.filter(ConsultaOftalmologica.paciente_id == paciente_id)
+    if doctor_id:
+        query = query.filter(ConsultaOftalmologica.doctor_id == doctor_id)
+    if termino:
+        like_term = f"%{termino}%"
+        query = query.filter(
+            or_(
+                Paciente.nombre_completo.ilike(like_term),
+                Paciente.ci_pasaporte.ilike(like_term),
+                Doctor.nombre_completo.ilike(like_term),
+                LugarAtencion.nombre.ilike(like_term),
+                ConsultaOftalmologica.motivo.ilike(like_term),
+                ConsultaOftalmologica.diagnostico.ilike(like_term),
+                ConsultaOftalmologica.plan_tratamiento.ilike(like_term),
+            )
+        )
+    return query
+
+
+def _query_historial_general_contactologia(session, desde_dt, hasta_dt, paciente_id=None, doctor_id=None, termino: str = ""):
+    query = (
+        session.query(
+            ConsultaContactologia.id.label("id"),
+            literal("CONTACTOLOGIA").label("tipo"),
+            ConsultaContactologia.fecha.label("fecha"),
+            ConsultaContactologia.paciente_id.label("paciente_id"),
+            Paciente.nombre_completo.label("paciente_nombre"),
+            Paciente.ci_pasaporte.label("paciente_ci"),
+            ConsultaContactologia.doctor_id.label("doctor_id"),
+            Doctor.nombre_completo.label("doctor_nombre"),
+            ConsultaContactologia.lugar_atencion_id.label("lugar_atencion_id"),
+            LugarAtencion.nombre.label("lugar_nombre"),
+            literal(None).label("motivo"),
+            ConsultaContactologia.diagnostico.label("diagnostico"),
+            func.coalesce(ConsultaContactologia.resumen_resultados, ConsultaContactologia.plan_tratamiento).label("resumen"),
+            literal(None).label("observaciones"),
+        )
+        .join(Paciente, Paciente.id == ConsultaContactologia.paciente_id)
+        .outerjoin(Doctor, Doctor.id == ConsultaContactologia.doctor_id)
+        .outerjoin(LugarAtencion, LugarAtencion.id == ConsultaContactologia.lugar_atencion_id)
+        .filter(ConsultaContactologia.fecha >= desde_dt, ConsultaContactologia.fecha < hasta_dt)
+    )
+    if paciente_id:
+        query = query.filter(ConsultaContactologia.paciente_id == paciente_id)
+    if doctor_id:
+        query = query.filter(ConsultaContactologia.doctor_id == doctor_id)
+    if termino:
+        like_term = f"%{termino}%"
+        query = query.filter(
+            or_(
+                Paciente.nombre_completo.ilike(like_term),
+                Paciente.ci_pasaporte.ilike(like_term),
+                Doctor.nombre_completo.ilike(like_term),
+                LugarAtencion.nombre.ilike(like_term),
+                ConsultaContactologia.diagnostico.ilike(like_term),
+                ConsultaContactologia.resumen_resultados.ilike(like_term),
+                ConsultaContactologia.plan_tratamiento.ilike(like_term),
+            )
+        )
+    return query
+
+
+def _query_historial_general_recetas(session, desde_dt, hasta_dt, paciente_id=None, doctor_nombre_filtrado=None, termino: str = ""):
+    query = (
+        session.query(
+            RecetaMedicamento.id.label("id"),
+            literal("RECETA_MEDICAMENTOS").label("tipo"),
+            RecetaMedicamento.fecha_emision.label("fecha"),
+            RecetaMedicamento.paciente_id.label("paciente_id"),
+            Paciente.nombre_completo.label("paciente_nombre"),
+            Paciente.ci_pasaporte.label("paciente_ci"),
+            literal(None).label("doctor_id"),
+            RecetaMedicamento.doctor_nombre.label("doctor_nombre"),
+            literal(None).label("lugar_atencion_id"),
+            literal(None).label("lugar_nombre"),
+            literal(None).label("motivo"),
+            RecetaMedicamento.diagnostico.label("diagnostico"),
+            literal(None).label("resumen"),
+            RecetaMedicamento.observaciones.label("observaciones"),
+        )
+        .join(Paciente, Paciente.id == RecetaMedicamento.paciente_id)
+        .filter(RecetaMedicamento.fecha_emision >= desde_dt, RecetaMedicamento.fecha_emision < hasta_dt)
+    )
+    if paciente_id:
+        query = query.filter(RecetaMedicamento.paciente_id == paciente_id)
+    if doctor_nombre_filtrado:
+        query = query.filter(RecetaMedicamento.doctor_nombre == doctor_nombre_filtrado)
+    if termino:
+        like_term = f"%{termino}%"
+        query = query.filter(
+            or_(
+                Paciente.nombre_completo.ilike(like_term),
+                Paciente.ci_pasaporte.ilike(like_term),
+                RecetaMedicamento.doctor_nombre.ilike(like_term),
+                RecetaMedicamento.diagnostico.ilike(like_term),
+                RecetaMedicamento.observaciones.ilike(like_term),
+            )
+        )
+    return query
 
 
 def _serializar_pacientes(session, pacientes):
@@ -210,6 +370,84 @@ def _serializar_pacientes(session, pacientes):
             )
         )
     return items
+
+
+ESTADOS_TURNO_VALIDOS = {"PENDIENTE", "CONFIRMADO", "EN_CURSO", "ATENDIDO", "CANCELADO"}
+
+
+def _normalizar_estado_turno(value: str | None) -> str:
+    estado = (value or "PENDIENTE").strip().upper()
+    if estado not in ESTADOS_TURNO_VALIDOS:
+        raise HTTPException(status_code=400, detail="Estado de turno no valido.")
+    return estado
+
+
+def _serializar_turno(turno) -> ClinicaTurnoOut:
+    paciente_nombre = None
+    paciente_ci = None
+    if turno.paciente_rel:
+        paciente_nombre = turno.paciente_rel.nombre_completo
+        paciente_ci = turno.paciente_rel.ci_pasaporte
+    elif turno.paciente_nombre_libre:
+        paciente_nombre = turno.paciente_nombre_libre
+    return ClinicaTurnoOut(
+        id=turno.id,
+        paciente_id=turno.paciente_id,
+        paciente_nombre=paciente_nombre or "PACIENTE",
+        paciente_nombre_libre=turno.paciente_nombre_libre,
+        paciente_ci=paciente_ci,
+        doctor_id=turno.doctor_id,
+        doctor_nombre=turno.doctor_rel.nombre_completo if turno.doctor_rel else None,
+        lugar_atencion_id=turno.lugar_atencion_id,
+        lugar_nombre=turno.lugar_atencion_rel.nombre if turno.lugar_atencion_rel else None,
+        fecha_hora=turno.fecha_hora,
+        estado=turno.estado,
+        motivo=turno.motivo,
+        notas=turno.notas,
+    )
+
+
+def _marcar_turno_atendido_con_consulta(session, turno_id: int | None, consulta_id: int, consulta_tipo: str, paciente_id: int, doctor_id: int | None, lugar_atencion_id: int | None, fecha: datetime, motivo: str | None):
+    if not turno_id:
+        return
+    turno = session.query(TurnoClinico).filter(TurnoClinico.id == turno_id).first()
+    if not turno:
+        return
+    turno.paciente_id = paciente_id
+    turno.paciente_nombre_libre = None
+    turno.doctor_id = doctor_id
+    turno.lugar_atencion_id = lugar_atencion_id
+    turno.fecha_hora = fecha or turno.fecha_hora
+    turno.estado = "ATENDIDO"
+    turno.consulta_id = consulta_id
+    turno.consulta_tipo = consulta_tipo
+    turno.motivo = _normalizar_texto(motivo) or turno.motivo
+
+
+def _programar_proximo_control(session, paciente_id: int, doctor_id: int | None, lugar_atencion_id: int | None, fecha_control: date | None, motivo: str | None):
+    if not fecha_control:
+        return
+    existente = (
+        session.query(TurnoClinico.id)
+        .filter(
+            TurnoClinico.paciente_id == paciente_id,
+            TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO", "EN_CURSO"]),
+            TurnoClinico.fecha_hora >= _inicio_dia(fecha_control),
+            TurnoClinico.fecha_hora < (_inicio_dia(fecha_control) + timedelta(days=1)),
+        )
+        .first()
+    )
+    if existente:
+        return
+    session.add(TurnoClinico(
+        paciente_id=paciente_id,
+        doctor_id=doctor_id,
+        lugar_atencion_id=lugar_atencion_id,
+        fecha_hora=datetime.combine(fecha_control, datetime.min.time()).replace(hour=9),
+        estado="PENDIENTE",
+        motivo=_normalizar_texto(motivo) or "PROXIMO CONTROL",
+        notas="Generado automaticamente desde la consulta clinica.",
+    ))
 
 
 def _obtener_paciente_seguro(session, paciente_id: int):
@@ -376,9 +614,11 @@ def _obtener_consulta_oft_segura(session, consulta_id: int):
         motivo=row.get("motivo"),
         diagnostico=row.get("diagnostico"),
         plan_tratamiento=row.get("plan_tratamiento"),
+        agenda_turno_id=row.get("agenda_turno_id"),
         tipo_lente=row.get("tipo_lente"),
         material_lente=row.get("material_lente"),
         tratamientos=row.get("tratamientos"),
+        fecha_control=row.get("fecha_control"),
         av_cc_lejos_od=row.get("av_cc_lejos_od"),
         av_cc_lejos_oi=row.get("av_cc_lejos_oi"),
         ref_od_esfera=row.get("ref_od_esfera"),
@@ -470,6 +710,7 @@ def _obtener_consulta_cont_segura(session, consulta_id: int):
         lugar_nombre=lugar_nombre,
         diagnostico=row.get("diagnostico"),
         plan_tratamiento=row.get("plan_tratamiento"),
+        agenda_turno_id=row.get("agenda_turno_id"),
         tipo_lente=row.get("tipo_lente"),
         diseno=row.get("diseno"),
         resumen_resultados=row.get("resumen_resultados"),
@@ -569,6 +810,20 @@ def obtener_dashboard_clinico(
         consultas_cont_mes = _count_rows(
             session.query(func.count(ConsultaContactologia.id)).filter(ConsultaContactologia.fecha >= inicio_mes)
         )
+        turnos_hoy = _count_rows(
+            session.query(func.count(TurnoClinico.id)).filter(
+                TurnoClinico.fecha_hora >= inicio_hoy,
+                TurnoClinico.fecha_hora < (inicio_hoy + timedelta(days=1)),
+            )
+        )
+        controles_proximos = _count_rows(
+            session.query(func.count(TurnoClinico.id)).filter(
+                TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO"]),
+                TurnoClinico.motivo.ilike("%CONTROL%"),
+                TurnoClinico.fecha_hora >= inicio_hoy,
+                TurnoClinico.fecha_hora < (inicio_hoy + timedelta(days=7)),
+            )
+        )
         pacientes_nuevos_mes = _count_rows(session.query(func.count(Paciente.id)).filter(Paciente.fecha_registro >= inicio_mes))
         recetas_mes = (
             _count_rows(session.query(func.count(RecetaPDF.id)).filter(RecetaPDF.fecha >= inicio_mes))
@@ -664,6 +919,26 @@ def obtener_dashboard_clinico(
                 )
             )
 
+        if turnos_hoy > 0:
+            alertas.append(
+                ClinicaAlertOut(
+                    tipo="AGENDA",
+                    titulo="Turnos de hoy",
+                    mensaje=f"Hay {turnos_hoy} turno(s) registrados para hoy en la agenda clinica.",
+                    color="#38bdf8",
+                )
+            )
+
+        if controles_proximos > 0:
+            alertas.append(
+                ClinicaAlertOut(
+                    tipo="SEGUIMIENTO",
+                    titulo="Controles proximos",
+                    mensaje=f"Hay {controles_proximos} control(es) pendientes dentro de los proximos 7 dias.",
+                    color="#a78bfa",
+                )
+            )
+
         if lugares_activos > 0:
             alertas.append(
                 ClinicaAlertOut(
@@ -697,6 +972,173 @@ def obtener_dashboard_clinico(
             recientes=recientes,
             alertas=alertas,
         )
+    finally:
+        session.close()
+
+
+@router.get("/agenda", response_model=ClinicaTurnosListOut)
+def listar_turnos_clinica(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.historial", "clinica")),
+    buscar: str | None = Query(default=None),
+    fecha_desde: date | None = Query(default=None),
+    fecha_hasta: date | None = Query(default=None),
+    doctor_id: int | None = Query(default=None),
+    lugar_atencion_id: int | None = Query(default=None),
+    estado: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = (
+            session.query(TurnoClinico)
+            .options(
+                selectinload(TurnoClinico.paciente_rel),
+                selectinload(TurnoClinico.doctor_rel),
+                selectinload(TurnoClinico.lugar_atencion_rel),
+            )
+            .outerjoin(Paciente, Paciente.id == TurnoClinico.paciente_id)
+        )
+        if buscar:
+            term = f"%{buscar.strip()}%"
+            query = query.filter(
+                or_(
+                    Paciente.nombre_completo.ilike(term),
+                    Paciente.ci_pasaporte.ilike(term),
+                    Paciente.telefono.ilike(term),
+                    TurnoClinico.paciente_nombre_libre.ilike(term),
+                    TurnoClinico.motivo.ilike(term),
+                )
+            )
+        if fecha_desde:
+            query = query.filter(TurnoClinico.fecha_hora >= _inicio_dia(fecha_desde))
+        if fecha_hasta:
+            query = query.filter(TurnoClinico.fecha_hora < (_inicio_dia(fecha_hasta) + timedelta(days=1)))
+        if doctor_id:
+            query = query.filter(TurnoClinico.doctor_id == doctor_id)
+        if lugar_atencion_id:
+            query = query.filter(TurnoClinico.lugar_atencion_id == lugar_atencion_id)
+        if estado:
+            query = query.filter(TurnoClinico.estado == _normalizar_estado_turno(estado))
+
+        total = query.count()
+        total_pages = max(1, ceil(total / page_size)) if total else 1
+        items = (
+            query.order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return ClinicaTurnosListOut(
+            items=[_serializar_turno(item) for item in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
+    finally:
+        session.close()
+
+
+@router.post("/agenda", response_model=ClinicaTurnoOut)
+def crear_turno_clinica(
+    payload: ClinicaTurnoIn,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.consultas_crear", "clinica")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        paciente = None
+        nombre_libre = _normalizar_texto(payload.paciente_nombre_libre)
+        if payload.paciente_id:
+            paciente = _obtener_paciente_seguro(session, payload.paciente_id)
+        elif not nombre_libre:
+            raise HTTPException(status_code=400, detail="Debes seleccionar un paciente o cargar un nombre temporal.")
+        if payload.doctor_id:
+            doctor = session.query(Doctor).filter(Doctor.id == payload.doctor_id).first()
+            if not doctor:
+                raise HTTPException(status_code=404, detail="Doctor no encontrado.")
+        if payload.lugar_atencion_id:
+            lugar = session.query(LugarAtencion).filter(LugarAtencion.id == payload.lugar_atencion_id).first()
+            if not lugar:
+                raise HTTPException(status_code=404, detail="Lugar de atencion no encontrado.")
+
+        turno = TurnoClinico(
+            paciente_id=paciente.id if paciente else None,
+            paciente_nombre_libre=nombre_libre,
+            doctor_id=payload.doctor_id,
+            lugar_atencion_id=payload.lugar_atencion_id,
+            fecha_hora=payload.fecha_hora,
+            estado=_normalizar_estado_turno(payload.estado),
+            motivo=_normalizar_texto(payload.motivo),
+            notas=_normalizar_texto(payload.notas),
+        )
+        session.add(turno)
+        session.commit()
+        session.refresh(turno)
+        return _serializar_turno(turno)
+    finally:
+        session.close()
+
+
+@router.put("/agenda/{turno_id:int}", response_model=ClinicaTurnoOut)
+def editar_turno_clinica(
+    turno_id: int,
+    payload: ClinicaTurnoIn,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.consultas_editar", "clinica")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        turno = session.query(TurnoClinico).filter(TurnoClinico.id == turno_id).first()
+        if not turno:
+            raise HTTPException(status_code=404, detail="Turno no encontrado.")
+
+        paciente = None
+        nombre_libre = _normalizar_texto(payload.paciente_nombre_libre)
+        if payload.paciente_id:
+            paciente = _obtener_paciente_seguro(session, payload.paciente_id)
+        elif not nombre_libre:
+            raise HTTPException(status_code=400, detail="Debes seleccionar un paciente o cargar un nombre temporal.")
+        if payload.doctor_id:
+            doctor = session.query(Doctor).filter(Doctor.id == payload.doctor_id).first()
+            if not doctor:
+                raise HTTPException(status_code=404, detail="Doctor no encontrado.")
+        if payload.lugar_atencion_id:
+            lugar = session.query(LugarAtencion).filter(LugarAtencion.id == payload.lugar_atencion_id).first()
+            if not lugar:
+                raise HTTPException(status_code=404, detail="Lugar de atencion no encontrado.")
+
+        turno.paciente_id = paciente.id if paciente else None
+        turno.paciente_nombre_libre = nombre_libre
+        turno.doctor_id = payload.doctor_id
+        turno.lugar_atencion_id = payload.lugar_atencion_id
+        turno.fecha_hora = payload.fecha_hora
+        turno.estado = _normalizar_estado_turno(payload.estado)
+        turno.motivo = _normalizar_texto(payload.motivo)
+        turno.notas = _normalizar_texto(payload.notas)
+        session.commit()
+        session.refresh(turno)
+        return _serializar_turno(turno)
+    finally:
+        session.close()
+
+
+@router.delete("/agenda/{turno_id:int}")
+def eliminar_turno_clinica(
+    turno_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.consultas_editar", "clinica")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        turno = session.query(TurnoClinico).filter(TurnoClinico.id == turno_id).first()
+        if not turno:
+            raise HTTPException(status_code=404, detail="Turno no encontrado.")
+        session.delete(turno)
+        session.commit()
+        return {"ok": True}
     finally:
         session.close()
 
@@ -1154,8 +1596,18 @@ def listar_vademecum_medicamentos(
             .limit(page_size)
             .all()
         )
+        medicamento_ids = [item.id for item in items]
+        tratamientos_map, recetas_map = _obtener_conteos_vademecum_medicamentos(session, medicamento_ids)
         return ClinicaVademecumMedicamentosListOut(
-            items=[_serializar_vademecum_medicamento(session, item) for item in items],
+            items=[
+                _serializar_vademecum_medicamento(
+                    session,
+                    item,
+                    tratamientos_map=tratamientos_map,
+                    recetas_map=recetas_map,
+                )
+                for item in items
+            ],
             total=total,
             page=page,
             page_size=page_size,
@@ -1576,183 +2028,88 @@ def obtener_historial_clinico_general(
                 raise HTTPException(status_code=404, detail="Doctor no encontrado.")
             doctor_nombre_filtrado = doctor_filtrado.nombre_completo
 
-        items: list[ClinicaHistorialGeneralItemOut] = []
-
+        query_parts = []
         if tipo_normalizado in ("TODOS", "OFTALMOLOGIA"):
-            oft_query = (
-                session.query(
-                    ConsultaOftalmologica.id,
-                    ConsultaOftalmologica.fecha,
-                    ConsultaOftalmologica.paciente_id,
-                    ConsultaOftalmologica.doctor_id,
-                    ConsultaOftalmologica.lugar_atencion_id,
-                    ConsultaOftalmologica.motivo,
-                    ConsultaOftalmologica.diagnostico,
-                    ConsultaOftalmologica.plan_tratamiento,
-                    Paciente.nombre_completo.label("paciente_nombre"),
-                    Paciente.ci_pasaporte.label("paciente_ci"),
-                    Doctor.nombre_completo.label("doctor_nombre"),
-                    LugarAtencion.nombre.label("lugar_nombre"),
+            query_parts.append(
+                _query_historial_general_oftalmologia(
+                    session,
+                    desde_dt,
+                    hasta_dt,
+                    paciente_id=paciente_id,
+                    doctor_id=doctor_id,
+                    termino=termino,
                 )
-                .join(Paciente, Paciente.id == ConsultaOftalmologica.paciente_id)
-                .outerjoin(Doctor, Doctor.id == ConsultaOftalmologica.doctor_id)
-                .outerjoin(LugarAtencion, LugarAtencion.id == ConsultaOftalmologica.lugar_atencion_id)
-                .filter(ConsultaOftalmologica.fecha >= desde_dt, ConsultaOftalmologica.fecha < hasta_dt)
-            )
-            if paciente_id:
-                oft_query = oft_query.filter(ConsultaOftalmologica.paciente_id == paciente_id)
-            if doctor_id:
-                oft_query = oft_query.filter(ConsultaOftalmologica.doctor_id == doctor_id)
-            if termino:
-                like_term = f"%{termino}%"
-                oft_query = oft_query.filter(
-                    or_(
-                        Paciente.nombre_completo.ilike(like_term),
-                        Paciente.ci_pasaporte.ilike(like_term),
-                        Doctor.nombre_completo.ilike(like_term),
-                        LugarAtencion.nombre.ilike(like_term),
-                        ConsultaOftalmologica.motivo.ilike(like_term),
-                        ConsultaOftalmologica.diagnostico.ilike(like_term),
-                        ConsultaOftalmologica.plan_tratamiento.ilike(like_term),
-                    )
-                )
-            items.extend(
-                [
-                    ClinicaHistorialGeneralItemOut(
-                        id=row.id,
-                        tipo="OFTALMOLOGIA",
-                        fecha=row.fecha,
-                        paciente_id=row.paciente_id,
-                        paciente_nombre=row.paciente_nombre,
-                        paciente_ci=row.paciente_ci,
-                        doctor_id=row.doctor_id,
-                        doctor_nombre=row.doctor_nombre,
-                        lugar_atencion_id=row.lugar_atencion_id,
-                        lugar_nombre=row.lugar_nombre,
-                        motivo=row.motivo,
-                        diagnostico=row.diagnostico,
-                        resumen=row.plan_tratamiento,
-                    )
-                    for row in oft_query.all()
-                ]
             )
 
         if tipo_normalizado in ("TODOS", "CONTACTOLOGIA"):
-            cont_query = (
-                session.query(
-                    ConsultaContactologia.id,
-                    ConsultaContactologia.fecha,
-                    ConsultaContactologia.paciente_id,
-                    ConsultaContactologia.doctor_id,
-                    ConsultaContactologia.lugar_atencion_id,
-                    ConsultaContactologia.diagnostico,
-                    ConsultaContactologia.resumen_resultados,
-                    ConsultaContactologia.plan_tratamiento,
-                    Paciente.nombre_completo.label("paciente_nombre"),
-                    Paciente.ci_pasaporte.label("paciente_ci"),
-                    Doctor.nombre_completo.label("doctor_nombre"),
-                    LugarAtencion.nombre.label("lugar_nombre"),
+            query_parts.append(
+                _query_historial_general_contactologia(
+                    session,
+                    desde_dt,
+                    hasta_dt,
+                    paciente_id=paciente_id,
+                    doctor_id=doctor_id,
+                    termino=termino,
                 )
-                .join(Paciente, Paciente.id == ConsultaContactologia.paciente_id)
-                .outerjoin(Doctor, Doctor.id == ConsultaContactologia.doctor_id)
-                .outerjoin(LugarAtencion, LugarAtencion.id == ConsultaContactologia.lugar_atencion_id)
-                .filter(ConsultaContactologia.fecha >= desde_dt, ConsultaContactologia.fecha < hasta_dt)
-            )
-            if paciente_id:
-                cont_query = cont_query.filter(ConsultaContactologia.paciente_id == paciente_id)
-            if doctor_id:
-                cont_query = cont_query.filter(ConsultaContactologia.doctor_id == doctor_id)
-            if termino:
-                like_term = f"%{termino}%"
-                cont_query = cont_query.filter(
-                    or_(
-                        Paciente.nombre_completo.ilike(like_term),
-                        Paciente.ci_pasaporte.ilike(like_term),
-                        Doctor.nombre_completo.ilike(like_term),
-                        LugarAtencion.nombre.ilike(like_term),
-                        ConsultaContactologia.diagnostico.ilike(like_term),
-                        ConsultaContactologia.resumen_resultados.ilike(like_term),
-                        ConsultaContactologia.plan_tratamiento.ilike(like_term),
-                    )
-                )
-            items.extend(
-                [
-                    ClinicaHistorialGeneralItemOut(
-                        id=row.id,
-                        tipo="CONTACTOLOGIA",
-                        fecha=row.fecha,
-                        paciente_id=row.paciente_id,
-                        paciente_nombre=row.paciente_nombre,
-                        paciente_ci=row.paciente_ci,
-                        doctor_id=row.doctor_id,
-                        doctor_nombre=row.doctor_nombre,
-                        lugar_atencion_id=row.lugar_atencion_id,
-                        lugar_nombre=row.lugar_nombre,
-                        diagnostico=row.diagnostico,
-                        resumen=row.resumen_resultados or row.plan_tratamiento,
-                    )
-                    for row in cont_query.all()
-                ]
             )
 
         if tipo_normalizado in ("TODOS", "RECETA_MEDICAMENTOS"):
-            receta_query = (
-                session.query(
-                    RecetaMedicamento.id,
-                    RecetaMedicamento.fecha_emision,
-                    RecetaMedicamento.paciente_id,
-                    RecetaMedicamento.doctor_nombre,
-                    RecetaMedicamento.diagnostico,
-                    RecetaMedicamento.observaciones,
-                    Paciente.nombre_completo.label("paciente_nombre"),
-                    Paciente.ci_pasaporte.label("paciente_ci"),
+            query_parts.append(
+                _query_historial_general_recetas(
+                    session,
+                    desde_dt,
+                    hasta_dt,
+                    paciente_id=paciente_id,
+                    doctor_nombre_filtrado=doctor_nombre_filtrado,
+                    termino=termino,
                 )
-                .join(Paciente, Paciente.id == RecetaMedicamento.paciente_id)
-                .filter(RecetaMedicamento.fecha_emision >= desde_dt, RecetaMedicamento.fecha_emision < hasta_dt)
-            )
-            if paciente_id:
-                receta_query = receta_query.filter(RecetaMedicamento.paciente_id == paciente_id)
-            if doctor_nombre_filtrado:
-                receta_query = receta_query.filter(RecetaMedicamento.doctor_nombre == doctor_nombre_filtrado)
-            if termino:
-                like_term = f"%{termino}%"
-                receta_query = receta_query.filter(
-                    or_(
-                        Paciente.nombre_completo.ilike(like_term),
-                        Paciente.ci_pasaporte.ilike(like_term),
-                        RecetaMedicamento.doctor_nombre.ilike(like_term),
-                        RecetaMedicamento.diagnostico.ilike(like_term),
-                        RecetaMedicamento.observaciones.ilike(like_term),
-                    )
-                )
-            items.extend(
-                [
-                    ClinicaHistorialGeneralItemOut(
-                        id=row.id,
-                        tipo="RECETA_MEDICAMENTOS",
-                        fecha=row.fecha_emision,
-                        paciente_id=row.paciente_id,
-                        paciente_nombre=row.paciente_nombre,
-                        paciente_ci=row.paciente_ci,
-                        doctor_nombre=row.doctor_nombre,
-                        diagnostico=row.diagnostico,
-                        observaciones=row.observaciones,
-                    )
-                    for row in receta_query.all()
-                ]
             )
 
-        items.sort(key=lambda item: (item.fecha or datetime.min, item.id or 0), reverse=True)
-        total = len(items)
-        total_oftalmologia = sum(1 for item in items if item.tipo == "OFTALMOLOGIA")
-        total_contactologia = sum(1 for item in items if item.tipo == "CONTACTOLOGIA")
-        total_recetas = sum(1 for item in items if item.tipo == "RECETA_MEDICAMENTOS")
+        if len(query_parts) == 1:
+            historial_sq = query_parts[0].subquery("clinica_historial_general")
+        else:
+            historial_sq = union_all(*[query.statement for query in query_parts]).subquery("clinica_historial_general")
+        counts_rows = (
+            session.query(historial_sq.c.tipo, func.count().label("total"))
+            .group_by(historial_sq.c.tipo)
+            .all()
+        )
+        counts_map = {row.tipo: row.total or 0 for row in counts_rows}
+        total_oftalmologia = counts_map.get("OFTALMOLOGIA", 0)
+        total_contactologia = counts_map.get("CONTACTOLOGIA", 0)
+        total_recetas = counts_map.get("RECETA_MEDICAMENTOS", 0)
+        total = total_oftalmologia + total_contactologia + total_recetas
         total_pages = max(1, ceil(total / page_size)) if total else 1
         start = (page - 1) * page_size
-        end = start + page_size
+        rows = (
+            session.query(historial_sq)
+            .order_by(historial_sq.c.fecha.desc(), historial_sq.c.id.desc())
+            .offset(start)
+            .limit(page_size)
+            .all()
+        )
+        items = [
+            ClinicaHistorialGeneralItemOut(
+                id=row.id,
+                tipo=row.tipo,
+                fecha=row.fecha,
+                paciente_id=row.paciente_id,
+                paciente_nombre=row.paciente_nombre,
+                paciente_ci=row.paciente_ci,
+                doctor_id=row.doctor_id,
+                doctor_nombre=row.doctor_nombre,
+                lugar_atencion_id=row.lugar_atencion_id,
+                lugar_nombre=row.lugar_nombre,
+                motivo=row.motivo,
+                diagnostico=row.diagnostico,
+                resumen=row.resumen,
+                observaciones=row.observaciones,
+            )
+            for row in rows
+        ]
 
         return ClinicaHistorialGeneralOut(
-            items=items[start:end],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,
@@ -2094,6 +2451,7 @@ def crear_consulta_oftalmologica(
             paciente_id=payload.paciente_id,
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
+            agenda_turno_id=payload.agenda_turno_id,
             fecha=payload.fecha or datetime.now(),
             motivo=_normalizar_texto(payload.motivo),
             diagnostico=_normalizar_texto(payload.diagnostico),
@@ -2101,6 +2459,7 @@ def crear_consulta_oftalmologica(
             tipo_lente=_normalizar_texto(payload.tipo_lente),
             material_lente=_normalizar_texto(payload.material_lente),
             tratamientos=_normalizar_texto(payload.tratamientos),
+            fecha_control=payload.fecha_control,
             av_cc_lejos_od=_normalizar_texto(payload.av_cc_lejos_od),
             av_cc_lejos_oi=_normalizar_texto(payload.av_cc_lejos_oi),
             ref_od_esfera=_normalizar_texto(payload.ref_od_esfera),
@@ -2158,6 +2517,26 @@ def crear_consulta_oftalmologica(
             observaciones=_normalizar_texto(payload.observaciones),
         )
         session.add(consulta)
+        session.flush()
+        _marcar_turno_atendido_con_consulta(
+            session,
+            payload.agenda_turno_id,
+            consulta.id,
+            "OFTALMOLOGIA",
+            payload.paciente_id,
+            payload.doctor_id,
+            payload.lugar_atencion_id,
+            consulta.fecha,
+            payload.motivo or payload.diagnostico,
+        )
+        _programar_proximo_control(
+            session,
+            payload.paciente_id,
+            payload.doctor_id,
+            payload.lugar_atencion_id,
+            payload.fecha_control,
+            "PROXIMO CONTROL OFTALMOLOGICO",
+        )
         session.commit()
         return _obtener_consulta_oft_segura(session, consulta.id)
     finally:
@@ -2180,6 +2559,7 @@ def editar_consulta_oftalmologica(
         consulta.paciente_id = payload.paciente_id
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
+        consulta.agenda_turno_id = payload.agenda_turno_id
         consulta.fecha = payload.fecha or consulta.fecha or datetime.now()
         consulta.motivo = _normalizar_texto(payload.motivo)
         consulta.diagnostico = _normalizar_texto(payload.diagnostico)
@@ -2187,6 +2567,7 @@ def editar_consulta_oftalmologica(
         consulta.tipo_lente = _normalizar_texto(payload.tipo_lente)
         consulta.material_lente = _normalizar_texto(payload.material_lente)
         consulta.tratamientos = _normalizar_texto(payload.tratamientos)
+        consulta.fecha_control = payload.fecha_control
         consulta.av_cc_lejos_od = _normalizar_texto(payload.av_cc_lejos_od)
         consulta.av_cc_lejos_oi = _normalizar_texto(payload.av_cc_lejos_oi)
         consulta.ref_od_esfera = _normalizar_texto(payload.ref_od_esfera)
@@ -2324,6 +2705,7 @@ def crear_consulta_contactologia(
             paciente_id=payload.paciente_id,
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
+            agenda_turno_id=payload.agenda_turno_id,
             fecha=payload.fecha or datetime.now(),
             tipo_lente=_normalizar_texto(payload.tipo_lente),
             diseno=_normalizar_texto(payload.diseno),
@@ -2335,6 +2717,26 @@ def crear_consulta_contactologia(
             observaciones=_normalizar_texto(payload.observaciones),
         )
         session.add(consulta)
+        session.flush()
+        _marcar_turno_atendido_con_consulta(
+            session,
+            payload.agenda_turno_id,
+            consulta.id,
+            "CONTACTOLOGIA",
+            payload.paciente_id,
+            payload.doctor_id,
+            payload.lugar_atencion_id,
+            consulta.fecha,
+            payload.diagnostico or payload.plan_tratamiento,
+        )
+        _programar_proximo_control(
+            session,
+            payload.paciente_id,
+            payload.doctor_id,
+            payload.lugar_atencion_id,
+            payload.fecha_control,
+            "PROXIMO CONTROL DE CONTACTOLOGIA",
+        )
         session.commit()
         return _obtener_consulta_cont_segura(session, consulta.id)
     finally:
@@ -2357,6 +2759,7 @@ def editar_consulta_contactologia(
         consulta.paciente_id = payload.paciente_id
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
+        consulta.agenda_turno_id = payload.agenda_turno_id
         consulta.fecha = payload.fecha or consulta.fecha or datetime.now()
         consulta.tipo_lente = _normalizar_texto(payload.tipo_lente)
         consulta.diseno = _normalizar_texto(payload.diseno)

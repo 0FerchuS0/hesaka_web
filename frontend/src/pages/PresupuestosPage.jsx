@@ -38,9 +38,27 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
     })
 
     const seleccionarProducto = (prod) => {
+        let costoUnitario = Number(prod.costo || 0)
+        if (prod.costo_variable) {
+            const entered = window.prompt(`Ingrese el costo para ${prod.nombre}:`, String(costoUnitario || 0))
+            if (entered === null) {
+                costoUnitario = 0
+            } else {
+                const parsed = parseFloat(String(entered).replace(',', '.'))
+                costoUnitario = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
+            }
+        }
         setBuscarProd(prod.nombre)
         setShowList(false)
-        onUpdate(idx, { ...item, busq: prod.nombre, producto_id: prod.id, precio_unitario: prod.precio_venta, costo_unitario: prod.costo || 0, subtotal: prod.precio_venta * item.cantidad - item.descuento })
+        onUpdate(idx, {
+            ...item,
+            busq: prod.nombre,
+            producto_id: prod.id,
+            precio_unitario: prod.precio_venta,
+            costo_unitario: costoUnitario,
+            costo_variable: Boolean(prod.costo_variable),
+            subtotal: prod.precio_venta * item.cantidad - item.descuento,
+        })
     }
 
     return (
@@ -53,7 +71,7 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                         placeholder="Buscar producto..."
                         value={buscarProd}
                         onFocus={() => setShowList(true)}
-                        onChange={e => { setBuscarProd(e.target.value); setShowList(true); if (!e.target.value) onUpdate(idx, { ...item, busq: '', producto_id: '', precio_unitario: 0, costo_unitario: 0, subtotal: 0 }) }}
+                        onChange={e => { setBuscarProd(e.target.value); setShowList(true); if (!e.target.value) onUpdate(idx, { ...item, busq: '', producto_id: '', precio_unitario: 0, costo_unitario: 0, costo_variable: false, subtotal: 0 }) }}
                     />
                     {showList && (
                         <div style={{ position: 'absolute', zIndex: 999, top: '100%', left: 0, minWidth: 380, background: '#1a1d27', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, maxHeight: 300, overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}
@@ -84,6 +102,19 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                     onChange={e => upd('descripcion_personalizada', e.target.value)}
                     onFocus={() => setShowList(false)}
                 />
+                {item.producto_id ? (
+                    <input
+                        type="number"
+                        className="form-input"
+                        style={{ marginTop: 4, padding: '4px 8px', fontSize: '0.76rem' }}
+                        placeholder={item.costo_variable ? 'Costo variable del item' : 'Costo del item'}
+                        value={item.costo_unitario ?? 0}
+                        min={0}
+                        step="any"
+                        onChange={e => upd('costo_unitario', Math.max(0, parseFloat(e.target.value) || 0))}
+                        onFocus={() => setShowList(false)}
+                    />
+                ) : null}
                 {(p && p.nombre.toLowerCase().includes('armaz')) && (
                     <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                         <input className="form-input" style={{ width: '50%', padding: '4px', fontSize: '0.7rem' }} placeholder="Cód. armazón" value={item.codigo_armazon || ''} onChange={e => upd('codigo_armazon', e.target.value)} />
@@ -350,7 +381,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
         referidor_id: presupuesto.referidor_id || null,
         referidor_nombre: presupuesto.referidor_nombre || null,
     } : null)
-    const blankItem = () => ({ producto_id: '', busq: '', cantidad: 1, precio_unitario: 0, costo_unitario: 0, descuento: 0, subtotal: 0 })
+    const blankItem = () => ({ producto_id: '', busq: '', cantidad: 1, precio_unitario: 0, costo_unitario: 0, costo_variable: false, descuento: 0, subtotal: 0 })
     const preItems = presupuesto?.items?.map(i => ({ ...i, busq: i.producto_nombre || '' })) || []
     const [items, setItems] = useState(esEdicion ? (preItems.length ? preItems : [blankItem()]) : [blankItem(), blankItem(), blankItem()])
     const [grad, setGrad] = useState(esEdicion ? {

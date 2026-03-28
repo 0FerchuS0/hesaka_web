@@ -4,7 +4,7 @@ from math import ceil
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
@@ -385,6 +385,24 @@ def restaurar_backup_subido_configuracion_general(
     return BackupRestoreOut(
         message="Backup externo restaurado correctamente.",
         backup=_serializar_backup(backup),
+    )
+
+
+@config_router.get("/backups/{filename}/download")
+def descargar_backup_configuracion_general(
+    filename: str,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    backups = {item.filename: item for item in list_backups(tenant_slug)}
+    backup = backups.get(filename)
+    if not backup:
+        raise HTTPException(status_code=404, detail="El backup solicitado no existe.")
+
+    return FileResponse(
+        path=backup.path,
+        media_type="application/octet-stream",
+        filename=backup.filename,
     )
 
 

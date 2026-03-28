@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Database, FolderOpen, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react'
+import { Database, Download, FolderOpen, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react'
 
 import Modal from '../components/Modal'
 import { api, useAuth } from '../context/AuthContext'
@@ -30,6 +30,40 @@ function formatBytes(value) {
     return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
+async function saveBackupBlob(blob, filename) {
+    if (window.showSaveFilePicker) {
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [
+                    {
+                        description: 'Backup de PostgreSQL',
+                        accept: { 'application/octet-stream': ['.dump'] },
+                    },
+                ],
+            })
+            const writable = await handle.createWritable()
+            await writable.write(blob)
+            await writable.close()
+            return
+        } catch (error) {
+            if (error?.name === 'AbortError') {
+                throw error
+            }
+            // Si el navegador bloquea el selector avanzado, usamos la descarga clasica.
+        }
+    }
+
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 30000)
+}
+
 export default function ConfiguracionBackupsPage() {
     const queryClient = useQueryClient()
     const { user } = useAuth()
@@ -40,6 +74,7 @@ export default function ConfiguracionBackupsPage() {
     const [externalRestoreModalOpen, setExternalRestoreModalOpen] = useState(false)
     const [selectedExternalFile, setSelectedExternalFile] = useState(null)
     const [externalRestoreConfirmValue, setExternalRestoreConfirmValue] = useState('')
+    const [downloadingFilename, setDownloadingFilename] = useState('')
 
     const role = String(user?.rol || '').toUpperCase()
     const canEdit = role === 'ADMIN'
@@ -92,7 +127,26 @@ export default function ConfiguracionBackupsPage() {
         },
     })
 
+    const descargarBackup = async (backup) => {
+        if (!backup?.filename || downloadingFilename) return
+        try {
+            setDownloadingFilename(backup.filename)
+            const response = await api.get(`/configuracion-general/backups/${encodeURIComponent(backup.filename)}/download`, {
+                responseType: 'blob',
+            })
+            await saveBackupBlob(response.data, backup.filename)
+        } catch (error) {
+            if (error?.name === 'AbortError') {
+                return
+            }
+            window.alert(sanitizeError(error, 'No se pudo descargar el backup.'))
+        } finally {
+            setDownloadingFilename('')
+        }
+    }
+
     const isBackupOperationPending = crearBackup.isPending || restaurarBackup.isPending || restaurarBackupExterno.isPending
+    const isBackupUiBusy = isBackupOperationPending || Boolean(downloadingFilename)
     usePendingNavigationGuard(
         isBackupOperationPending,
         'Hay un backup o una restauracion en proceso. ¿Seguro que deseas salir ahora?'
@@ -100,8 +154,19 @@ export default function ConfiguracionBackupsPage() {
 
     const backups = backupsQuery.data?.items || []
 
+    const handleCreateBackup = () => {
+        crearBackup.mutate(undefined, {
+            onSuccess: async (data) => {
+                await queryClient.invalidateQueries({ queryKey: ['configuracion-general-backups'] })
+                if (data?.backup?.filename) {
+                    await descargarBackup(data.backup)
+                }
+            },
+        })
+    }
+
     const handleOpenRestoreModal = backup => {
-        if (!canEdit || isBackupOperationPending) return
+        if (!canEdit || isBackupUiBusy) return
         setSelectedBackup(backup)
         setRestoreConfirmValue('')
         restaurarBackup.reset()
@@ -121,7 +186,7 @@ export default function ConfiguracionBackupsPage() {
 
     const handleExternalFileSelected = event => {
         const file = event.target.files?.[0]
-        if (!file || isBackupOperationPending || !canEdit) return
+        if (!file || isBackupUiBusy || !canEdit) return
         setSelectedExternalFile(file)
         setExternalRestoreConfirmValue('')
         restaurarBackupExterno.reset()
@@ -200,7 +265,7 @@ export default function ConfiguracionBackupsPage() {
                             type="button"
                             className="btn btn-secondary"
                             onClick={() => fileInputRef.current?.click()}
-                            disabled={!canEdit || isBackupOperationPending}
+                            disabled={!canEdit || isBackupUiBusy}
                         >
                             <FolderOpen size={16} />
                             Buscar archivo backup
@@ -208,12 +273,12 @@ export default function ConfiguracionBackupsPage() {
                         <button
                             type="button"
                             className="btn btn-primary"
-                            onClick={() => crearBackup.mutate()}
-                            disabled={!canEdit || isBackupOperationPending || backupsQuery.isFetching}
+                            onClick={handleCreateBackup}
+                            disabled={!canEdit || isBackupUiBusy || backupsQuery.isFetching}
                         >
                             {crearBackup.isPending
                                 ? <><RefreshCw size={16} style={{ animation: 'spin 0.7s linear infinite' }} /> Generando backup...</>
-                                : <><Database size={16} /> Crear backup ahora</>}
+                                : <><Database size={16} /> Crear y guardar backup</>}
                         </button>
                     </div>
                 </div>
@@ -247,15 +312,27 @@ export default function ConfiguracionBackupsPage() {
                                     {formatDateTime(backup.created_at)} · {formatBytes(backup.size_bytes)}
                                 </div>
                             </div>
-                            <button
-                                type="button"
-                                className="btn btn-secondary"
-                                onClick={() => handleOpenRestoreModal(backup)}
-                                disabled={!canEdit || isBackupOperationPending}
-                            >
-                                <RotateCcw size={16} />
-                                Restaurar
-                            </button>
+                            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => descargarBackup(backup)}
+                                    disabled={!canEdit || isBackupUiBusy}
+                                >
+                                    {downloadingFilename === backup.filename
+                                        ? <><RefreshCw size={16} style={{ animation: 'spin 0.7s linear infinite' }} /> Descargando...</>
+                                        : <><Download size={16} /> Descargar</>}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => handleOpenRestoreModal(backup)}
+                                    disabled={!canEdit || isBackupUiBusy}
+                                >
+                                    <RotateCcw size={16} />
+                                    Restaurar
+                                </button>
+                            </div>
                         </div>
                     ))}
                 </div>

@@ -587,6 +587,10 @@ class PresupuestoCreate(BaseModel):
     doctor_receta: Optional[str] = None
     observaciones: Optional[str] = None
     fecha_receta: Optional[datetime] = None
+    fecha_proximo_control: Optional[date] = None
+    no_requiere_proximo_control: bool = False
+    consulta_clinica_id: Optional[int] = None
+    consulta_clinica_tipo: Optional[str] = None
     vendedor_id: Optional[int] = None
     canal_venta_id: Optional[int] = None
     referidor_id: Optional[int] = None
@@ -611,6 +615,10 @@ class PresupuestoOut(BaseModel):
     graduacion_oi_adicion: Optional[str]
     doctor_receta: Optional[str]
     observaciones: Optional[str]
+    fecha_proximo_control: Optional[date] = None
+    no_requiere_proximo_control: bool = False
+    consulta_clinica_id: Optional[int] = None
+    consulta_clinica_tipo: Optional[str] = None
     vendedor_id: Optional[int]
     vendedor_nombre: Optional[str] = None
     canal_venta_id: Optional[int]
@@ -744,6 +752,10 @@ class PresupuestoListItemOut(BaseModel):
     graduacion_oi_esfera: Optional[str] = None
     graduacion_oi_cilindro: Optional[str] = None
     graduacion_oi_eje: Optional[str] = None
+    fecha_proximo_control: Optional[date] = None
+    no_requiere_proximo_control: bool = False
+    consulta_clinica_id: Optional[int] = None
+    consulta_clinica_tipo: Optional[str] = None
     vendedor_id: Optional[int] = None
     vendedor_nombre: Optional[str] = None
     canal_venta_id: Optional[int] = None
@@ -890,6 +902,7 @@ class CompraOut(BaseModel):
     ventas_ids: List[int] = []
     ventas_codigos: List[str] = []
     clientes_nombres: List[str] = []
+    whatsapp_retiro: Optional["CompraWhatsappRetiroOut"] = None
     items: List[CompraDetalleOut] = []
     class Config:
         from_attributes = True
@@ -1071,6 +1084,15 @@ class VentaPendienteCompraOut(BaseModel):
     estado_entrega: Optional[str] = None
     requiere_compra: bool = True
     items_pendientes: List[VentaPendienteCompraItemOut] = []
+
+
+class CompraWhatsappRetiroOut(BaseModel):
+    venta_id: int
+    venta_codigo: str
+    cliente_id: int
+    cliente_nombre: str
+    cliente_telefono: Optional[str] = None
+    estado_entrega_venta: Optional[str] = None
 
 
 # ──────────────────────────────────────────────
@@ -1627,12 +1649,17 @@ class ClinicaTurnoOut(BaseModel):
     paciente_nombre: str
     paciente_nombre_libre: Optional[str] = None
     paciente_ci: Optional[str] = None
+    paciente_telefono: Optional[str] = None
     doctor_id: Optional[int] = None
     doctor_nombre: Optional[str] = None
     lugar_atencion_id: Optional[int] = None
     lugar_nombre: Optional[str] = None
     fecha_hora: datetime
     estado: str
+    es_control: bool = False
+    dias_restantes: Optional[int] = None
+    recordatorio_categoria: Optional[str] = None
+    ultima_consulta_fecha: Optional[datetime] = None
     motivo: Optional[str] = None
     notas: Optional[str] = None
 
@@ -1643,6 +1670,12 @@ class ClinicaTurnosListOut(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class ClinicaAgendaRecordatoriosOut(BaseModel):
+    hoy: List[ClinicaTurnoOut] = []
+    ocho_dias: List[ClinicaTurnoOut] = []
+    quince_dias: List[ClinicaTurnoOut] = []
 
 
 class ClinicaLugarIn(BaseModel):

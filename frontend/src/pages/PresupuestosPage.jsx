@@ -1,5 +1,6 @@
 // HESAKA Web — Página: Presupuestos
 import { useState, useEffect } from 'react'
+import { flushSync } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
@@ -8,6 +9,21 @@ import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
+const formatDateInputValue = value => {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+const addMonthsToDateInput = (baseValue, months) => {
+    const baseDate = baseValue ? new Date(`${baseValue}T12:00:00`) : new Date()
+    if (Number.isNaN(baseDate.getTime())) return ''
+    const next = new Date(baseDate)
+    next.setMonth(next.getMonth() + months)
+    return formatDateInputValue(next)
+}
 const abrirPresupuestoPdf = async presupuestoId => {
     const response = await api.get(`/presupuestos/${presupuestoId}/pdf`, { responseType: 'blob' })
     const file = new Blob([response.data], { type: 'application/pdf' })
@@ -38,6 +54,14 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
     })
 
     const seleccionarProducto = (prod) => {
+        flushSync(() => {
+            setBuscarProd(prod.nombre)
+            setShowList(false)
+        })
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur()
+        }
+
         let costoUnitario = Number(prod.costo || 0)
         if (prod.costo_variable) {
             const entered = window.prompt(`Ingrese el costo para ${prod.nombre}:`, String(costoUnitario || 0))
@@ -48,8 +72,6 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                 costoUnitario = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
             }
         }
-        setBuscarProd(prod.nombre)
-        setShowList(false)
         onUpdate(idx, {
             ...item,
             busq: prod.nombre,
@@ -394,6 +416,21 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const [showGrad, setShowGrad] = useState(!!tieneGrad)
     const [doctor, setDoctor] = useState(presupuesto?.doctor_receta || '')
     const [obs, setObs] = useState(presupuesto?.observaciones || '')
+    const [proximoControl, setProximoControl] = useState(
+        presupuesto?.fecha_proximo_control
+            ? String(presupuesto.fecha_proximo_control).slice(0, 10)
+            : addMonthsToDateInput(presupuesto?.fecha ? presupuesto.fecha.split('T')[0] : new Date().toISOString().split('T')[0], 12)
+    )
+    const [noRequiereProximoControl, setNoRequiereProximoControl] = useState(Boolean(presupuesto?.no_requiere_proximo_control))
+    const [consultaClinicaVinculada, setConsultaClinicaVinculada] = useState(
+        presupuesto?.consulta_clinica_id
+            ? {
+                id: presupuesto.consulta_clinica_id,
+                tipo: presupuesto.consulta_clinica_tipo || 'OFTALMOLOGIA',
+                fecha_control: presupuesto?.fecha_proximo_control ? String(presupuesto.fecha_proximo_control).slice(0, 10) : '',
+            }
+            : null
+    )
     const [referidor, setReferidor] = useState(presupuesto?.referidor_id ? String(presupuesto.referidor_id) : '')
     const [vendedor, setVendedor] = useState(presupuesto?.vendedor_id ? String(presupuesto.vendedor_id) : '')
     const [canalVenta, setCanalVenta] = useState(presupuesto?.canal_venta_id ? String(presupuesto.canal_venta_id) : '')
@@ -427,6 +464,14 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
         doctor_receta: clienteFicha.ultima_graduacion.doctor || '',
         observaciones: clienteFicha.ultima_graduacion.observaciones || '',
     }] : []
+    const consultaClinicaDisponible = clienteFicha?.ultima_graduacion?.origen === 'CONSULTA' && clienteFicha?.ultima_graduacion?.fecha_control
+        ? {
+            id: clienteFicha.ultima_graduacion.presupuesto_id,
+            tipo: clienteFicha.ultima_graduacion.consulta_tipo || 'OFTALMOLOGIA',
+            fecha_control: String(clienteFicha.ultima_graduacion.fecha_control).slice(0, 10),
+            fecha_consulta: clienteFicha.ultima_graduacion.fecha_presupuesto,
+        }
+        : null
 
     // Cuando se selecciona un cliente: auto-asignar referidor
     useEffect(() => {
@@ -445,6 +490,12 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
         const canalDefault = canalesVenta.find(item => item.nombre === nombreCanalPrincipal) || canalesVenta[0]
         if (canalDefault) setCanalVenta(String(canalDefault.id))
     }, [canalesVenta, canalVenta, presupuesto, estadoConfig])
+
+    useEffect(() => {
+        if (!cliente) {
+            setConsultaClinicaVinculada(null)
+        }
+    }, [cliente])
 
     const seleccionarCliente = (c) => {
         setClienteObj(c)
@@ -585,6 +636,10 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             graduacion_oi_esfera: grad.oi_esfera || null, graduacion_oi_cilindro: grad.oi_cilindro || null,
             graduacion_oi_eje: grad.oi_eje || null, graduacion_oi_adicion: grad.oi_adicion || null,
             doctor_receta: doctor || null, observaciones: obs || null,
+            fecha_proximo_control: noRequiereProximoControl ? null : (consultaClinicaVinculada?.fecha_control || proximoControl || null),
+            no_requiere_proximo_control: noRequiereProximoControl,
+            consulta_clinica_id: noRequiereProximoControl ? null : (consultaClinicaVinculada?.id || null),
+            consulta_clinica_tipo: noRequiereProximoControl ? null : (consultaClinicaVinculada?.tipo || null),
             referidor_id: referidor ? parseInt(referidor) : null,
             vendedor_id: vendedor ? parseInt(vendedor) : null,
             canal_venta_id: canalVenta ? parseInt(canalVenta) : null,
@@ -799,6 +854,93 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
                 <div className="form-group">
                     <label className="form-label">Observaciones</label>
                     <textarea className="form-input" rows={2} value={obs} onChange={e => setObs(e.target.value)} placeholder="Observaciones del presupuesto..." style={{ resize: 'vertical' }} />
+                </div>
+                <div className="card" style={{ padding: '14px 16px', marginTop: 14, background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="flex-between" style={{ gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+                        <div>
+                            <div style={{ fontSize: '0.92rem', fontWeight: 700 }}>Próximo control</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+                                Si el presupuesto se vincula a una consulta clínica, esta fecha se toma desde la consulta y queda bloqueada.
+                            </div>
+                        </div>
+                        {consultaClinicaVinculada ? (
+                            <span className="badge badge-blue">Vinculado a consulta {consultaClinicaVinculada.tipo}</span>
+                        ) : null}
+                    </div>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            checked={noRequiereProximoControl}
+                            onChange={e => {
+                                const checked = e.target.checked
+                                setNoRequiereProximoControl(checked)
+                                if (checked) setConsultaClinicaVinculada(null)
+                            }}
+                            style={{ width: 16, height: 16, accentColor: 'var(--primary-light)' }}
+                        />
+                        <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Esta venta no requiere próximo control</span>
+                    </label>
+
+                    <div className="grid-2" style={{ alignItems: 'end' }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label className="form-label">Fecha de próximo control</label>
+                            <input
+                                className="form-input"
+                                type="date"
+                                value={consultaClinicaVinculada?.fecha_control || proximoControl}
+                                onChange={e => setProximoControl(e.target.value)}
+                                disabled={noRequiereProximoControl || Boolean(consultaClinicaVinculada)}
+                            />
+                        </div>
+                        <div className="flex gap-8" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            {[1, 3, 6, 12].map(months => (
+                                <button
+                                    key={months}
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setProximoControl(addMonthsToDateInput(fecha, months))}
+                                    disabled={noRequiereProximoControl || Boolean(consultaClinicaVinculada)}
+                                >
+                                    +{months === 12 ? '1 año' : `${months} mes${months > 1 ? 'es' : ''}`}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex gap-12" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+                        {consultaClinicaDisponible && !noRequiereProximoControl && !consultaClinicaVinculada ? (
+                            <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => {
+                                    setConsultaClinicaVinculada(consultaClinicaDisponible)
+                                    setProximoControl(consultaClinicaDisponible.fecha_control)
+                                }}
+                            >
+                                Vincular última consulta clínica
+                            </button>
+                        ) : null}
+                        {consultaClinicaVinculada && !noRequiereProximoControl ? (
+                            <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setConsultaClinicaVinculada(null)}
+                            >
+                                Desvincular consulta
+                            </button>
+                        ) : null}
+                    </div>
+
+                    {consultaClinicaVinculada ? (
+                        <div style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                            El próximo control quedó definido por la consulta clínica vinculada.
+                        </div>
+                    ) : !noRequiereProximoControl ? (
+                        <div style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                            Sugerencia por defecto: 1 año. Puedes ajustarlo con accesos rápidos o manualmente.
+                        </div>
+                    ) : null}
                 </div>
             </div>
 

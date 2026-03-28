@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, CheckSquare, Eye, FileText, PackagePlus, Pencil, Plus, Search, ShoppingCart, Trash2, X } from 'lucide-react'
+import { AlertCircle, CheckSquare, Eye, FileText, MessageCircle, PackagePlus, Pencil, Plus, RotateCcw, Search, ShoppingCart, Trash2, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import Modal from '../components/Modal'
@@ -11,6 +11,137 @@ import { hasActionAccess } from '../utils/roles'
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
 const fmtDateTime = value => value ? new Date(value).toLocaleString('es-PY') : '-'
+const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
+const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
+
+function normalizarTelefonoWhatsapp(value) {
+    let digits = String(value || '').replace(/\D/g, '')
+    if (!digits) return ''
+
+    if (digits.startsWith('00')) {
+        digits = digits.slice(2)
+    }
+
+    if (digits.startsWith('59509')) {
+        digits = `595${digits.slice(4)}`
+    }
+
+    if (digits.startsWith('5950')) {
+        digits = `595${digits.slice(4)}`
+    }
+
+    if (digits.startsWith('09') && digits.length === 10) {
+        return `595${digits.slice(1)}`
+    }
+
+    if (digits.startsWith('9') && digits.length === 9) {
+        return `595${digits}`
+    }
+
+    if (digits.startsWith('5959') && digits.length === 12) {
+        return digits
+    }
+
+    return digits.startsWith('595') ? digits : ''
+}
+
+function getRetiroWhatsappTemplate() {
+    if (typeof window === 'undefined') return DEFAULT_RETIRO_WHATSAPP_TEMPLATE
+    return localStorage.getItem(RETIRO_WHATSAPP_TEMPLATE_KEY) || DEFAULT_RETIRO_WHATSAPP_TEMPLATE
+}
+
+function buildRetiroWhatsappMessage(context, template = DEFAULT_RETIRO_WHATSAPP_TEMPLATE) {
+    const ventaTexto = context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : ''
+    return (template || DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
+        .replaceAll('{cliente}', context?.cliente_nombre || '')
+        .replaceAll('{venta}', ventaTexto)
+        .replaceAll('{empresa}', 'HESAKA')
+}
+
+function buildRetiroWhatsappLink(context, message = '') {
+    const telefono = normalizarTelefonoWhatsapp(context?.cliente_telefono)
+    if (!telefono) return ''
+    const finalMessage = message || buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate())
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
+}
+
+function WhatsappRetiroModal({ context, onClose }) {
+    const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
+    const whatsappLink = buildRetiroWhatsappLink(context, message)
+
+    useEffect(() => {
+        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
+    }, [context])
+
+    const restoreSuggested = () => {
+        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
+    }
+
+    const saveTemplate = () => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, message)
+        }
+        window.alert('Plantilla de retiro guardada.')
+    }
+
+    return (
+        <div style={{ display: 'grid', gap: 16 }}>
+            <div className="card" style={{ marginBottom: 0, padding: '14px 16px' }}>
+                <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{context?.cliente_nombre || 'Sin cliente'}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                        Telefono: {context?.cliente_telefono || 'No disponible'}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                        Venta: {context?.venta_codigo || '-'}
+                    </div>
+                </div>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Mensaje de WhatsApp</label>
+                <textarea
+                    className="form-input"
+                    rows={6}
+                    value={message}
+                    onChange={event => setMessage(event.target.value)}
+                    style={{ resize: 'vertical' }}
+                />
+                <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                    Variables utiles: {'{cliente}'}, {'{venta}'}, {'{empresa}'}
+                </div>
+            </div>
+
+            {!whatsappLink && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}>
+                    <AlertCircle size={16} /> No se pudo convertir el telefono del cliente a un formato valido para WhatsApp.
+                </div>
+            )}
+
+            <div className="flex gap-12" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={restoreSuggested}>
+                        <RotateCcw size={15} /> Restaurar sugerido
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={saveTemplate}>
+                        Guardar plantilla
+                    </button>
+                </div>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>Omitir</button>
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={!whatsappLink}
+                        onClick={() => window.open(whatsappLink, '_blank', 'noopener,noreferrer')}
+                    >
+                        <MessageCircle size={15} /> Abrir WhatsApp
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
 
 function estadoBadge(estado) {
     const map = {
@@ -395,7 +526,7 @@ function VentaSelectorModal({ proveedorId, tipoCompra, selectedVentas, onConfirm
     )
 }
 
-function CompraFormModal({ compraId = null, onClose }) {
+function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null }) {
     const queryClient = useQueryClient()
     const editando = Boolean(compraId)
     const [proveedor, setProveedor] = useState('')
@@ -447,11 +578,15 @@ function CompraFormModal({ compraId = null, onClose }) {
 
     const mutation = useMutation({
         mutationFn: payload => editando ? api.put(`/compras/${compraId}`, payload) : api.post('/compras/', payload),
-        onSuccess: () => {
+        onSuccess: (response) => {
             queryClient.invalidateQueries({ queryKey: ['compras'] })
             queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
             if (editando) queryClient.invalidateQueries({ queryKey: ['compra-detalle', compraId] })
             onClose()
+            const whatsappContext = response?.data?.whatsapp_retiro
+            if (!editando && estadoEntrega === 'RECIBIDO' && whatsappContext?.cliente_telefono) {
+                onWhatsappReady?.(whatsappContext)
+            }
         },
     })
 
@@ -755,23 +890,38 @@ function DetalleCompraModal({ compraId, onClose }) {
     )
 }
 
-function EstadoEntregaModal({ compra, onClose }) {
+function EstadoEntregaModal({ compra, onClose, onWhatsappReady = null, onProcessingChange = null }) {
     const queryClient = useQueryClient()
     const [estadoEntrega, setEstadoEntrega] = useState(compra.estado_entrega || 'RECIBIDO')
+
     const actualizar = useMutation({
         mutationFn: payload => api.patch(`/compras/${compra.id}/estado-entrega?estado_entrega=${encodeURIComponent(payload)}`),
-        onSuccess: () => {
+        onSuccess: (response, payload) => {
             queryClient.invalidateQueries({ queryKey: ['compras'] })
             queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
             queryClient.invalidateQueries({ queryKey: ['compra-detalle', compra.id] })
             onClose()
+            const whatsappContext = response?.data?.whatsapp_retiro
+            if (payload === 'RECIBIDO' && whatsappContext?.cliente_telefono) {
+                onWhatsappReady?.(whatsappContext)
+            }
         },
+        onSettled: () => onProcessingChange?.(false),
     })
+
+    useEffect(() => {
+        onProcessingChange?.(actualizar.isPending)
+    }, [actualizar.isPending, onProcessingChange])
 
     return (
         <form onSubmit={event => { event.preventDefault(); actualizar.mutate(estadoEntrega) }}>
-            <div className="form-group"><label className="form-label">Estado de Entrega</label><select className="form-select" value={estadoEntrega} onChange={event => setEstadoEntrega(event.target.value)}><option value="RECIBIDO">RECIBIDO</option><option value="EN_LABORATORIO">EN_LABORATORIO</option><option value="ENTREGADO">ENTREGADO</option><option value="PENDIENTE_ENVIO">PENDIENTE_ENVIO</option></select></div>
-            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button><button type="submit" className="btn btn-primary" disabled={actualizar.isPending}>{actualizar.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : 'Guardar Estado'}</button></div>
+            <div className="form-group"><label className="form-label">Estado de Entrega</label><select className="form-select" value={estadoEntrega} onChange={event => setEstadoEntrega(event.target.value)} disabled={actualizar.isPending}><option value="RECIBIDO">RECIBIDO</option><option value="EN_LABORATORIO">EN_LABORATORIO</option><option value="ENTREGADO">ENTREGADO</option><option value="PENDIENTE_ENVIO">PENDIENTE_ENVIO</option></select></div>
+            {estadoEntrega === 'RECIBIDO' && (
+                <div style={{ marginBottom: 16, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    Al guardar, si la compra esta asociada a una venta con telefono de cliente, el sistema te ofrecera enviar un aviso por WhatsApp para retiro.
+                </div>
+            )}
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn btn-secondary" onClick={onClose} disabled={actualizar.isPending}>Cancelar</button><button type="submit" className="btn btn-primary" disabled={actualizar.isPending}>{actualizar.isPending ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Guardando...</> : 'Guardar Estado'}</button></div>
         </form>
     )
 }
@@ -907,6 +1057,8 @@ export default function ComprasPage() {
     const [pageSize, setPageSize] = useState(25)
     const [pdfOpeningId, setPdfOpeningId] = useState(null)
     const [deletingId, setDeletingId] = useState(null)
+    const [entregaProcessing, setEntregaProcessing] = useState(false)
+    const [whatsappRetiro, setWhatsappRetiro] = useState(null)
 
     useEffect(() => {
         const timer = setTimeout(() => setBuscarDebounced(buscar.trim()), 350)
@@ -1140,10 +1292,35 @@ export default function ComprasPage() {
                 </div>
             </div>
 
-            {showCreate && <Modal title="Nueva Compra" onClose={() => setShowCreate(false)} maxWidth="1100px"><CompraFormModal onClose={() => setShowCreate(false)} /></Modal>}
+            {showCreate && <Modal title="Nueva Compra" onClose={() => setShowCreate(false)} maxWidth="1100px"><CompraFormModal onClose={() => setShowCreate(false)} onWhatsappReady={setWhatsappRetiro} /></Modal>}
             {compraFormId && <Modal title={`Editar Compra #${compraFormId}`} onClose={() => setCompraFormId(null)} maxWidth="1100px"><CompraFormModal compraId={compraFormId} onClose={() => setCompraFormId(null)} /></Modal>}
             {compraDetalle && <Modal title={`Detalle Compra #${compraDetalle.id}`} onClose={() => setCompraDetalle(null)} maxWidth="980px"><DetalleCompraModal compraId={compraDetalle.id} onClose={() => setCompraDetalle(null)} /></Modal>}
-            {compraEntrega && <Modal title={`Estado de Entrega: Compra #${compraEntrega.id}`} onClose={() => setCompraEntrega(null)} maxWidth="520px"><EstadoEntregaModal compra={compraEntrega} onClose={() => setCompraEntrega(null)} /></Modal>}
+            {compraEntrega && (
+                <Modal
+                    title={`Estado de Entrega: Compra #${compraEntrega.id}`}
+                    onClose={() => setCompraEntrega(null)}
+                    maxWidth="520px"
+                    closeDisabled={entregaProcessing}
+                    closeOnBackdrop={!entregaProcessing}
+                    onCloseAttempt={() => window.alert('Espera a que termine de guardarse el estado de entrega.')}
+                >
+                    <EstadoEntregaModal
+                        compra={compraEntrega}
+                        onClose={() => setCompraEntrega(null)}
+                        onWhatsappReady={setWhatsappRetiro}
+                        onProcessingChange={setEntregaProcessing}
+                    />
+                </Modal>
+            )}
+            {whatsappRetiro && (
+                <Modal
+                    title="Aviso de retiro por WhatsApp"
+                    onClose={() => setWhatsappRetiro(null)}
+                    maxWidth="680px"
+                >
+                    <WhatsappRetiroModal context={whatsappRetiro} onClose={() => setWhatsappRetiro(null)} />
+                </Modal>
+            )}
         </div>
     )
 }

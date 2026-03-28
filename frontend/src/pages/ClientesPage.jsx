@@ -75,6 +75,10 @@ function GraduacionBox({ titulo, data }) {
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: 4 }}>Doctor</div>
                     <div>{data.doctor || '-'}</div>
                 </div>
+                <div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: 4 }}>Proximo control</div>
+                    <div>{fmt(data.fecha_control)}</div>
+                </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: 4 }}>Observaciones</div>
                     <div style={{ whiteSpace: 'normal', lineHeight: 1.35, wordBreak: 'break-word' }}>{data.observaciones || '-'}</div>
@@ -158,7 +162,7 @@ function ClienteFichaModal({ clienteId, onClose }) {
         return <div style={{ color: 'var(--danger)', fontSize: '0.9rem' }}>{error?.response?.data?.detail || 'No se pudo cargar la ficha del cliente.'}</div>
     }
 
-    const { cliente, deuda_total, movimientos, ventas_pendientes, ultima_graduacion, historial_armazones = [] } = data
+    const { cliente, deuda_total, movimientos, ventas_pendientes, ultima_graduacion, proximo_control, proximo_control_origen, historial_armazones = [] } = data
 
     const exportarPdf = async () => {
         try {
@@ -188,6 +192,10 @@ function ClienteFichaModal({ clienteId, onClose }) {
             <div className="card" style={{ padding: '14px 16px' }}>
                 <h4 style={{ marginBottom: 12, fontSize: '0.96rem' }}>Ultima graduacion</h4>
                 <GraduacionBox titulo="Receta mas reciente" data={ultima_graduacion} />
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                    Próximo control: <strong style={{ color: 'var(--text-primary)' }}>{fmt(proximo_control)}</strong>
+                    {proximo_control_origen ? ` · Origen: ${proximo_control_origen}` : ''}
+                </div>
             </div>
 
             <div className="card" style={{ padding: '14px 16px' }}>

@@ -5,11 +5,16 @@ Estos modelos se crean en la BD de cada cliente (tenant).
 """
 from sqlalchemy import (
     Column, Integer, String, Float, ForeignKey, Text,
-    DateTime, Boolean, Table, Index
+    DateTime, Date, Boolean, Table, Index
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
+
+
+class TimestampMixin:
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 # ─── Tablas de asociación ──────────────────────────────────────────────────────
 
@@ -27,7 +32,7 @@ categoria_atributos = Table(
 
 # ─── Catálogos base ────────────────────────────────────────────────────────────
 
-class Categoria(Base):
+class Categoria(TimestampMixin, Base):
     __tablename__ = 'categorias'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), unique=True, nullable=False)
@@ -39,7 +44,7 @@ class Categoria(Base):
     categoria_padre = relationship("Categoria", remote_side=[id], backref="subcategorias")
 
 
-class Atributo(Base):
+class Atributo(TimestampMixin, Base):
     __tablename__ = 'atributos'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), unique=True, nullable=False)
@@ -47,7 +52,7 @@ class Atributo(Base):
     categorias = relationship("Categoria", secondary=categoria_atributos, back_populates="atributos_disponibles")
 
 
-class Proveedor(Base):
+class Proveedor(TimestampMixin, Base):
     __tablename__ = 'proveedores'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), nullable=False)
@@ -57,14 +62,14 @@ class Proveedor(Base):
     productos = relationship("Producto", back_populates="proveedor_rel")
 
 
-class Marca(Base):
+class Marca(TimestampMixin, Base):
     __tablename__ = 'marcas'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), unique=True, nullable=False)
     productos = relationship("Producto", back_populates="marca_rel")
 
 
-class Producto(Base):
+class Producto(TimestampMixin, Base):
     __tablename__ = 'productos'
     __table_args__ = (
         Index('idx_producto_nombre', 'nombre'),
@@ -97,7 +102,7 @@ class Producto(Base):
 
 # ─── Clientes & Referidores ────────────────────────────────────────────────────
 
-class Referidor(Base):
+class Referidor(TimestampMixin, Base):
     __tablename__ = 'referidores'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), nullable=False)
@@ -109,7 +114,7 @@ class Referidor(Base):
     comisiones = relationship("Comision", back_populates="referidor_rel", lazy='selectin')
 
 
-class Vendedor(Base):
+class Vendedor(TimestampMixin, Base):
     __tablename__ = 'vendedores'
     __table_args__ = (
         Index('idx_vendedor_nombre', 'nombre'),
@@ -124,7 +129,7 @@ class Vendedor(Base):
     presupuestos = relationship("Presupuesto", back_populates="vendedor_rel", lazy='selectin')
 
 
-class CanalVenta(Base):
+class CanalVenta(TimestampMixin, Base):
     __tablename__ = 'canales_venta'
     __table_args__ = (
         Index('idx_canal_venta_nombre', 'nombre'),
@@ -137,7 +142,7 @@ class CanalVenta(Base):
     presupuestos = relationship("Presupuesto", back_populates="canal_venta_rel", lazy='selectin')
 
 
-class Cliente(Base):
+class Cliente(TimestampMixin, Base):
     __tablename__ = 'clientes'
     __table_args__ = (
         Index('idx_cliente_nombre', 'nombre'),
@@ -157,7 +162,7 @@ class Cliente(Base):
 
 # ─── Presupuestos ──────────────────────────────────────────────────────────────
 
-class PresupuestoGrupo(Base):
+class PresupuestoGrupo(TimestampMixin, Base):
     __tablename__ = 'presupuesto_grupos'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), nullable=False)
@@ -169,7 +174,7 @@ class PresupuestoGrupo(Base):
     presupuestos = relationship("Presupuesto", back_populates="grupo_rel", lazy='selectin')
 
 
-class Presupuesto(Base):
+class Presupuesto(TimestampMixin, Base):
     __tablename__ = 'presupuestos'
     __table_args__ = (
         Index('idx_presupuesto_fecha', 'fecha'),
@@ -196,6 +201,10 @@ class Presupuesto(Base):
     doctor_receta = Column(String(255), nullable=True)
     observaciones = Column(String(255), nullable=True)
     fecha_receta = Column(DateTime, nullable=True)
+    fecha_proximo_control = Column(Date, nullable=True)
+    no_requiere_proximo_control = Column(Boolean, default=False, nullable=False)
+    consulta_clinica_id = Column(Integer, nullable=True)
+    consulta_clinica_tipo = Column(String(30), nullable=True)
     vendedor_id = Column(Integer, ForeignKey('vendedores.id'), nullable=True)
     vendedor_rel = relationship("Vendedor", back_populates="presupuestos", lazy='selectin')
     canal_venta_id = Column(Integer, ForeignKey('canales_venta.id'), nullable=True)
@@ -209,7 +218,7 @@ class Presupuesto(Base):
     venta_rel = relationship("Venta", back_populates="presupuesto_rel", lazy='selectin')
 
 
-class PresupuestoItem(Base):
+class PresupuestoItem(TimestampMixin, Base):
     __tablename__ = 'presupuesto_items'
     id = Column(Integer, primary_key=True, autoincrement=True)
     presupuesto_id = Column(Integer, ForeignKey('presupuestos.id'), nullable=False)
@@ -228,7 +237,7 @@ class PresupuestoItem(Base):
 
 # ─── Ventas & Pagos ────────────────────────────────────────────────────────────
 
-class Venta(Base):
+class Venta(TimestampMixin, Base):
     __tablename__ = 'ventas'
     __table_args__ = (
         Index('idx_venta_fecha', 'fecha'),
@@ -262,7 +271,7 @@ class Venta(Base):
     es_credito = Column(Boolean, default=False)
 
 
-class Pago(Base):
+class Pago(TimestampMixin, Base):
     __tablename__ = 'pagos'
     __table_args__ = (
         Index('idx_pago_fecha', 'fecha'),
@@ -282,7 +291,7 @@ class Pago(Base):
     grupo_pago_id = Column(String(50), nullable=True)
 
 
-class AjusteVenta(Base):
+class AjusteVenta(TimestampMixin, Base):
     __tablename__ = 'ajustes_venta'
     id = Column(Integer, primary_key=True, autoincrement=True)
     venta_id = Column(Integer, ForeignKey('ventas.id'), nullable=False)
@@ -296,7 +305,7 @@ class AjusteVenta(Base):
     items_ajuste = relationship("AjusteVentaItem", back_populates="ajuste_rel", cascade="all, delete-orphan", lazy='selectin')
 
 
-class AjusteVentaItem(Base):
+class AjusteVentaItem(TimestampMixin, Base):
     __tablename__ = 'ajustes_venta_items'
     id = Column(Integer, primary_key=True, autoincrement=True)
     ajuste_id = Column(Integer, ForeignKey('ajustes_venta.id'), nullable=False)
@@ -306,7 +315,7 @@ class AjusteVentaItem(Base):
     monto_descuento = Column(Float, nullable=False)
 
 
-class Comision(Base):
+class Comision(TimestampMixin, Base):
     __tablename__ = 'comisiones'
     __table_args__ = (
         Index('idx_comision_fecha', 'fecha'),
@@ -328,7 +337,7 @@ class Comision(Base):
 
 # ─── Bancos ────────────────────────────────────────────────────────────────────
 
-class Banco(Base):
+class Banco(TimestampMixin, Base):
     __tablename__ = 'bancos'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre_banco = Column(String(100), nullable=False)
@@ -342,7 +351,7 @@ class Banco(Base):
     movimientos = relationship("MovimientoBanco", back_populates="banco_rel", cascade="all, delete-orphan", lazy='selectin')
 
 
-class MovimientoBanco(Base):
+class MovimientoBanco(TimestampMixin, Base):
     __tablename__ = 'movimientos_banco'
     __table_args__ = (
         Index('idx_mov_banco_fecha', 'fecha'),
@@ -369,7 +378,7 @@ class MovimientoBanco(Base):
 
 # ─── Compras ───────────────────────────────────────────────────────────────────
 
-class CompraVenta(Base):
+class CompraVenta(TimestampMixin, Base):
     __tablename__ = 'compra_ventas'
     id = Column(Integer, primary_key=True, autoincrement=True)
     compra_id = Column(Integer, ForeignKey('compras.id'), nullable=False)
@@ -378,7 +387,7 @@ class CompraVenta(Base):
     venta_rel = relationship("Venta", lazy='selectin')
 
 
-class Compra(Base):
+class Compra(TimestampMixin, Base):
     __tablename__ = 'compras'
     __table_args__ = (
         Index('idx_compra_fecha', 'fecha'),
@@ -410,7 +419,7 @@ class Compra(Base):
     ventas_asociadas = relationship("CompraVenta", back_populates="compra_rel", cascade="all, delete-orphan", lazy='selectin')
 
 
-class CompraDetalle(Base):
+class CompraDetalle(TimestampMixin, Base):
     __tablename__ = 'compra_detalles'
     id = Column(Integer, primary_key=True, autoincrement=True)
     compra_id = Column(Integer, ForeignKey('compras.id'), nullable=False)
@@ -427,7 +436,7 @@ class CompraDetalle(Base):
     presupuesto_item_rel = relationship("PresupuestoItem", lazy='selectin')
 
 
-class PagoCompra(Base):
+class PagoCompra(TimestampMixin, Base):
     __tablename__ = 'pagos_compras'
     __table_args__ = (
         Index('idx_pago_compra_fecha', 'fecha'),
@@ -449,7 +458,7 @@ class PagoCompra(Base):
 
 # ─── Gastos & Caja ─────────────────────────────────────────────────────────────
 
-class CategoriaGasto(Base):
+class CategoriaGasto(TimestampMixin, Base):
     __tablename__ = 'categorias_gasto'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), unique=True, nullable=False)
@@ -459,7 +468,7 @@ class CategoriaGasto(Base):
     categoria_padre = relationship("CategoriaGasto", remote_side=[id], backref="subcategorias")
 
 
-class GastoOperativo(Base):
+class GastoOperativo(TimestampMixin, Base):
     __tablename__ = 'gastos_operativos'
     __table_args__ = (
         Index('idx_gasto_fecha', 'fecha'),
@@ -479,7 +488,7 @@ class GastoOperativo(Base):
     banco_rel = relationship("Banco", lazy='selectin')
 
 
-class MovimientoCaja(Base):
+class MovimientoCaja(TimestampMixin, Base):
     __tablename__ = 'movimientos_caja'
     __table_args__ = (
         Index('idx_mov_caja_fecha', 'fecha'),
@@ -498,13 +507,13 @@ class MovimientoCaja(Base):
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
 
 
-class ConfiguracionCaja(Base):
+class ConfiguracionCaja(TimestampMixin, Base):
     __tablename__ = 'configuracion_caja'
     id = Column(Integer, primary_key=True)
     saldo_actual = Column(Float, default=0.0)
 
 
-class ConfiguracionEmpresa(Base):
+class ConfiguracionEmpresa(TimestampMixin, Base):
     __tablename__ = 'configuracion_empresa'
     id = Column(Integer, primary_key=True)
     nombre = Column(String(200))
@@ -518,7 +527,7 @@ class ConfiguracionEmpresa(Base):
 
 # ─── Usuarios del tenant ───────────────────────────────────────────────────────
 
-class Usuario(Base):
+class Usuario(TimestampMixin, Base):
     """Usuarios que acceden al sistema web de un cliente específico."""
     __tablename__ = 'usuarios'
     id = Column(Integer, primary_key=True, autoincrement=True)

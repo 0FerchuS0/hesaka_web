@@ -1,5 +1,5 @@
 """HESAKA Web - Router: Clientes, Proveedores, Referidores, Vendedores y Canales"""
-from datetime import datetime
+from datetime import date, datetime
 from math import ceil
 from typing import List, Optional
 
@@ -117,6 +117,8 @@ class ClienteFichaOut(BaseModel):
     movimientos: List[MovimientoFichaOut]
     ventas_pendientes: List[VentaPendienteFichaOut]
     ultima_graduacion: Optional["GraduacionClienteFichaOut"] = None
+    proximo_control: Optional[date] = None
+    proximo_control_origen: Optional[str] = None
     historial_armazones: List["ArmazonHistorialItemOut"] = []
 
 
@@ -132,6 +134,9 @@ class GraduacionClienteFichaOut(BaseModel):
     codigo_presupuesto: str
     fecha_presupuesto: datetime
     fecha_receta: Optional[datetime] = None
+    fecha_control: Optional[date] = None
+    origen: Optional[str] = None
+    consulta_tipo: Optional[str] = None
     doctor: Optional[str] = None
     observaciones: Optional[str] = None
     od_esfera: Optional[str] = None
@@ -529,6 +534,9 @@ def _build_cliente_ficha(session, cliente: Cliente):
             codigo_presupuesto=f"CONS-{consulta_row.id}",
             fecha_presupuesto=consulta_row.fecha,
             fecha_receta=consulta_row.fecha,
+            fecha_control=consulta_row.fecha_control,
+            origen="CONSULTA",
+            consulta_tipo="OFTALMOLOGIA",
             doctor=consulta_doctor,
             observaciones=consulta_row.observaciones,
             od_esfera=consulta_row.ref_od_esfera,
@@ -546,6 +554,8 @@ def _build_cliente_ficha(session, cliente: Cliente):
             codigo_presupuesto=ultima_grad_presupuesto.codigo,
             fecha_presupuesto=ultima_grad_presupuesto.fecha,
             fecha_receta=ultima_grad_presupuesto.fecha_receta,
+            fecha_control=ultima_grad_presupuesto.fecha_proximo_control,
+            origen="PRESUPUESTO",
             doctor=ultima_grad_presupuesto.doctor_receta,
             observaciones=ultima_grad_presupuesto.observaciones,
             od_esfera=ultima_grad_presupuesto.graduacion_od_esfera,
@@ -557,6 +567,25 @@ def _build_cliente_ficha(session, cliente: Cliente):
             oi_eje=ultima_grad_presupuesto.graduacion_oi_eje,
             oi_adicion=ultima_grad_presupuesto.graduacion_oi_adicion,
         )
+
+    proximo_control = None
+    proximo_control_origen = None
+    fecha_control_presupuesto = (
+        ultima_grad_presupuesto.fecha_proximo_control
+        if ultima_grad_presupuesto and not bool(ultima_grad_presupuesto.no_requiere_proximo_control)
+        else None
+    )
+    fecha_control_consulta = consulta_row.fecha_control if consulta_row else None
+
+    if fecha_control_consulta and (not fecha_presupuesto or (fecha_consulta and fecha_consulta >= fecha_presupuesto)):
+        proximo_control = fecha_control_consulta
+        proximo_control_origen = "CONSULTA"
+    elif fecha_control_presupuesto:
+        proximo_control = fecha_control_presupuesto
+        proximo_control_origen = "PRESUPUESTO"
+    elif fecha_control_consulta:
+        proximo_control = fecha_control_consulta
+        proximo_control_origen = "CONSULTA"
 
     keywords = ["ARMAZON", "ARMAZONES", "ARMAZON ", "MONTURA", "MARCO", "GABINETE"]
     armazon_conditions = []
@@ -595,6 +624,8 @@ def _build_cliente_ficha(session, cliente: Cliente):
                 codigo_presupuesto=presupuesto.codigo,
                 fecha_presupuesto=presupuesto.fecha,
                 fecha_receta=presupuesto.fecha_receta,
+                fecha_control=presupuesto.fecha_proximo_control,
+                origen="PRESUPUESTO",
                 doctor=presupuesto.doctor_receta,
                 observaciones=presupuesto.observaciones,
                 od_esfera=presupuesto.graduacion_od_esfera,
@@ -626,6 +657,8 @@ def _build_cliente_ficha(session, cliente: Cliente):
         movimientos=movimientos,
         ventas_pendientes=ventas_pendientes,
         ultima_graduacion=ultima_graduacion,
+        proximo_control=proximo_control,
+        proximo_control_origen=proximo_control_origen,
         historial_armazones=historial_armazones,
     )
 

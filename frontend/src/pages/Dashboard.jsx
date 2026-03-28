@@ -1,13 +1,15 @@
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth, api } from '../context/AuthContext'
 import {
     TrendingUp, ShoppingCart, Package,
-    DollarSign, AlertCircle, Clock, BarChart3
+    DollarSign, AlertCircle, Clock, BarChart3, MessageCircle
 } from 'lucide-react'
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid,
     Tooltip, ResponsiveContainer
 } from 'recharts'
+import Modal from '../components/Modal'
 
 function fmt(value) {
     return new Intl.NumberFormat('es-PY', {
@@ -49,14 +51,155 @@ function ComparisonCard({ color, title, value, range }) {
     )
 }
 
+function fmtDate(value) {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleDateString('es-PY')
+}
+
+function fmtDateTime(value) {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleString('es-PY')
+}
+
+function normalizarTelefonoWhatsapp(value) {
+    let digits = String(value || '').replace(/\D/g, '')
+    if (!digits) return ''
+
+    if (digits.startsWith('00')) {
+        digits = digits.slice(2)
+    }
+
+    if (digits.startsWith('59509')) {
+        digits = `595${digits.slice(4)}`
+    }
+
+    if (digits.startsWith('5950')) {
+        digits = `595${digits.slice(4)}`
+    }
+
+    if (digits.startsWith('09') && digits.length === 10) {
+        return `595${digits.slice(1)}`
+    }
+
+    if (digits.startsWith('9') && digits.length === 9) {
+        return `595${digits}`
+    }
+
+    if (digits.startsWith('5959') && digits.length === 12) {
+        return digits
+    }
+
+    return digits.startsWith('595') ? digits : ''
+}
+
+function buildReminderWhatsappLink(item) {
+    const telefono = normalizarTelefonoWhatsapp(item?.paciente_telefono)
+    if (!telefono) return ''
+    const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
+    const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
+    const mensaje = [
+        `Hola ${item?.paciente_nombre || ''}, te escribimos de HESAKA.`,
+        `Tu ultima consulta fue el ${ultimaConsulta} y tu proximo control esta previsto para el ${proximaConsulta}.`,
+        'Quedamos atentos para ayudarte a confirmar tu cita.',
+    ].join(' ')
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
+}
+
+function flattenReminderBuckets(reminderBuckets) {
+    return [
+        ...(reminderBuckets?.hoy || []),
+        ...(reminderBuckets?.ocho_dias || []),
+        ...(reminderBuckets?.quince_dias || []),
+    ]
+}
+
+function getDailyReminderStorageKey(user) {
+    const userKey = user?.id || user?.email || user?.nombre || 'anon'
+    return `hesaka-recordatorios-vistos-${userKey}-${new Date().toISOString().slice(0, 10)}`
+}
+
+function ReminderCards({ items, onMarkRemembered, actionPendingId = null }) {
+    return (
+        <div style={{ display: 'grid', gap: 12 }}>
+            {items.map(item => {
+                const whatsappLink = buildReminderWhatsappLink(item)
+                const isPending = actionPendingId === item.id
+                return (
+                    <div key={`${item.id}-${item.recordatorio_categoria || 'sin-categoria'}`} className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                            <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Ultima consulta: {item.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'Sin registro'}</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Proxima consulta: {fmtDateTime(item.fecha_hora)}</div>
+                        </div>
+                        <div className="flex gap-12" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onMarkRemembered(item)} disabled={isPending}>
+                                {isPending ? 'Guardando...' : 'Recordado'}
+                            </button>
+                            <a
+                                href={whatsappLink || undefined}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={`btn btn-secondary btn-sm ${!whatsappLink ? 'disabled' : ''}`}
+                                onClick={event => {
+                                    if (!whatsappLink) {
+                                        event.preventDefault()
+                                        window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
+                                    }
+                                }}
+                                style={!whatsappLink ? { pointerEvents: 'auto', opacity: 0.6 } : undefined}
+                            >
+                                <MessageCircle size={14} /> WhatsApp
+                            </a>
+                        </div>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
 export default function Dashboard() {
     const { user } = useAuth()
+    const queryClient = useQueryClient()
+    const [showReminderModal, setShowReminderModal] = useState(false)
 
     const { data: dashboard } = useQuery({
         queryKey: ['dashboard-resumen'],
         queryFn: () => api.get('/reportes/dashboard/resumen').then(response => response.data),
         retry: false,
     })
+    const reminderQuery = useQuery({
+        queryKey: ['clinica', 'agenda-recordatorios'],
+        queryFn: async () => (await api.get('/clinica/agenda/recordatorios')).data,
+        staleTime: 60 * 1000,
+    })
+
+    const markReminderMutation = useMutation({
+        mutationFn: async item => {
+            await api.post(`/clinica/agenda/${item.id}/recordatorios/${item.recordatorio_categoria}/recordado`)
+        },
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] }),
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] }),
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
+            ])
+        },
+    })
+
+    const reminderItems = flattenReminderBuckets(reminderQuery.data)
+
+    useEffect(() => {
+        if (!reminderItems.length) return
+        const storageKey = getDailyReminderStorageKey(user)
+        if (localStorage.getItem(storageKey) === '1') return
+        setShowReminderModal(true)
+        localStorage.setItem(storageKey, '1')
+    }, [reminderItems.length, user])
 
     const estadoBadge = estado => {
         const map = {
@@ -110,6 +253,23 @@ export default function Dashboard() {
                     sub="+ Clinico disponible"
                 />
             </div>
+
+            {reminderItems.length ? (
+                <div className="card" style={{ marginBottom: 20, border: '1px solid rgba(56,189,248,0.25)', background: 'rgba(56,189,248,0.08)' }}>
+                    <div className="card-title flex-between">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <AlertCircle size={18} style={{ color: '#38bdf8' }} />
+                            Recordatorios clinicos pendientes
+                        </span>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowReminderModal(true)}>
+                            Ver recordatorios
+                        </button>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)' }}>
+                        Hay {reminderItems.length} recordatorio(s) pendientes para controles clinicos.
+                    </div>
+                </div>
+            ) : null}
 
             <div className="grid-2" style={{ gap: 20 }}>
                 <div className="card" style={{ gridColumn: 'span 1' }}>
@@ -256,6 +416,15 @@ export default function Dashboard() {
                     background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
                 }
             `}</style>
+            {showReminderModal && reminderItems.length ? (
+                <Modal title="Recordatorios clinicos pendientes" onClose={() => setShowReminderModal(false)} maxWidth="920px">
+                    <ReminderCards
+                        items={reminderItems}
+                        onMarkRemembered={item => markReminderMutation.mutate(item)}
+                        actionPendingId={markReminderMutation.variables?.id}
+                    />
+                </Modal>
+            ) : null}
         </div>
     )
 }

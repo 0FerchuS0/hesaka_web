@@ -87,6 +87,7 @@ def _serializar_compra(compra: Compra) -> CompraOut:
         if rel.venta_rel and rel.venta_rel.cliente_rel:
             clientes.append(rel.venta_rel.cliente_rel.nombre)
     compra_out.clientes_nombres = sorted(set(clientes))
+    compra_out.whatsapp_retiro = _construir_contexto_whatsapp_retiro(compra)
     return compra_out
 
 
@@ -599,6 +600,23 @@ def _actualizar_ventas_y_costos(session, ventas: List[Venta], costos_reales: dic
         nuevo_estado = _calcular_estado_entrega_venta(session, venta)
         if nuevo_estado:
             venta.estado_entrega = nuevo_estado
+
+
+def _construir_contexto_whatsapp_retiro(compra: Compra) -> Optional[dict]:
+    for rel in compra.ventas_asociadas:
+        venta = rel.venta_rel
+        cliente = venta.cliente_rel if venta else None
+        if not venta or not cliente:
+            continue
+        return {
+            "venta_id": venta.id,
+            "venta_codigo": venta.codigo,
+            "cliente_id": cliente.id,
+            "cliente_nombre": cliente.nombre,
+            "cliente_telefono": cliente.telefono,
+            "estado_entrega_venta": venta.estado_entrega,
+        }
+    return None
 
 
 @router.get("/ventas-pendientes", response_model=List[VentaPendienteCompraOut])
@@ -1666,7 +1684,11 @@ def cambiar_estado_entrega(
         ventas = [rel.venta_rel for rel in compra.ventas_asociadas if rel.venta_rel]
         _actualizar_ventas_y_costos(session, ventas, {})
         session.commit()
-        return {"ok": True, "estado_entrega": compra.estado_entrega}
+        return {
+            "ok": True,
+            "estado_entrega": compra.estado_entrega,
+            "whatsapp_retiro": _construir_contexto_whatsapp_retiro(compra),
+        }
     finally:
         session.close()
 

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
-import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye } from 'lucide-react'
+import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye, MessageCircle, RotateCcw } from 'lucide-react'
 import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
@@ -11,6 +11,8 @@ const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
 const fmtDateTime = d => d ? new Date(d).toLocaleString('es-PY', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 const gs = v => `Gs. ${new Intl.NumberFormat('es-PY').format(v ?? 0)}`
+const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
+const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
 const getErrorText = (err, fallback) => {
     const detail = err?.response?.data?.detail
     if (typeof detail === 'string' && detail.trim()) return detail
@@ -31,6 +33,88 @@ const getErrorText = (err, fallback) => {
         return JSON.stringify(detail)
     }
     return fallback
+}
+
+function normalizarTelefonoWhatsapp(value) {
+    let digits = String(value || '').replace(/\D/g, '')
+    if (!digits) return ''
+    if (digits.startsWith('00')) digits = digits.slice(2)
+    if (digits.startsWith('59509')) digits = `595${digits.slice(4)}`
+    if (digits.startsWith('5950')) digits = `595${digits.slice(4)}`
+    if (digits.startsWith('09') && digits.length === 10) return `595${digits.slice(1)}`
+    if (digits.startsWith('9') && digits.length === 9) return `595${digits}`
+    if (digits.startsWith('5959') && digits.length === 12) return digits
+    return digits.startsWith('595') ? digits : ''
+}
+
+function getRetiroWhatsappTemplate() {
+    if (typeof window === 'undefined') return DEFAULT_RETIRO_WHATSAPP_TEMPLATE
+    return localStorage.getItem(RETIRO_WHATSAPP_TEMPLATE_KEY) || DEFAULT_RETIRO_WHATSAPP_TEMPLATE
+}
+
+function buildRetiroWhatsappMessage(context, template = DEFAULT_RETIRO_WHATSAPP_TEMPLATE) {
+    const ventaTexto = context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : ''
+    return (template || DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
+        .replaceAll('{cliente}', context?.cliente_nombre || '')
+        .replaceAll('{venta}', ventaTexto)
+        .replaceAll('{empresa}', 'HESAKA')
+}
+
+function buildRetiroWhatsappLink(context, message = '') {
+    const telefono = normalizarTelefonoWhatsapp(context?.cliente_telefono)
+    if (!telefono) return ''
+    const finalMessage = message || buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate())
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
+}
+
+function WhatsappRetiroModal({ context, onClose }) {
+    const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
+    const whatsappLink = buildRetiroWhatsappLink(context, message)
+
+    useEffect(() => {
+        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
+    }, [context])
+
+    return (
+        <div style={{ display: 'grid', gap: 16 }}>
+            <div className="card" style={{ marginBottom: 0, padding: '14px 16px' }}>
+                <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{context?.cliente_nombre || 'Sin cliente'}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Telefono: {context?.cliente_telefono || 'No disponible'}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Venta: {context?.venta_codigo || '-'}</div>
+                </div>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Mensaje de WhatsApp</label>
+                <textarea className="form-input" rows={6} value={message} onChange={e => setMessage(e.target.value)} style={{ resize: 'vertical' }} />
+                <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.78rem' }}>Variables utiles: {'{cliente}'}, {'{venta}'}, {'{empresa}'}</div>
+            </div>
+
+            {!whatsappLink && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}>
+                    <AlertCircle size={16} /> No se pudo convertir el telefono del cliente a un formato valido para WhatsApp.
+                </div>
+            )}
+
+            <div className="flex gap-12" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={() => setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))}>
+                        <RotateCcw size={15} /> Restaurar sugerido
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => { localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, message); window.alert('Plantilla de retiro guardada.') }}>
+                        Guardar plantilla
+                    </button>
+                </div>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>Cerrar</button>
+                    <button type="button" className="btn btn-primary" disabled={!whatsappLink} onClick={() => window.open(whatsappLink, '_blank', 'noopener,noreferrer')}>
+                        <MessageCircle size={15} /> Abrir WhatsApp
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
 }
 
 function GraduacionBox({ titulo, data }) {
@@ -274,16 +358,58 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
 
     const { data: bancos = [] } = useQuery({ queryKey: ['bancos'], queryFn: () => api.get('/bancos/').then(r => r.data) })
 
+    const actualizarVentaEnCache = updater => {
+        qc.setQueryData(['venta', ventaId], current => {
+            if (!current) return current
+            return updater(current)
+        })
+        qc.setQueriesData({ queryKey: ['ventas-optimizado'] }, current => {
+            if (!current?.items?.length) return current
+            return {
+                ...current,
+                items: current.items.map(item => {
+                    if (item.id !== ventaId) return item
+                    const updated = updater({
+                        ...item,
+                        pagos: Array.isArray(item.pagos) ? item.pagos : [],
+                    })
+                    return {
+                        ...item,
+                        saldo: updated.saldo,
+                        estado: updated.estado,
+                    }
+                }),
+            }
+        })
+    }
+
+    const refrescarEnSegundoPlano = () => {
+        void qc.invalidateQueries({ queryKey: ['venta', ventaId], refetchType: 'active' })
+        void qc.invalidateQueries({ queryKey: ['ventas-optimizado'], refetchType: 'active' })
+        void qc.invalidateQueries({ queryKey: ['ventas'], refetchType: 'active' })
+        void qc.invalidateQueries({ queryKey: ['saldo-caja'], refetchType: 'active' })
+    }
+
     const cobrar = useMutation({
         mutationFn: d => api.post(`/ventas/${ventaId}/pagos`, d),
-        onSuccess: async () => {
-            await Promise.all([
-                qc.invalidateQueries(['venta', ventaId]),
-                qc.invalidateQueries(['ventas']),
-                qc.invalidateQueries(['ventas-optimizado']),
-                qc.invalidateQueries(['saldo-caja'])
-            ])
-            setMonto(''); setNota('')
+        onSuccess: response => {
+            const nuevoPago = response?.data
+            if (nuevoPago) {
+                actualizarVentaEnCache(current => {
+                    const saldoActual = Number(current.saldo || 0)
+                    const montoPago = Number(nuevoPago.monto || 0)
+                    const nuevoSaldo = Math.max(0, saldoActual - montoPago)
+                    return {
+                        ...current,
+                        saldo: nuevoSaldo,
+                        estado: nuevoSaldo === 0 ? 'PAGADO' : 'PENDIENTE',
+                        pagos: [...(current.pagos || []), nuevoPago],
+                    }
+                })
+            }
+            setMonto('')
+            setNota('')
+            refrescarEnSegundoPlano()
         }
     })
 
@@ -292,13 +418,15 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
         onMutate: pagoId => {
             setDeletingPagoId(pagoId)
         },
-        onSuccess: async () => {
-            await Promise.all([
-                qc.invalidateQueries(['venta', ventaId]),
-                qc.invalidateQueries(['ventas']),
-                qc.invalidateQueries(['ventas-optimizado']),
-                qc.invalidateQueries(['saldo-caja'])
-            ])
+        onSuccess: (response, pagoId) => {
+            const saldoRestante = Number(response?.data?.saldo_restante ?? 0)
+            actualizarVentaEnCache(current => ({
+                ...current,
+                saldo: saldoRestante,
+                estado: saldoRestante > 0 ? 'PENDIENTE' : 'PAGADO',
+                pagos: (current.pagos || []).filter(pago => pago.id !== pagoId),
+            }))
+            refrescarEnSegundoPlano()
         },
         onSettled: () => {
             setDeletingPagoId(null)
@@ -601,7 +729,7 @@ function ClienteFichaModal({ clienteId, onClose }) {
 }
 
 // ─── Componente Menú de Acciones ───────────────────────────────────────────────
-function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc, anularMutation, user, anularBusyId }) {
+function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onWhatsappRetiro, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
     const [open, setOpen] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [menuPosition, setMenuPosition] = useState(null)
@@ -621,7 +749,8 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
             ])
         }
     })
-    const actionBusy = exporting || toggleEntrega.isPending || anularBusy
+    const whatsappBusy = whatsappBusyId === venta.id
+    const actionBusy = exporting || toggleEntrega.isPending || anularBusy || whatsappBusy
 
     const handleAction = (cb) => { setOpen(false); cb() }
     const handleExport = async () => {
@@ -685,6 +814,11 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, qc,
                                 <Printer size={14} style={{ marginRight: 8 }} /> {exporting ? 'Abriendo PDF...' : 'Imprimir Detalles Venta'}
                             </button>
                         )}
+                        {venta.estado !== 'ANULADA' && venta.estado_entrega === 'RECIBIDO' && (
+                            <button className="dropdown-item" onClick={() => handleAction(() => onWhatsappRetiro(venta))} disabled={actionBusy}>
+                                <MessageCircle size={14} style={{ marginRight: 8 }} /> {whatsappBusy ? 'Preparando...' : 'Avisar retiro por WhatsApp'}
+                            </button>
+                        )}
                         {puedeAjustar && venta.estado !== 'ANULADA' && (
                             <button className="dropdown-item" onClick={() => handleAction(() => onAjustar(venta))} disabled={actionBusy}>
                                 <Settings size={14} style={{ marginRight: 8 }} /> Ajustar venta
@@ -740,6 +874,8 @@ export default function VentasPage() {
     const [pageSize, setPageSize] = useState(25)
     const [pdfConjuntoBusy, setPdfConjuntoBusy] = useState(false)
     const [anularBusyId, setAnularBusyId] = useState(null)
+    const [whatsappRetiro, setWhatsappRetiro] = useState(null)
+    const [whatsappBusyId, setWhatsappBusyId] = useState(null)
     const confirmPageNavigation = usePendingNavigationGuard(Boolean(pdfConjuntoBusy || anularBusyId), 'Hay una accion de venta aun en proceso. ¿Seguro que desea salir de esta vista?')
 
     useEffect(() => {
@@ -842,6 +978,29 @@ export default function VentasPage() {
     const totalVentas = filtradas.reduce((s, v) => s + v.total, 0)
     const totalCobrado = filtradas.reduce((s, v) => s + (v.total - v.saldo), 0)
     const totalPendiente = filtradas.reduce((s, v) => s + v.saldo, 0)
+
+    const abrirWhatsappRetiro = async (venta) => {
+        if (!venta?.cliente_id) {
+            alert('Esta venta no tiene un cliente vinculado.')
+            return
+        }
+        try {
+            setWhatsappBusyId(venta.id)
+            const { data: cliente } = await api.get(`/clientes/${venta.cliente_id}`)
+            setWhatsappRetiro({
+                venta_id: venta.id,
+                venta_codigo: venta.codigo,
+                cliente_id: venta.cliente_id,
+                cliente_nombre: venta.cliente_nombre,
+                cliente_telefono: cliente?.telefono || '',
+                estado_entrega_venta: venta.estado_entrega,
+            })
+        } catch (error) {
+            alert(getErrorText(error, 'No se pudo preparar el mensaje de WhatsApp.'))
+        } finally {
+            setWhatsappBusyId(null)
+        }
+    }
 
     return (
         <div className="page-body">
@@ -982,6 +1141,7 @@ export default function VentasPage() {
                                                 venta={v}
                                                 onPagar={setVentaPagos}
                                                 onAjustar={setVentaAjuste}
+                                                onWhatsappRetiro={abrirWhatsappRetiro}
                                                 onVerFicha={(venta) => setClienteFichaId(venta.cliente_id)}
                                                 onAnular={(ventaId) => {
                                                     setAnularBusyId(ventaId)
@@ -991,6 +1151,7 @@ export default function VentasPage() {
                                                 anularMutation={anular}
                                                 user={user}
                                                 anularBusyId={anularBusyId}
+                                                whatsappBusyId={whatsappBusyId}
                                             />
                                         </td>
                                     </tr>
@@ -1045,6 +1206,11 @@ export default function VentasPage() {
             {clienteFichaId && (
                 <Modal title="Ficha de Cliente" onClose={() => setClienteFichaId(null)} maxWidth="980px">
                     <ClienteFichaModal clienteId={clienteFichaId} onClose={() => setClienteFichaId(null)} />
+                </Modal>
+            )}
+            {whatsappRetiro && (
+                <Modal title="Aviso de retiro por WhatsApp" onClose={() => setWhatsappRetiro(null)} maxWidth="680px">
+                    <WhatsappRetiroModal context={whatsappRetiro} onClose={() => setWhatsappRetiro(null)} />
                 </Modal>
             )}
         </div>

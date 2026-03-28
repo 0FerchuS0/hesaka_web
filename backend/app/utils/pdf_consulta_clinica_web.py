@@ -23,22 +23,13 @@ def _fmt_num(value):
         number = float(value)
     except Exception:
         return str(value)
-    if number.is_integer():
-        if number >= 0:
-            return f"+{int(number)}" if int(number) > 0 else "0"
-        return str(int(number))
-    text = f"{number:+.2f}" if number > 0 else f"{number:.2f}"
-    return text
+    if number > 0:
+        return f"+{number:.2f}"
+    return f"{number:.2f}"
 
 
 def _fmt_adicion(value):
-    if value in (None, "", "-"):
-        return "-"
-    try:
-        number = float(value)
-    except Exception:
-        return str(value)
-    return f"{number:+.2f}" if number >= 0 else f"{number:.2f}"
+    return _fmt_num(value)
 
 
 def _header_block(story, styles, title_text, empresa_nombre, empresa_subtitulo=None):
@@ -168,6 +159,8 @@ def generar_pdf_consulta_clinica(empresa_nombre: str, paciente_nombre: str, paci
             recomendacion.append([f"Material: {_texto(consulta.get('material_lente'))}"])
         if _has_value(consulta.get("tratamientos")):
             recomendacion.append([f"Tratamientos: {_texto(consulta.get('tratamientos'))}"])
+        if _has_value(consulta.get("fecha_control")):
+            recomendacion.append([f"Proximo control: {_texto(consulta.get('fecha_control'))}"])
         if recomendacion:
             story.append(Paragraph("Recomendacion Optica:", section))
             story.extend([_simple_rows_table(recomendacion, [17.2 * cm]), Spacer(1, 0.4 * cm)])

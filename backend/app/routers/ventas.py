@@ -267,6 +267,10 @@ def _build_presupuesto_out(p):
         graduacion_oi_adicion=getattr(p, "graduacion_oi_adicion", None),
         doctor_receta=getattr(p, "doctor_receta", None),
         observaciones=getattr(p, "observaciones", None),
+        fecha_proximo_control=getattr(p, "fecha_proximo_control", None),
+        no_requiere_proximo_control=bool(getattr(p, "no_requiere_proximo_control", False)),
+        consulta_clinica_id=getattr(p, "consulta_clinica_id", None),
+        consulta_clinica_tipo=getattr(p, "consulta_clinica_tipo", None),
         referidor_id=getattr(p, "referidor_id", None),
         referidor_nombre=p.referidor_rel.nombre if getattr(p, "referidor_rel", None) else None,
         vendedor_id=getattr(p, "vendedor_id", None),
@@ -333,6 +337,10 @@ def listar_presupuestos_optimizado(
                 Presupuesto.graduacion_oi_esfera,
                 Presupuesto.graduacion_oi_cilindro,
                 Presupuesto.graduacion_oi_eje,
+                Presupuesto.fecha_proximo_control,
+                Presupuesto.no_requiere_proximo_control,
+                Presupuesto.consulta_clinica_id,
+                Presupuesto.consulta_clinica_tipo,
                 Presupuesto.vendedor_id,
                 Vendedor.nombre.label("vendedor_nombre"),
                 Presupuesto.canal_venta_id,
@@ -390,6 +398,10 @@ def listar_presupuestos_optimizado(
                 graduacion_oi_esfera=row.graduacion_oi_esfera,
                 graduacion_oi_cilindro=row.graduacion_oi_cilindro,
                 graduacion_oi_eje=row.graduacion_oi_eje,
+                fecha_proximo_control=getattr(row, "fecha_proximo_control", None),
+                no_requiere_proximo_control=bool(getattr(row, "no_requiere_proximo_control", False)),
+                consulta_clinica_id=getattr(row, "consulta_clinica_id", None),
+                consulta_clinica_tipo=getattr(row, "consulta_clinica_tipo", None),
                 vendedor_id=row.vendedor_id,
                 vendedor_nombre=row.vendedor_nombre,
                 canal_venta_id=row.canal_venta_id,
@@ -515,6 +527,10 @@ def crear_presupuesto(data: PresupuestoCreate, tenant_slug: str = Depends(get_te
         codigo = _get_siguiente_codigo(session, Presupuesto, "PRE")
         items_data = data.items
         pres_data = data.model_dump(exclude={"items"})
+        if pres_data.get("no_requiere_proximo_control"):
+            pres_data["fecha_proximo_control"] = None
+            pres_data["consulta_clinica_id"] = None
+            pres_data["consulta_clinica_tipo"] = None
         if not pres_data.get("canal_venta_id"):
             canal_default = _obtener_canal_venta_default(session)
             if canal_default:
@@ -593,6 +609,10 @@ def editar_presupuesto(pre_id: int, data: PresupuestoCreate, tenant_slug: str = 
         # Actualizar campos del presupuesto
         items_data = data.items
         pres_dict = data.model_dump(exclude={"items"})
+        if pres_dict.get("no_requiere_proximo_control"):
+            pres_dict["fecha_proximo_control"] = None
+            pres_dict["consulta_clinica_id"] = None
+            pres_dict["consulta_clinica_tipo"] = None
         for k, v in pres_dict.items():
             setattr(p, k, v)
 

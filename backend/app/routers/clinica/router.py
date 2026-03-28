@@ -61,6 +61,7 @@ from app.schemas.schemas import (
     ClinicaVademecumPatologiasListOut,
     ClinicaVademecumTratamientoOut,
     ClinicaTurnoIn,
+    ClinicaAgendaRecordatoriosOut,
     ClinicaTurnoOut,
     ClinicaTurnosListOut,
 )
@@ -383,6 +384,19 @@ def _normalizar_estado_turno(value: str | None) -> str:
 
 
 def _serializar_turno(turno) -> ClinicaTurnoOut:
+    hoy = date.today()
+    dias_restantes = None
+    recordatorio_categoria = None
+    if turno.fecha_hora:
+        dias_restantes = (turno.fecha_hora.date() - hoy).days
+        if bool(getattr(turno, "es_control", False)) and turno.estado in ["PENDIENTE", "CONFIRMADO"]:
+            if dias_restantes == 15:
+                recordatorio_categoria = "15_dias"
+            elif dias_restantes == 8:
+                recordatorio_categoria = "8_dias"
+            elif dias_restantes == 0:
+                recordatorio_categoria = "hoy"
+
     paciente_nombre = None
     paciente_ci = None
     if turno.paciente_rel:
@@ -391,19 +405,94 @@ def _serializar_turno(turno) -> ClinicaTurnoOut:
     elif turno.paciente_nombre_libre:
         paciente_nombre = turno.paciente_nombre_libre
     return ClinicaTurnoOut(
-        id=turno.id,
-        paciente_id=turno.paciente_id,
-        paciente_nombre=paciente_nombre or "PACIENTE",
-        paciente_nombre_libre=turno.paciente_nombre_libre,
-        paciente_ci=paciente_ci,
-        doctor_id=turno.doctor_id,
-        doctor_nombre=turno.doctor_rel.nombre_completo if turno.doctor_rel else None,
-        lugar_atencion_id=turno.lugar_atencion_id,
-        lugar_nombre=turno.lugar_atencion_rel.nombre if turno.lugar_atencion_rel else None,
-        fecha_hora=turno.fecha_hora,
-        estado=turno.estado,
-        motivo=turno.motivo,
-        notas=turno.notas,
+          id=turno.id,
+          paciente_id=turno.paciente_id,
+          paciente_nombre=paciente_nombre or "PACIENTE",
+          paciente_nombre_libre=turno.paciente_nombre_libre,
+          paciente_ci=paciente_ci,
+          paciente_telefono=turno.paciente_rel.telefono if turno.paciente_rel else None,
+          doctor_id=turno.doctor_id,
+          doctor_nombre=turno.doctor_rel.nombre_completo if turno.doctor_rel else None,
+          lugar_atencion_id=turno.lugar_atencion_id,
+          lugar_nombre=turno.lugar_atencion_rel.nombre if turno.lugar_atencion_rel else None,
+          fecha_hora=turno.fecha_hora,
+          estado=turno.estado,
+          es_control=bool(getattr(turno, "es_control", False)),
+          dias_restantes=dias_restantes,
+          recordatorio_categoria=recordatorio_categoria,
+          motivo=turno.motivo,
+          notas=turno.notas,
+      )
+
+
+def _adjuntar_contexto_turnos(session, turnos_serializados: list[ClinicaTurnoOut]):
+    paciente_ids = [item.paciente_id for item in turnos_serializados if item.paciente_id]
+    if not paciente_ids:
+        return turnos_serializados
+
+    oft_rows = (
+        session.query(ConsultaOftalmologica.paciente_id, func.max(ConsultaOftalmologica.fecha))
+        .filter(ConsultaOftalmologica.paciente_id.in_(paciente_ids))
+        .group_by(ConsultaOftalmologica.paciente_id)
+        .all()
+    )
+    cont_rows = (
+        session.query(ConsultaContactologia.paciente_id, func.max(ConsultaContactologia.fecha))
+        .filter(ConsultaContactologia.paciente_id.in_(paciente_ids))
+        .group_by(ConsultaContactologia.paciente_id)
+        .all()
+    )
+    latest_map: dict[int, datetime] = {}
+    for paciente_id, fecha in list(oft_rows) + list(cont_rows):
+        if not paciente_id or not fecha:
+            continue
+        current = latest_map.get(paciente_id)
+        if current is None or fecha > current:
+            latest_map[paciente_id] = fecha
+
+    for item in turnos_serializados:
+        if item.paciente_id:
+            item.ultima_consulta_fecha = latest_map.get(item.paciente_id)
+    return turnos_serializados
+
+
+def _rango_recordatorio(recordatorio: str | None):
+    if not recordatorio:
+        return None
+    recordatorio_norm = str(recordatorio).strip().lower()
+    hoy = date.today()
+    if recordatorio_norm in {"15", "15_dias", "15dias"}:
+        return (_inicio_dia(hoy + timedelta(days=15)), _inicio_dia(hoy + timedelta(days=16)))
+    if recordatorio_norm in {"8", "8_dias", "8dias"}:
+        return (_inicio_dia(hoy + timedelta(days=8)), _inicio_dia(hoy + timedelta(days=9)))
+    if recordatorio_norm in {"0", "hoy"}:
+        return (_inicio_dia(hoy), _inicio_dia(hoy + timedelta(days=1)))
+    raise HTTPException(status_code=400, detail="Filtro de recordatorio invalido.")
+
+
+def _campo_recordado_para_categoria(recordatorio: str | None):
+    recordatorio_norm = str(recordatorio or "").strip().lower()
+    if recordatorio_norm in {"15", "15_dias", "15dias"}:
+        return TurnoClinico.recordado_15
+    if recordatorio_norm in {"8", "8_dias", "8dias"}:
+        return TurnoClinico.recordado_8
+    if recordatorio_norm in {"0", "hoy"}:
+        return TurnoClinico.recordado_hoy
+    raise HTTPException(status_code=400, detail="Categoria de recordatorio invalida.")
+
+
+def _aplicar_filtro_recordatorio(query, recordatorio: str | None):
+    rango = _rango_recordatorio(recordatorio)
+    if not rango:
+        return query
+    inicio, fin = rango
+    campo_recordado = _campo_recordado_para_categoria(recordatorio)
+    return query.filter(
+        TurnoClinico.es_control.is_(True),
+        TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO"]),
+        campo_recordado.is_(False),
+        TurnoClinico.fecha_hora >= inicio,
+        TurnoClinico.fecha_hora < fin,
     )
 
 
@@ -445,7 +534,96 @@ def _programar_proximo_control(session, paciente_id: int, doctor_id: int | None,
         lugar_atencion_id=lugar_atencion_id,
         fecha_hora=datetime.combine(fecha_control, datetime.min.time()).replace(hour=9),
         estado="PENDIENTE",
+        es_control=True,
         motivo=_normalizar_texto(motivo) or "PROXIMO CONTROL",
+        notas="Generado automaticamente desde la consulta clinica.",
+    ))
+
+
+def _sincronizar_turno_proximo_control(
+    session,
+    *,
+    consulta_id: int,
+    consulta_tipo: str,
+    paciente_id: int,
+    doctor_id: int | None,
+    lugar_atencion_id: int | None,
+    fecha_control_anterior: date | None,
+    fecha_control_nueva: date | None,
+    motivo: str | None,
+):
+    turno = (
+        session.query(TurnoClinico)
+        .filter(
+            TurnoClinico.consulta_id == consulta_id,
+            TurnoClinico.consulta_tipo == consulta_tipo,
+            TurnoClinico.es_control.is_(True),
+            TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO", "EN_CURSO"]),
+        )
+        .order_by(TurnoClinico.id.desc())
+        .first()
+    )
+
+    if turno is None and fecha_control_anterior:
+        turno = (
+            session.query(TurnoClinico)
+            .filter(
+                TurnoClinico.consulta_id.is_(None),
+                TurnoClinico.consulta_tipo.is_(None),
+                TurnoClinico.paciente_id == paciente_id,
+                TurnoClinico.es_control.is_(True),
+                TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO", "EN_CURSO"]),
+                TurnoClinico.fecha_hora >= _inicio_dia(fecha_control_anterior),
+                TurnoClinico.fecha_hora < (_inicio_dia(fecha_control_anterior) + timedelta(days=1)),
+            )
+            .order_by(TurnoClinico.id.desc())
+            .first()
+        )
+
+    if not fecha_control_nueva:
+        if turno is not None:
+            session.delete(turno)
+        return
+
+    motivo_normalizado = _normalizar_texto(motivo) or "PROXIMO CONTROL"
+    nueva_fecha_hora = datetime.combine(fecha_control_nueva, datetime.min.time()).replace(hour=9)
+
+    if turno is not None:
+        turno.paciente_id = paciente_id
+        turno.doctor_id = doctor_id
+        turno.lugar_atencion_id = lugar_atencion_id
+        turno.fecha_hora = nueva_fecha_hora
+        turno.es_control = True
+        turno.consulta_id = consulta_id
+        turno.consulta_tipo = consulta_tipo
+        turno.motivo = motivo_normalizado
+        turno.notas = "Generado automaticamente desde la consulta clinica."
+        turno.paciente_nombre_libre = None
+        return
+
+    existente = (
+        session.query(TurnoClinico.id)
+        .filter(
+            TurnoClinico.paciente_id == paciente_id,
+            TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO", "EN_CURSO"]),
+            TurnoClinico.fecha_hora >= _inicio_dia(fecha_control_nueva),
+            TurnoClinico.fecha_hora < (_inicio_dia(fecha_control_nueva) + timedelta(days=1)),
+        )
+        .first()
+    )
+    if existente:
+        return
+
+    session.add(TurnoClinico(
+        paciente_id=paciente_id,
+        doctor_id=doctor_id,
+        lugar_atencion_id=lugar_atencion_id,
+        fecha_hora=nueva_fecha_hora,
+        estado="PENDIENTE",
+        es_control=True,
+        consulta_id=consulta_id,
+        consulta_tipo=consulta_tipo,
+        motivo=motivo_normalizado,
         notas="Generado automaticamente desde la consulta clinica.",
     ))
 
@@ -816,12 +994,22 @@ def obtener_dashboard_clinico(
                 TurnoClinico.fecha_hora < (inicio_hoy + timedelta(days=1)),
             )
         )
-        controles_proximos = _count_rows(
-            session.query(func.count(TurnoClinico.id)).filter(
-                TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO"]),
-                TurnoClinico.motivo.ilike("%CONTROL%"),
-                TurnoClinico.fecha_hora >= inicio_hoy,
-                TurnoClinico.fecha_hora < (inicio_hoy + timedelta(days=7)),
+        recordatorios_hoy = _count_rows(
+            _aplicar_filtro_recordatorio(
+                session.query(func.count(TurnoClinico.id)),
+                "hoy",
+            )
+        )
+        recordatorios_8_dias = _count_rows(
+            _aplicar_filtro_recordatorio(
+                session.query(func.count(TurnoClinico.id)),
+                "8",
+            )
+        )
+        recordatorios_15_dias = _count_rows(
+            _aplicar_filtro_recordatorio(
+                session.query(func.count(TurnoClinico.id)),
+                "15",
             )
         )
         pacientes_nuevos_mes = _count_rows(session.query(func.count(Paciente.id)).filter(Paciente.fecha_registro >= inicio_mes))
@@ -929,12 +1117,32 @@ def obtener_dashboard_clinico(
                 )
             )
 
-        if controles_proximos > 0:
+        if recordatorios_15_dias > 0:
             alertas.append(
                 ClinicaAlertOut(
                     tipo="SEGUIMIENTO",
-                    titulo="Controles proximos",
-                    mensaje=f"Hay {controles_proximos} control(es) pendientes dentro de los proximos 7 dias.",
+                    titulo="Recordatorios a 15 dias",
+                    mensaje=f"Hay {recordatorios_15_dias} control(es) que deben recordarse 15 dias antes.",
+                    color="#a78bfa",
+                )
+            )
+
+        if recordatorios_8_dias > 0:
+            alertas.append(
+                ClinicaAlertOut(
+                    tipo="SEGUIMIENTO",
+                    titulo="Recordatorios a 8 dias",
+                    mensaje=f"Hay {recordatorios_8_dias} control(es) que deben recordarse 8 dias antes.",
+                    color="#f59e0b",
+                )
+            )
+
+        if recordatorios_hoy > 0:
+            alertas.append(
+                ClinicaAlertOut(
+                    tipo="SEGUIMIENTO",
+                    titulo="Controles para hoy",
+                    mensaje=f"Hay {recordatorios_hoy} control(es) con recordatorio para hoy.",
                     color="#a78bfa",
                 )
             )
@@ -981,6 +1189,7 @@ def listar_turnos_clinica(
     tenant_slug: str = Depends(get_tenant_slug),
     current_user=Depends(require_action("clinica.historial", "clinica")),
     buscar: str | None = Query(default=None),
+    recordatorio: str | None = Query(default=None),
     fecha_desde: date | None = Query(default=None),
     fecha_hasta: date | None = Query(default=None),
     doctor_id: int | None = Query(default=None),
@@ -999,7 +1208,7 @@ def listar_turnos_clinica(
                 selectinload(TurnoClinico.lugar_atencion_rel),
             )
             .outerjoin(Paciente, Paciente.id == TurnoClinico.paciente_id)
-        )
+            )
         if buscar:
             term = f"%{buscar.strip()}%"
             query = query.filter(
@@ -1011,6 +1220,7 @@ def listar_turnos_clinica(
                     TurnoClinico.motivo.ilike(term),
                 )
             )
+        query = _aplicar_filtro_recordatorio(query, recordatorio)
         if fecha_desde:
             query = query.filter(TurnoClinico.fecha_hora >= _inicio_dia(fecha_desde))
         if fecha_hasta:
@@ -1030,12 +1240,78 @@ def listar_turnos_clinica(
             .limit(page_size)
             .all()
         )
+        serialized_items = _adjuntar_contexto_turnos(session, [_serializar_turno(item) for item in items])
         return ClinicaTurnosListOut(
-            items=[_serializar_turno(item) for item in items],
+            items=serialized_items,
             total=total,
             page=page,
             page_size=page_size,
             total_pages=total_pages,
+        )
+    finally:
+        session.close()
+
+
+@router.get("/agenda/proximos-controles", response_model=list[ClinicaTurnoOut])
+def listar_proximos_controles_clinica(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.historial", "clinica")),
+    limit: int = Query(default=6, ge=1, le=20),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        inicio_hoy = _inicio_dia(date.today())
+        items = (
+            session.query(TurnoClinico)
+            .options(
+                selectinload(TurnoClinico.paciente_rel),
+                selectinload(TurnoClinico.doctor_rel),
+                selectinload(TurnoClinico.lugar_atencion_rel),
+            )
+            .filter(
+                TurnoClinico.es_control.is_(True),
+                TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO", "EN_CURSO"]),
+                TurnoClinico.fecha_hora >= inicio_hoy,
+            )
+            .order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc())
+            .limit(limit)
+            .all()
+        )
+        return _adjuntar_contexto_turnos(session, [_serializar_turno(item) for item in items])
+    finally:
+        session.close()
+
+
+@router.get("/agenda/recordatorios", response_model=ClinicaAgendaRecordatoriosOut)
+def listar_recordatorios_clinica(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.historial", "clinica")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        base_query = (
+            session.query(TurnoClinico)
+            .options(
+                selectinload(TurnoClinico.paciente_rel),
+                selectinload(TurnoClinico.doctor_rel),
+                selectinload(TurnoClinico.lugar_atencion_rel),
+            )
+        )
+
+        def _items_para(recordatorio: str):
+            return _adjuntar_contexto_turnos(session, [
+                _serializar_turno(item) for item in (
+                _aplicar_filtro_recordatorio(base_query, recordatorio)
+                .order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc())
+                .limit(8)
+                .all()
+                )
+            ])
+
+        return ClinicaAgendaRecordatoriosOut(
+            hoy=_items_para("hoy"),
+            ocho_dias=_items_para("8"),
+            quince_dias=_items_para("15"),
         )
     finally:
         session.close()
@@ -1078,6 +1354,26 @@ def crear_turno_clinica(
         session.commit()
         session.refresh(turno)
         return _serializar_turno(turno)
+    finally:
+        session.close()
+
+
+@router.post("/agenda/{turno_id:int}/recordatorios/{categoria}/recordado")
+def marcar_recordatorio_turno(
+    turno_id: int,
+    categoria: str,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.consultas_editar", "clinica")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        turno = session.query(TurnoClinico).filter(TurnoClinico.id == turno_id).first()
+        if not turno:
+            raise HTTPException(status_code=404, detail="Turno no encontrado.")
+        campo_recordado = _campo_recordado_para_categoria(categoria)
+        setattr(turno, campo_recordado.key, True)
+        session.commit()
+        return {"ok": True}
     finally:
         session.close()
 
@@ -1902,6 +2198,7 @@ def obtener_historial_paciente_clinica(
                 ConsultaOftalmologica.plan_tratamiento,
                 ConsultaOftalmologica.tipo_lente,
                 ConsultaOftalmologica.material_lente,
+                ConsultaOftalmologica.fecha_control,
                 Doctor.nombre_completo.label("doctor_nombre"),
                 LugarAtencion.nombre.label("lugar_nombre"),
             )
@@ -1949,6 +2246,7 @@ def obtener_historial_paciente_clinica(
                 plan_tratamiento=row.plan_tratamiento,
                 tipo_lente=row.tipo_lente,
                 material_lente=row.material_lente,
+                fecha_control=row.fecha_control,
             )
             for row in oft_rows
         ]
@@ -2529,13 +2827,16 @@ def crear_consulta_oftalmologica(
             consulta.fecha,
             payload.motivo or payload.diagnostico,
         )
-        _programar_proximo_control(
+        _sincronizar_turno_proximo_control(
             session,
-            payload.paciente_id,
-            payload.doctor_id,
-            payload.lugar_atencion_id,
-            payload.fecha_control,
-            "PROXIMO CONTROL OFTALMOLOGICO",
+            consulta_id=consulta.id,
+            consulta_tipo="OFTALMOLOGIA",
+            paciente_id=payload.paciente_id,
+            doctor_id=payload.doctor_id,
+            lugar_atencion_id=payload.lugar_atencion_id,
+            fecha_control_anterior=None,
+            fecha_control_nueva=payload.fecha_control,
+            motivo="PROXIMO CONTROL OFTALMOLOGICO",
         )
         session.commit()
         return _obtener_consulta_oft_segura(session, consulta.id)
@@ -2555,6 +2856,7 @@ def editar_consulta_oftalmologica(
         consulta = session.query(ConsultaOftalmologica).filter(ConsultaOftalmologica.id == consulta_id).first()
         if not consulta:
             raise HTTPException(status_code=404, detail="Consulta oftalmologica no encontrada.")
+        fecha_control_anterior = consulta.fecha_control
         _obtener_paciente_seguro(session, payload.paciente_id)
         consulta.paciente_id = payload.paciente_id
         consulta.doctor_id = payload.doctor_id
@@ -2623,6 +2925,17 @@ def editar_consulta_oftalmologica(
         consulta.cicloplegia_oi_eje = _normalizar_texto(payload.cicloplegia_oi_eje)
         consulta.estudios_solicitados = _normalizar_texto(payload.estudios_solicitados)
         consulta.observaciones = _normalizar_texto(payload.observaciones)
+        _sincronizar_turno_proximo_control(
+            session,
+            consulta_id=consulta.id,
+            consulta_tipo="OFTALMOLOGIA",
+            paciente_id=payload.paciente_id,
+            doctor_id=payload.doctor_id,
+            lugar_atencion_id=payload.lugar_atencion_id,
+            fecha_control_anterior=fecha_control_anterior,
+            fecha_control_nueva=payload.fecha_control,
+            motivo="PROXIMO CONTROL OFTALMOLOGICO",
+        )
         session.commit()
         return _obtener_consulta_oft_segura(session, consulta.id)
     finally:
@@ -2729,13 +3042,16 @@ def crear_consulta_contactologia(
             consulta.fecha,
             payload.diagnostico or payload.plan_tratamiento,
         )
-        _programar_proximo_control(
+        _sincronizar_turno_proximo_control(
             session,
-            payload.paciente_id,
-            payload.doctor_id,
-            payload.lugar_atencion_id,
-            payload.fecha_control,
-            "PROXIMO CONTROL DE CONTACTOLOGIA",
+            consulta_id=consulta.id,
+            consulta_tipo="CONTACTOLOGIA",
+            paciente_id=payload.paciente_id,
+            doctor_id=payload.doctor_id,
+            lugar_atencion_id=payload.lugar_atencion_id,
+            fecha_control_anterior=None,
+            fecha_control_nueva=payload.fecha_control,
+            motivo="PROXIMO CONTROL DE CONTACTOLOGIA",
         )
         session.commit()
         return _obtener_consulta_cont_segura(session, consulta.id)
@@ -2755,6 +3071,7 @@ def editar_consulta_contactologia(
         consulta = session.query(ConsultaContactologia).filter(ConsultaContactologia.id == consulta_id).first()
         if not consulta:
             raise HTTPException(status_code=404, detail="Consulta de contactologia no encontrada.")
+        fecha_control_anterior = consulta.fecha_control
         _obtener_paciente_seguro(session, payload.paciente_id)
         consulta.paciente_id = payload.paciente_id
         consulta.doctor_id = payload.doctor_id
@@ -2769,6 +3086,17 @@ def editar_consulta_contactologia(
         consulta.marca_recomendada = _normalizar_texto(payload.marca_recomendada)
         consulta.fecha_control = payload.fecha_control
         consulta.observaciones = _normalizar_texto(payload.observaciones)
+        _sincronizar_turno_proximo_control(
+            session,
+            consulta_id=consulta.id,
+            consulta_tipo="CONTACTOLOGIA",
+            paciente_id=payload.paciente_id,
+            doctor_id=payload.doctor_id,
+            lugar_atencion_id=payload.lugar_atencion_id,
+            fecha_control_anterior=fecha_control_anterior,
+            fecha_control_nueva=payload.fecha_control,
+            motivo="PROXIMO CONTROL DE CONTACTOLOGIA",
+        )
         session.commit()
         return _obtener_consulta_cont_segura(session, consulta.id)
     finally:

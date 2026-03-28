@@ -127,6 +127,24 @@ def ensure_tenant_schema(engine, tenant_slug: str):
             if "canal_venta_id" not in venta_columns and "canales_venta" in table_names:
                 connection.execute(text("ALTER TABLE ventas ADD COLUMN canal_venta_id INTEGER REFERENCES canales_venta(id)"))
 
+    if "presupuestos" in table_names:
+        presupuesto_columns = {column["name"] for column in inspector.get_columns("presupuestos")}
+        with engine.begin() as connection:
+            if "fecha_proximo_control" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN fecha_proximo_control DATE"))
+            if "no_requiere_proximo_control" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN no_requiere_proximo_control BOOLEAN DEFAULT FALSE"))
+            if "consulta_clinica_id" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN consulta_clinica_id INTEGER"))
+            if "consulta_clinica_tipo" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN consulta_clinica_tipo VARCHAR(30)"))
+            connection.execute(text(
+                """
+                UPDATE presupuestos
+                SET no_requiere_proximo_control = COALESCE(no_requiere_proximo_control, FALSE)
+                """
+            ))
+
     # Si el tenant aun no tiene la base del modulo clinico, crearla una sola vez.
     if "clinica_pacientes" not in table_names:
         Base.metadata.create_all(bind=engine)
@@ -274,10 +292,36 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         with engine.begin() as connection:
             if "paciente_nombre_libre" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN paciente_nombre_libre VARCHAR(200)"))
+            if "es_control" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN es_control BOOLEAN DEFAULT FALSE"))
+            if "recordado_15" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_15 BOOLEAN DEFAULT FALSE"))
+            if "recordado_8" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_8 BOOLEAN DEFAULT FALSE"))
+            if "recordado_hoy" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_hoy BOOLEAN DEFAULT FALSE"))
             if "consulta_id" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN consulta_id INTEGER"))
             if "consulta_tipo" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN consulta_tipo VARCHAR(30)"))
+            connection.execute(text("UPDATE clinica_turnos SET es_control = COALESCE(es_control, FALSE)"))
+            connection.execute(text(
+                """
+                UPDATE clinica_turnos
+                SET recordado_15 = COALESCE(recordado_15, FALSE),
+                    recordado_8 = COALESCE(recordado_8, FALSE),
+                    recordado_hoy = COALESCE(recordado_hoy, FALSE)
+                """
+            ))
+            connection.execute(text(
+                """
+                UPDATE clinica_turnos
+                SET es_control = TRUE
+                WHERE es_control = FALSE
+                  AND motivo IS NOT NULL
+                  AND UPPER(motivo) LIKE '%CONTROL%'
+                """
+            ))
             connection.execute(text("ALTER TABLE clinica_turnos ALTER COLUMN paciente_id DROP NOT NULL"))
         inspector = inspect(engine)
         table_names = inspector.get_table_names()

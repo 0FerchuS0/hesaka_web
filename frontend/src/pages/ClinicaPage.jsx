@@ -6,6 +6,7 @@ import {
     Eye,
     FileText,
     MapPin,
+    MessageCircle,
     Pencil,
     Plus,
     RefreshCcw,
@@ -39,6 +40,9 @@ const CLINICA_TABS = [
     { key: 'vademecum', label: 'Vademecum', path: '/clinica/vademecum', icon: FileText },
 ]
 
+const WHATSAPP_TEMPLATE_KEY = 'hesaka-clinica-whatsapp-template'
+const DEFAULT_WHATSAPP_TEMPLATE = 'Hola {paciente}, te escribimos de HESAKA. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.'
+
 function formatError(error, fallback = 'Ocurrio un error.') {
     const detail = error?.response?.data?.detail
     if (typeof detail === 'string' && detail.trim()) return detail
@@ -62,6 +66,177 @@ function fmtDateTime(value) {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return '-'
     return date.toLocaleString('es-PY')
+}
+
+function formatDateInputValue(value) {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+
+function parseDateInputValue(value) {
+    if (!value) return null
+    const [year, month, day] = String(value).split('-').map(Number)
+    if (!year || !month || !day) return null
+    return new Date(year, month - 1, day, 12, 0, 0, 0)
+}
+
+function addMonthsToDateInput(baseValue, months) {
+    const baseDate = parseDateInputValue(baseValue) || new Date()
+    const next = new Date(baseDate)
+    next.setMonth(next.getMonth() + months)
+    return formatDateInputValue(next)
+}
+
+function normalizarTelefonoWhatsapp(value) {
+    let digits = String(value || '').replace(/\D/g, '')
+    if (!digits) return ''
+
+    if (digits.startsWith('00')) {
+        digits = digits.slice(2)
+    }
+
+    if (digits.startsWith('59509')) {
+        digits = `595${digits.slice(4)}`
+    }
+
+    if (digits.startsWith('5950')) {
+        digits = `595${digits.slice(4)}`
+    }
+
+    if (digits.startsWith('09') && digits.length === 10) {
+        return `595${digits.slice(1)}`
+    }
+
+    if (digits.startsWith('9') && digits.length === 9) {
+        return `595${digits}`
+    }
+
+    if (digits.startsWith('5959') && digits.length === 12) {
+        return digits
+    }
+
+    return digits.startsWith('595') ? digits : ''
+}
+
+function getWhatsappTemplate() {
+    if (typeof window === 'undefined') return DEFAULT_WHATSAPP_TEMPLATE
+    return localStorage.getItem(WHATSAPP_TEMPLATE_KEY) || DEFAULT_WHATSAPP_TEMPLATE
+}
+
+function buildWhatsappMessage(item, template = DEFAULT_WHATSAPP_TEMPLATE) {
+    const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
+    const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
+    return (template || DEFAULT_WHATSAPP_TEMPLATE)
+        .replaceAll('{paciente}', item?.paciente_nombre || '')
+        .replaceAll('{ultima_consulta}', ultimaConsulta)
+        .replaceAll('{proxima_consulta}', proximaConsulta)
+        .replaceAll('{empresa}', 'HESAKA')
+}
+
+function buildReminderWhatsappLink(item, message = '') {
+    const telefono = normalizarTelefonoWhatsapp(item?.paciente_telefono)
+    if (!telefono) return ''
+    const finalMessage = message || buildWhatsappMessage(item, getWhatsappTemplate())
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
+}
+
+function buildTemplateFromMessage(message, item) {
+    let template = message || ''
+    const replacements = [
+        [item?.paciente_nombre || '', '{paciente}'],
+        [item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro', '{ultima_consulta}'],
+        [item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha', '{proxima_consulta}'],
+        ['HESAKA', '{empresa}'],
+    ]
+    replacements.forEach(([value, placeholder]) => {
+        if (!value) return
+        template = template.replaceAll(value, placeholder)
+    })
+    return template
+}
+
+function getDailyReminderStorageKey(user) {
+    const userKey = user?.id || user?.email || user?.nombre || 'anon'
+    const dayKey = formatDateInputValue(new Date())
+    return `hesaka-recordatorios-vistos-${userKey}-${dayKey}`
+}
+
+function flattenReminderBuckets(reminderBuckets) {
+    return [
+        ...(reminderBuckets?.hoy || []),
+        ...(reminderBuckets?.ocho_dias || []),
+        ...(reminderBuckets?.quince_dias || []),
+    ]
+}
+
+function ReminderCards({ items, onMarkRemembered, onOpenWhatsappEditor = null, actionPendingId = null, emptyMessage = 'Sin recordatorios pendientes.' }) {
+    if (!items?.length) {
+        return <div style={{ color: 'var(--text-muted)' }}>{emptyMessage}</div>
+    }
+
+    return (
+        <div style={{ display: 'grid', gap: 12 }}>
+            {items.map(item => {
+                const whatsappLink = buildReminderWhatsappLink(item)
+                const isPending = actionPendingId === item.id
+                return (
+                    <div key={`${item.id}-${item.recordatorio_categoria || 'sin-categoria'}`} className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                        <div className="flex-between" style={{ gap: 12, alignItems: 'flex-start' }}>
+                            <div>
+                                <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginTop: 4 }}>
+                                    Ultima consulta: {item.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'Sin registro'}
+                                </div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginTop: 4 }}>
+                                    Proxima consulta: {fmtDateTime(item.fecha_hora)}
+                                </div>
+                                {item.doctor_nombre ? (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginTop: 4 }}>
+                                        Doctor: {item.doctor_nombre}
+                                    </div>
+                                ) : null}
+                            </div>
+                            <span className={`badge ${item.recordatorio_categoria === 'hoy' ? 'badge-red' : item.recordatorio_categoria === '8_dias' ? 'badge-yellow' : 'badge-blue'}`}>
+                                {item.recordatorio_categoria === 'hoy' ? 'Hoy' : item.recordatorio_categoria === '8_dias' ? '8 dias' : '15 dias'}
+                            </span>
+                        </div>
+                        <div className="flex gap-12" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => onMarkRemembered(item)}
+                                disabled={isPending}
+                            >
+                                {isPending ? 'Guardando...' : 'Recordado'}
+                            </button>
+                            <button
+                                type="button"
+                                className={`btn btn-secondary btn-sm ${!whatsappLink ? 'disabled' : ''}`}
+                                onClick={() => {
+                                    if (!whatsappLink) {
+                                        window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
+                                        return
+                                    }
+                                    if (onOpenWhatsappEditor) {
+                                        onOpenWhatsappEditor(item)
+                                        return
+                                    }
+                                    window.open(whatsappLink, '_blank', 'noopener,noreferrer')
+                                }}
+                                style={!whatsappLink ? { pointerEvents: 'auto', opacity: 0.6 } : undefined}
+                            >
+                                <MessageCircle size={14} /> WhatsApp
+                            </button>
+                        </div>
+                    </div>
+                )
+            })}
+        </div>
+    )
 }
 
 function calcAge(fechaNacimiento) {
@@ -300,6 +475,189 @@ function StatCard({ label, value, detail, accent }) {
     )
 }
 
+function TurnoAgendaActions({
+    item,
+    onEditar,
+    onConfirmar,
+    onAtender,
+    onCancelar,
+    onReprogramar,
+    onWhatsapp,
+    onEliminar,
+    disabled,
+}) {
+    const [open, setOpen] = useState(false)
+    const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
+    const buttonRef = useRef(null)
+
+    const whatsappLink = buildReminderWhatsappLink(item)
+
+    const handleAction = callback => {
+        setOpen(false)
+        callback()
+    }
+
+    const toggleMenu = () => {
+        if (open) {
+            setOpen(false)
+            return
+        }
+
+        const rect = buttonRef.current?.getBoundingClientRect()
+        if (!rect) return
+
+        const menuWidth = 220
+        const menuHeight = 280
+        const viewportWidth = window.innerWidth
+        const viewportHeight = window.innerHeight
+
+        let left = rect.right - menuWidth
+        let top = rect.bottom + 6
+
+        if (left < 8) left = 8
+        if (left + menuWidth > viewportWidth - 8) left = viewportWidth - menuWidth - 8
+        if (top + menuHeight > viewportHeight - 8) top = rect.top - menuHeight - 6
+        if (top < 8) top = 8
+
+        setMenuPosition({ top, left })
+        setOpen(true)
+    }
+
+    return (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button ref={buttonRef} type="button" className="btn btn-secondary btn-sm" onClick={toggleMenu} disabled={disabled}>
+                Acciones
+            </button>
+            {open && (
+                <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setOpen(false)} />
+                    <div
+                        style={{
+                            position: 'fixed',
+                            top: menuPosition.top,
+                            left: menuPosition.left,
+                            minWidth: 220,
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 10,
+                            boxShadow: '0 14px 34px rgba(0,0,0,0.45)',
+                            padding: '6px 0',
+                            zIndex: 100,
+                        }}
+                    >
+                        <button className="dropdown-item" onClick={() => handleAction(onEditar)}>
+                            <Pencil size={14} style={{ marginRight: 8 }} /> Editar
+                        </button>
+                        {item.estado !== 'CONFIRMADO' ? (
+                            <button className="dropdown-item" onClick={() => handleAction(onConfirmar)}>
+                                Confirmar
+                            </button>
+                        ) : null}
+                        {item.estado !== 'ATENDIDO' ? (
+                            <button className="dropdown-item" onClick={() => handleAction(onAtender)}>
+                                Atender
+                            </button>
+                        ) : null}
+                        {item.estado !== 'CANCELADO' ? (
+                            <button className="dropdown-item" onClick={() => handleAction(onCancelar)}>
+                                Cancelar
+                            </button>
+                        ) : null}
+                        <button className="dropdown-item" onClick={() => handleAction(onReprogramar)}>
+                            Reprogramar
+                        </button>
+                        <button className="dropdown-item" onClick={() => handleAction(() => {
+                            if (!whatsappLink) {
+                                window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
+                                return
+                            }
+                            onWhatsapp()
+                        })}>
+                            <MessageCircle size={14} style={{ marginRight: 8 }} /> WhatsApp
+                        </button>
+                        <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }} />
+                        <button className="dropdown-item" style={{ color: 'var(--danger)' }} onClick={() => handleAction(onEliminar)}>
+                            <Trash2 size={14} style={{ marginRight: 8 }} /> Eliminar
+                        </button>
+                    </div>
+                </>
+            )}
+        </div>
+    )
+}
+
+function WhatsappMessageModal({ item, onClose }) {
+    const [message, setMessage] = useState(() => buildWhatsappMessage(item, getWhatsappTemplate()))
+
+    const whatsappLink = buildReminderWhatsappLink(item, message)
+
+    const restoreSuggested = () => {
+        setMessage(buildWhatsappMessage(item, DEFAULT_WHATSAPP_TEMPLATE))
+    }
+
+    const saveAsTemplate = () => {
+        const template = buildTemplateFromMessage(message, item)
+        localStorage.setItem(WHATSAPP_TEMPLATE_KEY, template)
+        window.alert('Plantilla de WhatsApp guardada correctamente.')
+    }
+
+    return (
+        <Modal title="Mensaje de WhatsApp" onClose={onClose} maxWidth="760px">
+            <div style={{ display: 'grid', gap: 14 }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.92rem' }}>
+                    Puedes editar el texto antes de abrir WhatsApp. Variables automáticas disponibles en la plantilla:
+                    {' '}
+                    <code>{'{paciente}'}</code>, <code>{'{ultima_consulta}'}</code>, <code>{'{proxima_consulta}'}</code>, <code>{'{empresa}'}</code>.
+                </div>
+                <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                    <div style={{ fontWeight: 700 }}>{item?.paciente_nombre || 'Sin paciente'}</div>
+                    <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        Ultima consulta: {item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'Sin registro'}
+                    </div>
+                    <div style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        Proxima consulta: {fmtDateTime(item?.fecha_hora)}
+                    </div>
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Mensaje</label>
+                    <textarea
+                        className="form-input"
+                        rows={7}
+                        value={message}
+                        onChange={event => setMessage(event.target.value)}
+                        placeholder="Escribe el mensaje que quieres enviar por WhatsApp..."
+                        style={{ resize: 'vertical', minHeight: 160 }}
+                    />
+                </div>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={restoreSuggested}>
+                        Restaurar sugerido
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={saveAsTemplate}>
+                        Guardar como plantilla
+                    </button>
+                </div>
+                <div className="modal-actions">
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                            if (!whatsappLink) {
+                                window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
+                                return
+                            }
+                            window.open(whatsappLink, '_blank', 'noopener,noreferrer')
+                        }}
+                    >
+                        <MessageCircle size={16} /> Abrir WhatsApp
+                    </button>
+                </div>
+            </div>
+        </Modal>
+    )
+}
+
 function EmptyCard({ title, message, action }) {
     return (
         <div className="card">
@@ -368,11 +726,48 @@ function ClinicaShell({ currentKey, onNavigate, children }) {
 }
 
 function DashboardClinicoSection() {
+    const { user } = useAuth()
+    const queryClient = useQueryClient()
     const dashboardQuery = useQuery({
         queryKey: ['clinica', 'dashboard'],
         queryFn: async () => (await api.get('/clinica/dashboard/resumen')).data,
         staleTime: 60 * 1000,
     })
+    const reminderQuery = useQuery({
+        queryKey: ['clinica', 'agenda-recordatorios'],
+        queryFn: async () => (await api.get('/clinica/agenda/recordatorios')).data,
+        staleTime: 60 * 1000,
+    })
+    const upcomingControlsQuery = useQuery({
+        queryKey: ['clinica', 'proximos-controles'],
+        queryFn: async () => (await api.get('/clinica/agenda/proximos-controles?limit=6')).data,
+        staleTime: 60 * 1000,
+    })
+    const [showReminderModal, setShowReminderModal] = useState(false)
+    const [whatsappItem, setWhatsappItem] = useState(null)
+
+    const markReminderMutation = useMutation({
+        mutationFn: async item => {
+            await api.post(`/clinica/agenda/${item.id}/recordatorios/${item.recordatorio_categoria}/recordado`)
+        },
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] }),
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] }),
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
+            ])
+        },
+    })
+
+    const reminderItems = flattenReminderBuckets(reminderQuery.data)
+
+    useEffect(() => {
+        if (!reminderItems.length) return
+        const storageKey = getDailyReminderStorageKey(user)
+        if (localStorage.getItem(storageKey) === '1') return
+        setShowReminderModal(true)
+        localStorage.setItem(storageKey, '1')
+    }, [reminderItems.length, user])
 
     if (dashboardQuery.isLoading) {
         return <EmptyCard title="Cargando dashboard clinico" message="Estamos reuniendo la actividad de pacientes, consultas y alertas." />
@@ -431,6 +826,55 @@ function DashboardClinicoSection() {
                 <div className="card">
                     <SectionHeader title="Alertas clinicas" subtitle="Mensajes utiles para el trabajo diario." />
                     <div style={{ display: 'grid', gap: 12 }}>
+                        <div style={{ border: '1px solid rgba(29,211,199,0.25)', borderRadius: 14, padding: 16, background: 'rgba(29,211,199,0.06)' }}>
+                            <div className="flex-between" style={{ gap: 12, alignItems: 'center' }}>
+                                <div>
+                                    <div style={{ fontWeight: 700, color: CLINICA_PALETTE.accent }}>Proximos controles</div>
+                                    <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                                        Seguimientos clinicos proximos ya generados en la agenda.
+                                    </div>
+                                </div>
+                            </div>
+                            <div style={{ marginTop: 14, display: 'grid', gap: 10 }}>
+                                {upcomingControlsQuery.isLoading ? (
+                                    <div style={{ color: 'var(--text-muted)' }}>Cargando proximos controles...</div>
+                                ) : upcomingControlsQuery.data?.length ? upcomingControlsQuery.data.map(item => (
+                                    <div key={item.id} className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                                        <div className="flex-between" style={{ gap: 12, alignItems: 'flex-start' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
+                                                <div style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                                                    {fmtDateTime(item.fecha_hora)} {typeof item.dias_restantes === 'number' ? `- faltan ${item.dias_restantes} dia(s)` : ''}
+                                                </div>
+                                                <div style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                                                    {item.doctor_nombre || 'Sin doctor'} {item.lugar_nombre ? `| ${item.lugar_nombre}` : ''}
+                                                </div>
+                                            </div>
+                                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setWhatsappItem(item)}>
+                                                <MessageCircle size={14} /> WhatsApp
+                                            </button>
+                                        </div>
+                                    </div>
+                                )) : (
+                                    <div style={{ color: 'var(--text-muted)' }}>No hay proximos controles pendientes en agenda.</div>
+                                )}
+                            </div>
+                        </div>
+                        {reminderItems.length ? (
+                            <div style={{ border: '1px solid rgba(56,189,248,0.35)', borderRadius: 14, padding: 16, background: 'rgba(56,189,248,0.08)' }}>
+                                <div className="flex-between" style={{ gap: 12, alignItems: 'center' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 700, color: '#38bdf8' }}>Recordatorios clinicos pendientes</div>
+                                        <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                                            Tienes {reminderItems.length} recordatorio(s) pendientes entre hoy, 8 dias y 15 dias.
+                                        </div>
+                                    </div>
+                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowReminderModal(true)}>
+                                        Ver recordatorios
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
                         {data.alertas?.length ? data.alertas.map((alerta, idx) => (
                             <div key={`${alerta.tipo}-${idx}`} style={{ border: `1px solid ${alerta.color}55`, borderRadius: 14, padding: 16, background: `${alerta.color}12` }}>
                                 <div style={{ fontWeight: 700, color: alerta.color }}>{alerta.titulo}</div>
@@ -440,6 +884,17 @@ function DashboardClinicoSection() {
                     </div>
                 </div>
             </div>
+            {showReminderModal && reminderItems.length ? (
+                <Modal title="Recordatorios clinicos pendientes" onClose={() => setShowReminderModal(false)} maxWidth="920px">
+                    <ReminderCards
+                        items={reminderItems}
+                        onMarkRemembered={item => markReminderMutation.mutate(item)}
+                        onOpenWhatsappEditor={item => setWhatsappItem(item)}
+                        actionPendingId={markReminderMutation.variables?.id}
+                    />
+                </Modal>
+            ) : null}
+            {whatsappItem ? <WhatsappMessageModal item={whatsappItem} onClose={() => setWhatsappItem(null)} /> : null}
         </>
     )
 }
@@ -595,25 +1050,34 @@ function AgendaClinicaSection() {
     }, [today])
     const [buscar, setBuscar] = useState('')
     const [estado, setEstado] = useState('')
+    const [recordatorioFiltro, setRecordatorioFiltro] = useState('')
     const [fechaDesde, setFechaDesde] = useState(today.toISOString().slice(0, 10))
     const [fechaHasta, setFechaHasta] = useState(plusDays)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
     const [modalTurno, setModalTurno] = useState(null)
     const [pacienteSearch, setPacienteSearch] = useState('')
+    const [whatsappItem, setWhatsappItem] = useState(null)
 
     const agendaQuery = useQuery({
-        queryKey: ['clinica', 'agenda', { buscar, estado, fechaDesde, fechaHasta, page, pageSize }],
+        queryKey: ['clinica', 'agenda', { buscar, estado, recordatorioFiltro, fechaDesde, fechaHasta, page, pageSize }],
         queryFn: async () => (
             await api.get(`/clinica/agenda?${queryString({
                 buscar,
                 estado,
+                recordatorio: recordatorioFiltro || null,
                 fecha_desde: fechaDesde,
                 fecha_hasta: fechaHasta,
                 page,
                 page_size: pageSize,
             })}`)
         ).data,
+    })
+
+    const reminderQuery = useQuery({
+        queryKey: ['clinica', 'agenda-recordatorios'],
+        queryFn: async () => (await api.get('/clinica/agenda/recordatorios')).data,
+        staleTime: 60 * 1000,
     })
 
     const pacientesQuery = useQuery({
@@ -646,6 +1110,7 @@ function AgendaClinicaSection() {
             setModalTurno(null)
             setPacienteSearch('')
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
         },
     })
@@ -654,6 +1119,7 @@ function AgendaClinicaSection() {
         mutationFn: async turnoId => { await api.delete(`/clinica/agenda/${turnoId}`) },
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
         },
     })
@@ -673,6 +1139,7 @@ function AgendaClinicaSection() {
         ).data,
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
         },
     })
@@ -709,6 +1176,7 @@ function AgendaClinicaSection() {
     }
 
     const items = agendaQuery.data?.items || []
+    const reminderBuckets = reminderQuery.data || { hoy: [], ocho_dias: [], quince_dias: [] }
     const aplicarFiltroRapido = tipo => {
         const base = new Date()
         const from = new Date(base)
@@ -721,6 +1189,14 @@ function AgendaClinicaSection() {
         }
         setFechaDesde(from.toISOString().slice(0, 10))
         setFechaHasta(to.toISOString().slice(0, 10))
+        setRecordatorioFiltro('')
+        setPage(1)
+    }
+
+    const aplicarFiltroRecordatorio = tipo => {
+        setRecordatorioFiltro(tipo)
+        setFechaDesde('')
+        setFechaHasta('')
         setPage(1)
     }
 
@@ -732,6 +1208,40 @@ function AgendaClinicaSection() {
                     subtitle="Base operativa de turnos por paciente, doctor, lugar, fecha y estado."
                     actions={hasActionAccess(user, 'clinica.consultas_crear', 'clinica') ? <button className="btn btn-primary" onClick={() => setModalTurno({ mode: 'create', data: null })}><Plus size={16} /> Nuevo turno</button> : null}
                 />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, marginBottom: 18 }}>
+                    {[
+                        { key: '15', title: 'Recordar en 15 dias', items: reminderBuckets.quince_dias || [], color: '#a78bfa' },
+                        { key: '8', title: 'Recordar en 8 dias', items: reminderBuckets.ocho_dias || [], color: '#f59e0b' },
+                        { key: 'hoy', title: 'Recordar hoy', items: reminderBuckets.hoy || [], color: '#38bdf8' },
+                    ].map(bucket => (
+                        <div key={bucket.key} className="card" style={{ padding: 14, background: `${bucket.color}12`, border: `1px solid ${bucket.color}44` }}>
+                            <div className="flex-between" style={{ gap: 12, alignItems: 'center' }}>
+                                <div>
+                                    <div style={{ fontWeight: 700, color: bucket.color }}>{bucket.title}</div>
+                                    <div style={{ marginTop: 6, fontSize: '1.2rem', fontWeight: 800 }}>{bucket.items.length}</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => aplicarFiltroRecordatorio(bucket.key)}
+                                >
+                                    Ver lista
+                                </button>
+                            </div>
+                            <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                                {reminderQuery.isLoading ? (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Cargando...</div>
+                                ) : bucket.items.length ? bucket.items.slice(0, 3).map(item => (
+                                    <div key={item.id} style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                                        {item.paciente_nombre} - {fmtDate(item.fecha_hora)}
+                                    </div>
+                                )) : (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Sin recordatorios en esta ventana.</div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
                 <div className="filters-bar" style={{ marginBottom: 18, alignItems: 'end' }}>
                     <div className="form-group" style={{ flex: 1, minWidth: 240 }}>
                         <label className="form-label">Buscar</label>
@@ -762,7 +1272,29 @@ function AgendaClinicaSection() {
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('hoy')}>Hoy</button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('manana')}>Manana</button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('semana')}>Prox. 7 dias</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('15')}>Recordatorios 15 dias</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('8')}>Recordatorios 8 dias</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('hoy')}>Recordatorios hoy</button>
+                    {recordatorioFiltro ? (
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                                setRecordatorioFiltro('')
+                                setFechaDesde(today.toISOString().slice(0, 10))
+                                setFechaHasta(plusDays)
+                                setPage(1)
+                            }}
+                        >
+                            Limpiar recordatorio
+                        </button>
+                    ) : null}
                 </div>
+                {recordatorioFiltro ? (
+                    <div className="alert alert-info" style={{ marginBottom: 18 }}>
+                        Mostrando bandeja interna de recordatorios para {recordatorioFiltro === '15' ? '15 dias' : recordatorioFiltro === '8' ? '8 dias' : 'hoy'}.
+                    </div>
+                ) : null}
 
                 {agendaQuery.isLoading ? (
                     <div className="empty-state" style={{ padding: '60px 20px' }}>Cargando agenda clinica...</div>
@@ -780,7 +1312,7 @@ function AgendaClinicaSection() {
                                         <th>Lugar</th>
                                         <th>Motivo</th>
                                         <th>Estado</th>
-                                        <th style={{ width: 260 }}>Acciones</th>
+                                        <th style={{ width: 150 }}>Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -790,38 +1322,30 @@ function AgendaClinicaSection() {
                                             <td style={{ fontWeight: 700 }}>{item.paciente_nombre}</td>
                                             <td>{item.doctor_nombre || '-'}</td>
                                             <td>{item.lugar_nombre || '-'}</td>
-                                            <td>{item.motivo || '-'}</td>
+                                            <td>
+                                                <div>{item.motivo || '-'}</div>
+                                                {item.es_control ? (
+                                                    <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                        Seguimiento {typeof item.dias_restantes === 'number' ? `- faltan ${item.dias_restantes} dia(s)` : ''}
+                                                    </div>
+                                                ) : null}
+                                            </td>
                                             <td><span className={`badge ${item.estado === 'ATENDIDO' ? 'badge-green' : item.estado === 'CANCELADO' ? 'badge-gray' : 'badge-blue'}`}>{item.estado}</span></td>
                                             <td>
-                                                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
-                                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setModalTurno({ mode: 'edit', data: item })}>
-                                                        <Pencil size={14} /> Editar
-                                                    </button>
-                                                    {item.estado !== 'CONFIRMADO' && (
-                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CONFIRMADO' })} disabled={cambiarEstadoMutation.isPending}>
-                                                            Confirmar
-                                                        </button>
-                                                    )}
-                                                    {item.estado !== 'ATENDIDO' && (
-                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => atenderTurno(item)} disabled={cambiarEstadoMutation.isPending}>
-                                                            Atender
-                                                        </button>
-                                                    )}
-                                                    {item.estado !== 'CANCELADO' && (
-                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CANCELADO' })} disabled={cambiarEstadoMutation.isPending}>
-                                                            Cancelar
-                                                        </button>
-                                                    )}
-                                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setModalTurno({ mode: 'edit', data: item })}>
-                                                        Reprogramar
-                                                    </button>
-                                                    <button type="button" className="btn btn-danger btn-sm" onClick={() => {
+                                                <TurnoAgendaActions
+                                                    item={item}
+                                                    disabled={cambiarEstadoMutation.isPending || deleteTurnoMutation.isPending}
+                                                    onEditar={() => setModalTurno({ mode: 'edit', data: item })}
+                                                    onConfirmar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CONFIRMADO' })}
+                                                    onAtender={() => atenderTurno(item)}
+                                                    onCancelar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CANCELADO' })}
+                                                    onReprogramar={() => setModalTurno({ mode: 'edit', data: item })}
+                                                    onWhatsapp={() => setWhatsappItem(item)}
+                                                    onEliminar={() => {
                                                         if (!window.confirm('Se eliminara este turno. Desea continuar?')) return
                                                         deleteTurnoMutation.mutate(item.id)
-                                                    }} disabled={deleteTurnoMutation.isPending}>
-                                                        <Trash2 size={14} /> Eliminar
-                                                    </button>
-                                                </div>
+                                                    }}
+                                                />
                                             </td>
                                         </tr>
                                     )) : <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No hay turnos para los filtros seleccionados.</td></tr>}
@@ -855,6 +1379,7 @@ function AgendaClinicaSection() {
                     />
                 </Modal>
             )}
+            {whatsappItem ? <WhatsappMessageModal item={whatsappItem} onClose={() => setWhatsappItem(null)} /> : null}
         </>
     )
 }
@@ -957,8 +1482,11 @@ function PacienteForm({ initialData, referidorOptions, onSearchReferidor, referi
 }
 
 function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares, onSave, onCancel, saving, savingText = 'Guardando...', readOnly = false, saved = false }) {
-    const buildFormState = useMemo(() => ({
-        fecha: initialData?.fecha ? String(initialData.fecha).slice(0, 16) : new Date().toISOString().slice(0, 16),
+    const buildFormState = useMemo(() => {
+        const fechaBase = initialData?.fecha ? String(initialData.fecha).slice(0, 16) : new Date().toISOString().slice(0, 16)
+        const fechaBaseControl = fechaBase ? fechaBase.slice(0, 10) : formatDateInputValue(new Date())
+        return ({
+        fecha: fechaBase,
         doctor_id: initialData?.doctor_id || '',
         lugar_atencion_id: initialData?.lugar_atencion_id || '',
         motivo: initialData?.motivo || '',
@@ -1027,8 +1555,11 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
         diseno: initialData?.diseno || '',
         resumen_resultados: initialData?.resumen_resultados || '',
         marca_recomendada: initialData?.marca_recomendada || '',
-        fecha_control: initialData?.fecha_control ? String(initialData.fecha_control).slice(0, 10) : '',
-    }), [initialData])
+        fecha_control: initialData?.fecha_control
+            ? String(initialData.fecha_control).slice(0, 10)
+            : (initialData?.id ? '' : addMonthsToDateInput(fechaBaseControl, 12)),
+    })
+    }, [initialData])
     const [form, setForm] = useState(buildFormState)
     const [recommendation, setRecommendation] = useState(() => parseRecommendationState(initialData))
     const [patologiaSearch, setPatologiaSearch] = useState('')
@@ -1204,6 +1735,27 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                 <div className="form-group">
                     <label className="form-label">Proximo control</label>
                     <input className="form-input" type="date" value={form.fecha_control} onChange={event => setForm(prev => ({ ...prev, fecha_control: event.target.value }))} disabled={readOnly} />
+                    <div className="flex gap-8" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+                        {[
+                            { label: '1 mes', months: 1 },
+                            { label: '3 meses', months: 3 },
+                            { label: '6 meses', months: 6 },
+                            { label: '1 ano', months: 12 },
+                        ].map(option => (
+                            <button
+                                key={option.months}
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setForm(prev => ({ ...prev, fecha_control: addMonthsToDateInput((prev.fecha || '').slice(0, 10), option.months) }))}
+                                disabled={readOnly}
+                            >
+                                +{option.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                        Sugerencia por defecto: 1 ano. Puedes usar los accesos rapidos o editar la fecha manualmente.
+                    </div>
                 </div>
             </div>
 
@@ -2796,6 +3348,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                     <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>{fmtDateTime(ultimaOftalmologia?.fecha)}</div>
                                     <div style={{ marginTop: 8 }}><strong>Diagnostico:</strong> {ultimaOftalmologia?.diagnostico || '-'}</div>
                                     <div style={{ marginTop: 6 }}><strong>Plan:</strong> {ultimaOftalmologia?.plan_tratamiento || '-'}</div>
+                                    <div style={{ marginTop: 6 }}><strong>Proximo control:</strong> {fmtDate(ultimaOftalmologia?.fecha_control)}</div>
                                 </div>
                                 <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
                                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Ultima contactologia</div>
@@ -3160,6 +3713,7 @@ function PacientesSection() {
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] })
             if (sourceAgendaTurno && result?.id) {
                 navigate('/clinica/consulta', {
                     state: {
@@ -4035,6 +4589,7 @@ function NuevaConsultaSection() {
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'paciente-historial', selectedPatient?.id] }),
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'anamnesis-ultima', selectedPatient?.id] }),
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] }),
+                queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] }),
             ])
             if (data?.id && selectedPatient?.id) {
                 setPostSaveActions({

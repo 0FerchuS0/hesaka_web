@@ -77,6 +77,31 @@ function formatDateInputValue(value) {
     return `${year}-${month}-${day}`
 }
 
+function formatDateTimeLocalValue(value) {
+    if (!value) return ''
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+function serializeDateTimeLocalValue(value, originalValue = null, originalLocalValue = '') {
+    if (!value) return null
+    if (originalValue && originalLocalValue && value === originalLocalValue) {
+        return originalValue
+    }
+    const [datePart, timePart = '00:00'] = String(value).split('T')
+    const [year, month, day] = datePart.split('-').map(Number)
+    const [hours, minutes] = timePart.split(':').map(Number)
+    if (!year || !month || !day) return originalValue || null
+    const date = new Date(year, month - 1, day, hours || 0, minutes || 0, 0, 0)
+    return Number.isNaN(date.getTime()) ? (originalValue || null) : date.toISOString()
+}
+
 function parseDateInputValue(value) {
     if (!value) return null
     const [year, month, day] = String(value).split('-').map(Number)
@@ -127,30 +152,38 @@ function getWhatsappTemplate() {
     return localStorage.getItem(WHATSAPP_TEMPLATE_KEY) || DEFAULT_WHATSAPP_TEMPLATE
 }
 
-function buildWhatsappMessage(item, template = DEFAULT_WHATSAPP_TEMPLATE) {
-    const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
-    const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
-    return (template || DEFAULT_WHATSAPP_TEMPLATE)
-        .replaceAll('{paciente}', item?.paciente_nombre || '')
-        .replaceAll('{ultima_consulta}', ultimaConsulta)
-        .replaceAll('{proxima_consulta}', proximaConsulta)
-        .replaceAll('{empresa}', 'HESAKA')
+function applyWhatsappTemplate(template, replacements) {
+    return Object.entries(replacements).reduce(
+        (result, [placeholder, value]) => result.replaceAll(placeholder, value ?? ''),
+        template || '',
+    )
 }
 
-function buildReminderWhatsappLink(item, message = '') {
+function buildWhatsappMessage(item, template = DEFAULT_WHATSAPP_TEMPLATE, empresa = 'HESAKA') {
+    const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
+    const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
+    return applyWhatsappTemplate(template || DEFAULT_WHATSAPP_TEMPLATE, {
+        '{paciente}': item?.paciente_nombre || '',
+        '{ultima_consulta}': ultimaConsulta,
+        '{proxima_consulta}': proximaConsulta,
+        '{empresa}': empresa,
+    })
+}
+
+function buildReminderWhatsappLink(item, message = '', empresa = 'HESAKA') {
     const telefono = normalizarTelefonoWhatsapp(item?.paciente_telefono)
     if (!telefono) return ''
-    const finalMessage = message || buildWhatsappMessage(item, getWhatsappTemplate())
+    const finalMessage = buildWhatsappMessage(item, message || getWhatsappTemplate(), empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
 }
 
-function buildTemplateFromMessage(message, item) {
+function buildTemplateFromMessage(message, item, empresa = 'HESAKA') {
     let template = message || ''
     const replacements = [
         [item?.paciente_nombre || '', '{paciente}'],
         [item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro', '{ultima_consulta}'],
         [item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha', '{proxima_consulta}'],
-        ['HESAKA', '{empresa}'],
+        [empresa, '{empresa}'],
     ]
     replacements.forEach(([value, placeholder]) => {
         if (!value) return
@@ -275,7 +308,120 @@ function buildAnamnesisSummary(anamnesis) {
     if (symptoms.length) parts.push(`SINTOMAS: ${symptoms.join(', ')}`)
     if (anamnesis.antecedentes_familiares) parts.push(`ANTECEDENTES: ${anamnesis.antecedentes_familiares}`)
     if (anamnesis.medicamentos) parts.push(`MEDICAMENTOS: ${anamnesis.medicamentos}`)
+    const graduacionAnteriorOd = [
+        anamnesis.graduacion_anterior_od_esfera,
+        anamnesis.graduacion_anterior_od_cilindro,
+        anamnesis.graduacion_anterior_od_eje,
+        anamnesis.graduacion_anterior_od_adicion,
+    ].filter(Boolean).join(' / ')
+    const graduacionAnteriorOi = [
+        anamnesis.graduacion_anterior_oi_esfera,
+        anamnesis.graduacion_anterior_oi_cilindro,
+        anamnesis.graduacion_anterior_oi_eje,
+        anamnesis.graduacion_anterior_oi_adicion,
+    ].filter(Boolean).join(' / ')
+    if (graduacionAnteriorOd || graduacionAnteriorOi) {
+        parts.push(`GRAD. ANT.: OD ${graduacionAnteriorOd || '-'} | OI ${graduacionAnteriorOi || '-'}`)
+    }
     return parts.join(' | ')
+}
+
+function createEmptyAnamnesisDraft() {
+    return {
+        motivo_principal: '',
+        tiempo_molestias: '',
+        expectativa: '',
+        horas_pantalla: '',
+        conduce: '',
+        actividad_laboral: '',
+        hobbies: '',
+        cefalea: false,
+        ardor: false,
+        ojo_seco: false,
+        lagrimeo: false,
+        fotofobia: false,
+        vision_doble: false,
+        destellos: false,
+        manchas: false,
+        dificultad_cerca: false,
+        diabetes: false,
+        diabetes_controlada: true,
+        hipertension: false,
+        alergias: false,
+        migranas: false,
+        cirugias_previas: false,
+        trauma_ocular: false,
+        medicamentos: '',
+        antecedentes_familiares: '',
+        usa_anteojos: false,
+        proposito_anteojos: '',
+        graduacion_anterior_od_esfera: '',
+        graduacion_anterior_od_cilindro: '',
+        graduacion_anterior_od_eje: '',
+        graduacion_anterior_od_adicion: '',
+        graduacion_anterior_oi_esfera: '',
+        graduacion_anterior_oi_cilindro: '',
+        graduacion_anterior_oi_eje: '',
+        graduacion_anterior_oi_adicion: '',
+        usa_lentes_contacto: false,
+        tipo_lentes_contacto: '',
+        horas_uso_lc: '',
+        molestias_lc: false,
+    }
+}
+
+const CLINICA_SECTION_TONES = {
+    contexto: {
+        background: 'linear-gradient(180deg, rgba(14, 50, 77, 0.26), rgba(10, 18, 28, 0.92))',
+        border: '1px solid rgba(56, 189, 248, 0.2)',
+        glow: 'rgba(56, 189, 248, 0.18)',
+    },
+    referencia: {
+        background: 'linear-gradient(180deg, rgba(49, 46, 129, 0.22), rgba(17, 24, 39, 0.94))',
+        border: '1px solid rgba(129, 140, 248, 0.2)',
+        glow: 'rgba(129, 140, 248, 0.14)',
+    },
+    examen: {
+        background: 'linear-gradient(180deg, rgba(91, 33, 182, 0.16), rgba(17, 24, 39, 0.94))',
+        border: '1px solid rgba(168, 85, 247, 0.18)',
+        glow: 'rgba(168, 85, 247, 0.14)',
+    },
+    impresion: {
+        background: 'linear-gradient(180deg, rgba(6, 95, 70, 0.18), rgba(17, 24, 39, 0.94))',
+        border: '1px solid rgba(45, 212, 191, 0.16)',
+        glow: 'rgba(45, 212, 191, 0.12)',
+    },
+    documentos: {
+        background: 'linear-gradient(180deg, rgba(133, 77, 14, 0.18), rgba(17, 24, 39, 0.94))',
+        border: '1px solid rgba(251, 191, 36, 0.18)',
+        glow: 'rgba(251, 191, 36, 0.12)',
+    },
+}
+
+function ClinicaSection({ title, subtitle = '', tone = 'contexto', children, style = {} }) {
+    const palette = CLINICA_SECTION_TONES[tone] || CLINICA_SECTION_TONES.contexto
+    return (
+        <div
+            className="card"
+            style={{
+                padding: 18,
+                background: palette.background,
+                border: palette.border,
+                boxShadow: `0 16px 36px ${palette.glow}`,
+                ...style,
+            }}
+        >
+            <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: '1.02rem', fontWeight: 800, color: 'var(--text-primary)' }}>{title}</div>
+                {subtitle ? (
+                    <div style={{ color: 'var(--text-muted)', marginTop: 6, fontSize: '0.9rem', lineHeight: 1.45 }}>
+                        {subtitle}
+                    </div>
+                ) : null}
+            </div>
+            {children}
+        </div>
+    )
 }
 
 const DIAGNOSTICOS_FRECUENTES = [
@@ -587,16 +733,26 @@ function TurnoAgendaActions({
 }
 
 function WhatsappMessageModal({ item, onClose }) {
-    const [message, setMessage] = useState(() => buildWhatsappMessage(item, getWhatsappTemplate()))
+    const { data: configPublica } = useQuery({
+        queryKey: ['configuracion-general-publica'],
+        queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
+        retry: false,
+    })
+    const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
+    const [message, setMessage] = useState(() => buildWhatsappMessage(item, getWhatsappTemplate(), empresaNombre))
 
-    const whatsappLink = buildReminderWhatsappLink(item, message)
+    const whatsappLink = buildReminderWhatsappLink(item, message, empresaNombre)
+
+    useEffect(() => {
+        setMessage(buildWhatsappMessage(item, getWhatsappTemplate(), empresaNombre))
+    }, [item, empresaNombre])
 
     const restoreSuggested = () => {
-        setMessage(buildWhatsappMessage(item, DEFAULT_WHATSAPP_TEMPLATE))
+        setMessage(buildWhatsappMessage(item, DEFAULT_WHATSAPP_TEMPLATE, empresaNombre))
     }
 
     const saveAsTemplate = () => {
-        const template = buildTemplateFromMessage(message, item)
+        const template = buildTemplateFromMessage(message, item, empresaNombre)
         localStorage.setItem(WHATSAPP_TEMPLATE_KEY, template)
         window.alert('Plantilla de WhatsApp guardada correctamente.')
     }
@@ -1483,7 +1639,7 @@ function PacienteForm({ initialData, referidorOptions, onSearchReferidor, referi
 
 function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares, onSave, onCancel, saving, savingText = 'Guardando...', readOnly = false, saved = false }) {
     const buildFormState = useMemo(() => {
-        const fechaBase = initialData?.fecha ? String(initialData.fecha).slice(0, 16) : new Date().toISOString().slice(0, 16)
+        const fechaBase = initialData?.fecha ? formatDateTimeLocalValue(initialData.fecha) : formatDateTimeLocalValue(new Date())
         const fechaBaseControl = fechaBase ? fechaBase.slice(0, 10) : formatDateInputValue(new Date())
         return ({
         fecha: fechaBase,
@@ -1564,6 +1720,8 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
     const [recommendation, setRecommendation] = useState(() => parseRecommendationState(initialData))
     const [patologiaSearch, setPatologiaSearch] = useState('')
     const [patologiaSeleccionada, setPatologiaSeleccionada] = useState(null)
+    const initialFechaRaw = initialData?.fecha || null
+    const initialFechaLocal = formatDateTimeLocalValue(initialFechaRaw)
 
     useEffect(() => {
         setForm(buildFormState)
@@ -1616,6 +1774,12 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
         })
     }
 
+    const compactTextareaStyle = {
+        minHeight: 76,
+        resize: 'vertical',
+        width: '100%',
+    }
+
     const submit = event => {
         event.preventDefault()
         if (readOnly) return
@@ -1624,7 +1788,7 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
             paciente_id: pacienteId,
             doctor_id: form.doctor_id === '' ? null : Number(form.doctor_id),
             lugar_atencion_id: form.lugar_atencion_id === '' ? null : Number(form.lugar_atencion_id),
-            fecha: form.fecha ? new Date(form.fecha).toISOString() : null,
+            fecha: serializeDateTimeLocalValue(form.fecha, initialFechaRaw, initialFechaLocal),
             motivo: type === 'OFTALMOLOGIA' ? (form.motivo || null) : undefined,
             diagnostico: form.diagnostico || null,
             plan_tratamiento: form.plan_tratamiento || null,
@@ -1713,66 +1877,78 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
 
     return (
         <form onSubmit={submit}>
-            <div className="grid-2">
-                <div className="form-group">
-                    <label className="form-label">Fecha y hora</label>
-                    <input className="form-input" type="datetime-local" value={form.fecha} onChange={event => setForm(prev => ({ ...prev, fecha: event.target.value }))} disabled={readOnly} />
-                </div>
-                <div className="form-group">
-                    <label className="form-label">Doctor</label>
-                    <select className="form-select" value={form.doctor_id} onChange={event => setForm(prev => ({ ...prev, doctor_id: event.target.value }))} disabled={readOnly}>
-                        <option value="">Sin doctor</option>
-                        {doctores.map(item => <option key={item.id} value={item.id}>{item.nombre_completo}</option>)}
-                    </select>
-                </div>
-                <div className="form-group">
-                    <label className="form-label">Lugar de atencion</label>
-                    <select className="form-select" value={form.lugar_atencion_id} onChange={event => setForm(prev => ({ ...prev, lugar_atencion_id: event.target.value }))} disabled={readOnly}>
-                        <option value="">Sin lugar</option>
-                        {lugares.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
-                    </select>
-                </div>
-                <div className="form-group">
-                    <label className="form-label">Proximo control</label>
-                    <input className="form-input" type="date" value={form.fecha_control} onChange={event => setForm(prev => ({ ...prev, fecha_control: event.target.value }))} disabled={readOnly} />
-                    <div className="flex gap-8" style={{ flexWrap: 'wrap', marginTop: 8 }}>
-                        {[
-                            { label: '1 mes', months: 1 },
-                            { label: '3 meses', months: 3 },
-                            { label: '6 meses', months: 6 },
-                            { label: '1 ano', months: 12 },
-                        ].map(option => (
-                            <button
-                                key={option.months}
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => setForm(prev => ({ ...prev, fecha_control: addMonthsToDateInput((prev.fecha || '').slice(0, 10), option.months) }))}
-                                disabled={readOnly}
-                            >
-                                +{option.label}
-                            </button>
-                        ))}
+            <div style={{ display: 'grid', gap: 18 }}>
+                <ClinicaSection
+                    title="A. Contexto de la consulta"
+                    subtitle="Datos base de la atencion. Aqui quedan fecha, profesional, lugar y seguimiento."
+                    tone="contexto"
+                >
+                    <div className="grid-2" style={{ marginBottom: 0 }}>
+                        <div className="form-group">
+                            <label className="form-label">Fecha y hora</label>
+                            <input className="form-input" type="datetime-local" value={form.fecha} onChange={event => setForm(prev => ({ ...prev, fecha: event.target.value }))} disabled={readOnly} />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Doctor</label>
+                            <select className="form-select" value={form.doctor_id} onChange={event => setForm(prev => ({ ...prev, doctor_id: event.target.value }))} disabled={readOnly}>
+                                <option value="">Sin doctor</option>
+                                {doctores.map(item => <option key={item.id} value={item.id}>{item.nombre_completo}</option>)}
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Lugar de atencion</label>
+                            <select className="form-select" value={form.lugar_atencion_id} onChange={event => setForm(prev => ({ ...prev, lugar_atencion_id: event.target.value }))} disabled={readOnly}>
+                                <option value="">Sin lugar</option>
+                                {lugares.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Proximo control</label>
+                            <input className="form-input" type="date" value={form.fecha_control} onChange={event => setForm(prev => ({ ...prev, fecha_control: event.target.value }))} disabled={readOnly} />
+                            <div className="flex gap-8" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+                                {[
+                                    { label: '1 mes', months: 1 },
+                                    { label: '3 meses', months: 3 },
+                                    { label: '6 meses', months: 6 },
+                                    { label: '1 ano', months: 12 },
+                                ].map(option => (
+                                    <button
+                                        key={option.months}
+                                        type="button"
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => setForm(prev => ({ ...prev, fecha_control: addMonthsToDateInput((prev.fecha || '').slice(0, 10), option.months) }))}
+                                        disabled={readOnly}
+                                    >
+                                        +{option.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                                Sugerencia por defecto: 1 ano. Puedes usar los accesos rapidos o editar la fecha manualmente.
+                            </div>
+                        </div>
                     </div>
-                    <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.86rem' }}>
-                        Sugerencia por defecto: 1 ano. Puedes usar los accesos rapidos o editar la fecha manualmente.
-                    </div>
-                </div>
-            </div>
+                </ClinicaSection>
 
             {type === 'OFTALMOLOGIA' ? (
                 <>
-                    <div className="form-group">
-                        <label className="form-label">Motivo</label>
-                        <input className="form-input" value={form.motivo} onChange={event => setForm(prev => ({ ...prev, motivo: event.target.value }))} disabled={readOnly} />
-                        <QuickTemplateButtons
-                            label="Motivos rapidos"
-                            options={MOTIVOS_OFTALMOLOGIA_RAPIDOS}
-                            onApply={snippet => setForm(prev => ({ ...prev, motivo: appendTemplateText(prev.motivo, snippet) }))}
-                            disabled={readOnly}
-                        />
-                    </div>
-                    <div className="card" style={{ padding: 16, marginBottom: 16, background: 'rgba(255,255,255,0.02)' }}>
-                        <div style={{ fontWeight: 700, marginBottom: 12 }}>Importar patologia</div>
+                    <ClinicaSection
+                        title="B. Motivo y referencia"
+                        subtitle="Primero se registra el motivo principal. Si quieres, puedes usar patologias como ayuda para completar la consulta."
+                        tone="referencia"
+                    >
+                        <div className="form-group">
+                            <label className="form-label">Motivo</label>
+                            <input className="form-input" value={form.motivo} onChange={event => setForm(prev => ({ ...prev, motivo: event.target.value }))} disabled={readOnly} />
+                            <QuickTemplateButtons
+                                label="Motivos rapidos"
+                                options={MOTIVOS_OFTALMOLOGIA_RAPIDOS}
+                                onApply={snippet => setForm(prev => ({ ...prev, motivo: appendTemplateText(prev.motivo, snippet) }))}
+                                disabled={readOnly}
+                            />
+                        </div>
+                        <div className="card" style={{ padding: 16, marginBottom: 0, background: 'rgba(255,255,255,0.03)' }}>
+                            <div style={{ fontWeight: 700, marginBottom: 12 }}>Importar patologia</div>
                         <div className="grid-2" style={{ alignItems: 'end' }}>
                             <div className="form-group">
                                 <label className="form-label">Patologia</label>
@@ -1810,8 +1986,14 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                                 ) : null}
                             </div>
                         )}
-                    </div>
-                    <div className="card" style={{ padding: 16 }}>
+                        </div>
+                    </ClinicaSection>
+                    <ClinicaSection
+                        title="C. Examen y refraccion"
+                        subtitle="Aqui se concentran los estudios, la agudeza visual y la graduacion optica en un solo bloque."
+                        tone="examen"
+                    >
+                    <div className="card" style={{ padding: 16, background: 'rgba(255,255,255,0.03)' }}>
                         <div style={{ fontWeight: 700, marginBottom: 12 }}>Correccion refractiva</div>
                         <div className="flex gap-12" style={{ flexWrap: 'wrap', marginBottom: 14 }}>
                             {[
@@ -2048,7 +2230,7 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                         )}
                         <div className="form-group" style={{ marginTop: 16 }}>
                             <label className="form-label">Estudios solicitados / indicaciones complementarias</label>
-                            <textarea className="form-input" value={form.estudios_solicitados} onChange={event => setForm(prev => ({ ...prev, estudios_solicitados: event.target.value }))} disabled={readOnly} style={{ minHeight: 88, resize: 'none' }} />
+                            <textarea className="form-input" value={form.estudios_solicitados} onChange={event => setForm(prev => ({ ...prev, estudios_solicitados: event.target.value }))} disabled={readOnly} style={compactTextareaStyle} />
                             <QuickTemplateButtons
                                 label="Estudios rapidos"
                                 options={ESTUDIOS_OFTALMOLOGIA_RAPIDOS}
@@ -2057,9 +2239,14 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                             />
                         </div>
                     </div>
+                    </ClinicaSection>
                 </>
             ) : (
-                <>
+                <ClinicaSection
+                    title="C. Evaluacion de contactologia"
+                    subtitle="Resumen corto y ordenado para no perder tiempo en datos secundarios."
+                    tone="examen"
+                >
                     <div className="grid-2">
                         <div className="form-group">
                             <label className="form-label">Diseno</label>
@@ -2072,7 +2259,7 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                     </div>
                     <div className="form-group">
                         <label className="form-label">Resumen resultados</label>
-                        <textarea className="form-input" value={form.resumen_resultados} onChange={event => setForm(prev => ({ ...prev, resumen_resultados: event.target.value }))} disabled={readOnly} style={{ minHeight: 88, resize: 'none' }} />
+                        <textarea className="form-input" value={form.resumen_resultados} onChange={event => setForm(prev => ({ ...prev, resumen_resultados: event.target.value }))} disabled={readOnly} style={compactTextareaStyle} />
                         <QuickTemplateButtons
                             label="Resumenes rapidos"
                             options={RESUMENES_CONTACTOLOGIA_RAPIDOS}
@@ -2080,16 +2267,21 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                             disabled={readOnly}
                         />
                     </div>
-                </>
+                </ClinicaSection>
             )}
 
-            <div className="form-group">
-                <label className="form-label">Diagnostico</label>
-                <textarea className="form-input" value={form.diagnostico} onChange={event => setForm(prev => ({ ...prev, diagnostico: event.target.value }))} disabled={readOnly} style={{ minHeight: 84, resize: 'none' }} />
-            </div>
-            {type === 'OFTALMOLOGIA' && (
-                <div className="card" style={{ padding: 16, marginBottom: 16, background: 'rgba(255,255,255,0.02)' }}>
-                    <div style={{ fontWeight: 700, marginBottom: 12 }}>Diagnosticos frecuentes</div>
+            <ClinicaSection
+                title="D. Impresion clinica"
+                subtitle="Diagnostico, plan y observaciones quedan juntos para que la lectura final sea mas natural."
+                tone="impresion"
+            >
+                <div className="form-group">
+                    <label className="form-label">Diagnostico</label>
+                    <textarea className="form-input" value={form.diagnostico} onChange={event => setForm(prev => ({ ...prev, diagnostico: event.target.value }))} disabled={readOnly} style={compactTextareaStyle} />
+                </div>
+                {type === 'OFTALMOLOGIA' && (
+                    <div className="card" style={{ padding: 16, marginBottom: 16, background: 'rgba(255,255,255,0.03)' }}>
+                        <div style={{ fontWeight: 700, marginBottom: 12 }}>Diagnosticos frecuentes</div>
                     <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
                         {DIAGNOSTICOS_FRECUENTES.map(item => {
                             const selected = splitCommaValues(form.diagnostico).some(value => value.toUpperCase() === item.toUpperCase())
@@ -2106,24 +2298,30 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                             )
                         })}
                     </div>
+                    </div>
+                )}
+                <div className="form-group">
+                    <label className="form-label">Plan de tratamiento</label>
+                    <textarea className="form-input" value={form.plan_tratamiento} onChange={event => setForm(prev => ({ ...prev, plan_tratamiento: event.target.value }))} disabled={readOnly} style={compactTextareaStyle} />
+                    <QuickTemplateButtons
+                        label="Planes rapidos"
+                        options={type === 'OFTALMOLOGIA' ? PLANES_OFTALMOLOGIA_RAPIDOS : PLANES_CONTACTOLOGIA_RAPIDOS}
+                        onApply={snippet => setForm(prev => ({ ...prev, plan_tratamiento: appendTemplateText(prev.plan_tratamiento, snippet) }))}
+                        disabled={readOnly}
+                    />
                 </div>
-            )}
-            <div className="form-group">
-                <label className="form-label">Plan de tratamiento</label>
-                <textarea className="form-input" value={form.plan_tratamiento} onChange={event => setForm(prev => ({ ...prev, plan_tratamiento: event.target.value }))} disabled={readOnly} style={{ minHeight: 84, resize: 'none' }} />
-                <QuickTemplateButtons
-                    label="Planes rapidos"
-                    options={type === 'OFTALMOLOGIA' ? PLANES_OFTALMOLOGIA_RAPIDOS : PLANES_CONTACTOLOGIA_RAPIDOS}
-                    onApply={snippet => setForm(prev => ({ ...prev, plan_tratamiento: appendTemplateText(prev.plan_tratamiento, snippet) }))}
-                    disabled={readOnly}
-                />
-            </div>
-            <div className="form-group">
-                <label className="form-label">Observaciones</label>
-                <textarea className="form-input" value={form.observaciones} onChange={event => setForm(prev => ({ ...prev, observaciones: event.target.value }))} disabled={readOnly} style={{ minHeight: 92, resize: 'none' }} />
-            </div>
+                <div className="form-group">
+                    <label className="form-label">Observaciones</label>
+                    <textarea className="form-input" value={form.observaciones} onChange={event => setForm(prev => ({ ...prev, observaciones: event.target.value }))} disabled={readOnly} style={compactTextareaStyle} />
+                </div>
+            </ClinicaSection>
             {type === 'OFTALMOLOGIA' && (
-                <div className="card" style={{ padding: 16, marginTop: 8, background: 'rgba(255,255,255,0.02)' }}>
+                <ClinicaSection
+                    title="E. Recomendacion optica"
+                    subtitle="Ultimo bloque: material, tratamientos y tipo de uso. Queda separado de la parte diagnostica."
+                    tone="documentos"
+                >
+                <div className="card" style={{ padding: 16, marginTop: 0, background: 'rgba(255,255,255,0.03)' }}>
                     <div style={{ fontWeight: 700, marginBottom: 12 }}>Recomendacion optica</div>
                     <div className="grid-3" style={{ alignItems: 'start' }}>
                         <div className="card" style={{ padding: 16, background: 'rgba(255,255,255,0.02)' }}>
@@ -2171,6 +2369,7 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                         </div>
                     </div>
                 </div>
+                </ClinicaSection>
             )}
             <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
                 <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>{readOnly ? 'Cerrar' : 'Cancelar'}</button>
@@ -2179,6 +2378,7 @@ function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares,
                         {saved ? 'Consulta guardada' : saving ? savingText : 'Guardar consulta'}
                     </button>
                 )}
+            </div>
             </div>
         </form>
     )
@@ -2206,14 +2406,23 @@ function AnamnesisClinicaForm({ value, onChange }) {
         ['trauma_ocular', 'Trauma ocular'],
     ]
 
+    const compactTextareaStyle = {
+        minHeight: 72,
+        resize: 'vertical',
+        width: '100%',
+    }
+
     return (
         <div style={{ display: 'grid', gap: 18 }}>
-            <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800, marginBottom: 14 }}>1. Motivo y expectativas</div>
+            <ClinicaSection
+                title="1. Motivo y expectativas"
+                subtitle="Primera lectura clinica: que siente el paciente y que espera resolver en esta visita."
+                tone="referencia"
+            >
                 <div className="grid-2">
                     <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                         <label className="form-label">Motivo principal</label>
-                        <textarea className="form-input" value={value.motivo_principal} onChange={event => onChange(prev => ({ ...prev, motivo_principal: event.target.value }))} style={{ minHeight: 88, resize: 'none', width: '100%' }} />
+                        <textarea className="form-input" value={value.motivo_principal} onChange={event => onChange(prev => ({ ...prev, motivo_principal: event.target.value }))} style={compactTextareaStyle} />
                     </div>
                     <div className="form-group">
                         <label className="form-label">Tiempo de molestias</label>
@@ -2238,10 +2447,13 @@ function AnamnesisClinicaForm({ value, onChange }) {
                         Queda como siguiente paso de esta fase. Ya dejamos la anamnesis estructurada para alimentar ese asistente con sintomas y antecedentes.
                     </div>
                 </div>
-            </div>
+            </ClinicaSection>
 
-            <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800, marginBottom: 14 }}>2. Uso visual y estilo de vida</div>
+            <ClinicaSection
+                title="2. Uso visual y estilo de vida"
+                subtitle="Contexto diario para entender demanda visual, pantallas, conduccion y habitos."
+                tone="contexto"
+            >
                 <div className="grid-2">
                     <div className="form-group">
                         <label className="form-label">Horas de pantalla</label>
@@ -2272,10 +2484,13 @@ function AnamnesisClinicaForm({ value, onChange }) {
                         <input className="form-input" value={value.hobbies} onChange={event => onChange(prev => ({ ...prev, hobbies: event.target.value }))} />
                     </div>
                 </div>
-            </div>
+            </ClinicaSection>
 
-            <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800, marginBottom: 14 }}>3. Sintomatologia actual</div>
+            <ClinicaSection
+                title="3. Sintomatologia actual"
+                subtitle="Checklist rapido de sintomas para no perder hallazgos frecuentes."
+                tone="examen"
+            >
                 <div className="grid-2">
                     {sintomas.map(([key, label]) => (
                         <label key={key} className="flex gap-12" style={{ alignItems: 'center', color: 'var(--text-primary)' }}>
@@ -2284,10 +2499,13 @@ function AnamnesisClinicaForm({ value, onChange }) {
                         </label>
                     ))}
                 </div>
-            </div>
+            </ClinicaSection>
 
-            <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800, marginBottom: 14 }}>4. Salud general y ocular</div>
+            <ClinicaSection
+                title="4. Salud general y ocular"
+                subtitle="Antecedentes sistémicos y oculares que pueden impactar en la consulta actual."
+                tone="impresion"
+            >
                 <div className="grid-2">
                     {salud.map(([key, label]) => (
                         <label key={key} className="flex gap-12" style={{ alignItems: 'center', color: 'var(--text-primary)' }}>
@@ -2306,10 +2524,13 @@ function AnamnesisClinicaForm({ value, onChange }) {
                         <input className="form-input" value={value.antecedentes_familiares} onChange={event => onChange(prev => ({ ...prev, antecedentes_familiares: event.target.value }))} />
                     </div>
                 </div>
-            </div>
+            </ClinicaSection>
 
-            <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800, marginBottom: 14 }}>5. Correccion actual</div>
+            <ClinicaSection
+                title="5. Correccion actual"
+                subtitle="Anteojos y lentes de contacto actuales del paciente para tomar decisiones mas rapidas."
+                tone="documentos"
+            >
                 <div className="grid-2">
                     <label className="flex gap-12" style={{ alignItems: 'center', color: 'var(--text-primary)' }}>
                         <input type="checkbox" checked={Boolean(value.usa_anteojos)} onChange={event => onChange(prev => ({ ...prev, usa_anteojos: event.target.checked }))} />
@@ -2332,6 +2553,34 @@ function AnamnesisClinicaForm({ value, onChange }) {
                             <option value="Multifocal/Bifocal">Multifocal/Bifocal</option>
                             <option value="Descanso">Descanso</option>
                         </select>
+                    </div>
+                    <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                        <label className="form-label">Graduacion anterior</label>
+                        <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                            <div style={{ display: 'grid', gap: 10 }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(4, minmax(72px, 1fr))', gap: 8, fontSize: '0.76rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                                    <div />
+                                    <div>Esfera</div>
+                                    <div>Cilindro</div>
+                                    <div>Eje</div>
+                                    <div>Add</div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(4, minmax(72px, 1fr))', gap: 8 }}>
+                                    <div style={{ fontWeight: 800, color: 'var(--text-primary)', alignSelf: 'center' }}>OD</div>
+                                    <input className="form-input" value={value.graduacion_anterior_od_esfera || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_od_esfera: event.target.value }))} placeholder="0.00" />
+                                    <input className="form-input" value={value.graduacion_anterior_od_cilindro || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_od_cilindro: event.target.value }))} placeholder="0.00" />
+                                    <input className="form-input" value={value.graduacion_anterior_od_eje || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_od_eje: event.target.value }))} placeholder="0" />
+                                    <input className="form-input" value={value.graduacion_anterior_od_adicion || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_od_adicion: event.target.value }))} placeholder="0.00" />
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(4, minmax(72px, 1fr))', gap: 8 }}>
+                                    <div style={{ fontWeight: 800, color: 'var(--text-primary)', alignSelf: 'center' }}>OI</div>
+                                    <input className="form-input" value={value.graduacion_anterior_oi_esfera || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_oi_esfera: event.target.value }))} placeholder="0.00" />
+                                    <input className="form-input" value={value.graduacion_anterior_oi_cilindro || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_oi_cilindro: event.target.value }))} placeholder="0.00" />
+                                    <input className="form-input" value={value.graduacion_anterior_oi_eje || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_oi_eje: event.target.value }))} placeholder="0" />
+                                    <input className="form-input" value={value.graduacion_anterior_oi_adicion || ''} onChange={event => onChange(prev => ({ ...prev, graduacion_anterior_oi_adicion: event.target.value }))} placeholder="0.00" />
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <label className="flex gap-12" style={{ alignItems: 'center', color: 'var(--text-primary)' }}>
                         <input type="checkbox" checked={Boolean(value.usa_lentes_contacto)} onChange={event => onChange(prev => ({ ...prev, usa_lentes_contacto: event.target.checked }))} />
@@ -2364,7 +2613,7 @@ function AnamnesisClinicaForm({ value, onChange }) {
                         <span>Molestias con LC</span>
                     </label>
                 </div>
-            </div>
+            </ClinicaSection>
         </div>
     )
 }
@@ -2390,39 +2639,7 @@ function ConsultaIntegralModal({
     const [activeTab, setActiveTab] = useState('anamnesis')
     const [showConsultaSavedNotice, setShowConsultaSavedNotice] = useState(false)
     const documentsRef = useRef(null)
-    const [anamnesisDraft, setAnamnesisDraft] = useState({
-        motivo_principal: '',
-        tiempo_molestias: '',
-        expectativa: '',
-        horas_pantalla: '',
-        conduce: '',
-        actividad_laboral: '',
-        hobbies: '',
-        cefalea: false,
-        ardor: false,
-        ojo_seco: false,
-        lagrimeo: false,
-        fotofobia: false,
-        vision_doble: false,
-        destellos: false,
-        manchas: false,
-        dificultad_cerca: false,
-        diabetes: false,
-        diabetes_controlada: true,
-        hipertension: false,
-        alergias: false,
-        migranas: false,
-        cirugias_previas: false,
-        trauma_ocular: false,
-        medicamentos: '',
-        antecedentes_familiares: '',
-        usa_anteojos: false,
-        proposito_anteojos: '',
-        usa_lentes_contacto: false,
-        tipo_lentes_contacto: '',
-        horas_uso_lc: '',
-        molestias_lc: false,
-    })
+    const [anamnesisDraft, setAnamnesisDraft] = useState(createEmptyAnamnesisDraft())
 
     useEffect(() => {
         if (open) setActiveTab('anamnesis')
@@ -2430,39 +2647,7 @@ function ConsultaIntegralModal({
 
     useEffect(() => {
         if (!open) return
-        setAnamnesisDraft({
-            motivo_principal: initialAnamnesis?.motivo_principal || '',
-            tiempo_molestias: initialAnamnesis?.tiempo_molestias || '',
-            expectativa: initialAnamnesis?.expectativa || '',
-            horas_pantalla: initialAnamnesis?.horas_pantalla || '',
-            conduce: initialAnamnesis?.conduce || '',
-            actividad_laboral: initialAnamnesis?.actividad_laboral || '',
-            hobbies: initialAnamnesis?.hobbies || '',
-            cefalea: Boolean(initialAnamnesis?.cefalea),
-            ardor: Boolean(initialAnamnesis?.ardor),
-            ojo_seco: Boolean(initialAnamnesis?.ojo_seco),
-            lagrimeo: Boolean(initialAnamnesis?.lagrimeo),
-            fotofobia: Boolean(initialAnamnesis?.fotofobia),
-            vision_doble: Boolean(initialAnamnesis?.vision_doble),
-            destellos: Boolean(initialAnamnesis?.destellos),
-            manchas: Boolean(initialAnamnesis?.manchas),
-            dificultad_cerca: Boolean(initialAnamnesis?.dificultad_cerca),
-            diabetes: Boolean(initialAnamnesis?.diabetes),
-            diabetes_controlada: initialAnamnesis?.diabetes_controlada ?? true,
-            hipertension: Boolean(initialAnamnesis?.hipertension),
-            alergias: Boolean(initialAnamnesis?.alergias),
-            migranas: Boolean(initialAnamnesis?.migranas),
-            cirugias_previas: Boolean(initialAnamnesis?.cirugias_previas),
-            trauma_ocular: Boolean(initialAnamnesis?.trauma_ocular),
-            medicamentos: initialAnamnesis?.medicamentos || '',
-            antecedentes_familiares: initialAnamnesis?.antecedentes_familiares || '',
-            usa_anteojos: Boolean(initialAnamnesis?.usa_anteojos),
-            proposito_anteojos: initialAnamnesis?.proposito_anteojos || '',
-            usa_lentes_contacto: Boolean(initialAnamnesis?.usa_lentes_contacto),
-            tipo_lentes_contacto: initialAnamnesis?.tipo_lentes_contacto || '',
-            horas_uso_lc: initialAnamnesis?.horas_uso_lc || '',
-            molestias_lc: Boolean(initialAnamnesis?.molestias_lc),
-        })
+        setAnamnesisDraft(createEmptyAnamnesisDraft())
     }, [open, initialAnamnesis])
 
     useEffect(() => {
@@ -2500,13 +2685,14 @@ function ConsultaIntegralModal({
                 <div
                     className="card"
                     style={{
-                        padding: 16,
-                        background: CLINICA_PALETTE.accentSoft,
+                        padding: 14,
+                        background: 'linear-gradient(135deg, rgba(21, 94, 117, 0.24), rgba(8, 47, 73, 0.18) 45%, rgba(15, 23, 42, 0.96))',
                         border: `1px solid ${CLINICA_PALETTE.accentBorder}`,
                         position: 'sticky',
                         top: 0,
                         zIndex: 5,
-                        backdropFilter: 'blur(8px)',
+                        backdropFilter: 'blur(10px)',
+                        boxShadow: '0 18px 42px rgba(0, 0, 0, 0.26)',
                     }}
                 >
                     <div style={{ display: 'grid', gap: 14 }}>
@@ -2549,7 +2735,7 @@ function ConsultaIntegralModal({
                                     flexWrap: 'wrap',
                                 }}
                             >
-                                {[
+                                {[ 
                                     { key: 'anamnesis', label: 'Paso 1: Anamnesis', active: activeTab === 'anamnesis' },
                                     { key: 'consulta', label: 'Paso 2: Consulta', active: activeTab === 'consulta' },
                                     { key: 'documentos', label: 'Paso 3: Documentos', active: Boolean(successData?.id) },
@@ -2561,7 +2747,7 @@ function ConsultaIntegralModal({
                                             borderRadius: 999,
                                             fontSize: '0.78rem',
                                             fontWeight: 700,
-                                            background: step.active ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)',
+                                            background: step.active ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.05)',
                                             border: `1px solid ${step.active ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.08)'}`,
                                             color: step.active ? '#e6fffc' : 'var(--text-muted)',
                                         }}
@@ -2575,33 +2761,33 @@ function ConsultaIntegralModal({
                         <div
                             style={{
                                 display: 'grid',
-                                gridTemplateColumns: 'minmax(220px, 1.4fr) repeat(4, minmax(120px, 1fr))',
-                                gap: 12,
+                                gridTemplateColumns: 'minmax(220px, 1.5fr) repeat(4, minmax(110px, 1fr))',
+                                gap: 10,
                                 alignItems: 'start',
                             }}
                         >
                             <div>
-                                <div style={{ fontSize: '1.08rem', fontWeight: 800, marginBottom: 4 }}>
+                                <div style={{ fontSize: '1.02rem', fontWeight: 800, marginBottom: 2 }}>
                                     {patient.nombre_completo || 'Paciente'}
                                 </div>
-                                <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                                     {patient.es_cliente ? 'Cliente vinculado' : 'Paciente aun no vinculado'}
                                 </div>
                             </div>
                             <div>
-                                <div className="form-label" style={{ marginBottom: 4 }}>CI / Pasaporte</div>
+                                <div className="form-label" style={{ marginBottom: 2, fontSize: '0.74rem' }}>CI / Pasaporte</div>
                                 <div style={{ color: 'var(--text-primary)' }}>{patient.ci_pasaporte || '-'}</div>
                             </div>
                             <div>
-                                <div className="form-label" style={{ marginBottom: 4 }}>Edad</div>
+                                <div className="form-label" style={{ marginBottom: 2, fontSize: '0.74rem' }}>Edad</div>
                                 <div style={{ color: 'var(--text-primary)' }}>{patient.edad_calculada ?? patient.edad_manual ?? '-'}</div>
                             </div>
                             <div>
-                                <div className="form-label" style={{ marginBottom: 4 }}>Telefono</div>
+                                <div className="form-label" style={{ marginBottom: 2, fontSize: '0.74rem' }}>Telefono</div>
                                 <div style={{ color: 'var(--text-primary)' }}>{patient.telefono || '-'}</div>
                             </div>
                             <div>
-                                <div className="form-label" style={{ marginBottom: 4 }}>Referidor</div>
+                                <div className="form-label" style={{ marginBottom: 2, fontSize: '0.74rem' }}>Referidor</div>
                                 <div style={{ color: 'var(--text-primary)' }}>{patient.referidor_nombre || 'Sin referidor'}</div>
                             </div>
                         </div>
@@ -2614,13 +2800,30 @@ function ConsultaIntegralModal({
                             <div style={{ marginBottom: 16 }}>
                                 <div style={{ fontSize: '1rem', fontWeight: 800 }}>Anamnesis detallada</div>
                                 <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>
-                                    Primera fase de paridad con Python: motivo, estilo de vida, sintomas, salud general y correccion actual.
+                                    Cada consulta nueva comienza con anamnesis vacia. Puedes usar la ultima como referencia o copiarla manualmente si te sirve.
                                 </div>
                             </div>
                             {anamnesisLoading ? (
                                 <div className="empty-state" style={{ padding: '48px 18px' }}>Cargando ultima anamnesis...</div>
                             ) : (
                                 <>
+                                    {initialAnamnesis ? (
+                                        <ClinicaSection
+                                            title="Referencia de la ultima anamnesis"
+                                            subtitle="Se muestra solo como apoyo visual. No se copia automaticamente a la consulta nueva."
+                                            tone="referencia"
+                                            style={{ marginBottom: 16 }}
+                                        >
+                                            <div style={{ color: 'var(--text-primary)', lineHeight: 1.55, fontSize: '0.92rem' }}>
+                                                {buildAnamnesisSummary(initialAnamnesis) || 'La ultima anamnesis no tiene resumen cargado.'}
+                                            </div>
+                                            <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+                                                <button type="button" className="btn btn-secondary" onClick={() => setAnamnesisDraft({ ...createEmptyAnamnesisDraft(), ...initialAnamnesis })}>
+                                                    Copiar ultima anamnesis
+                                                </button>
+                                            </div>
+                                        </ClinicaSection>
+                                    ) : null}
                                     <AnamnesisClinicaForm value={anamnesisDraft} onChange={setAnamnesisDraft} />
                                     <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
                                         <button type="button" className="btn btn-secondary" onClick={handleCloseRequest}>Cancelar</button>
@@ -2636,7 +2839,7 @@ function ConsultaIntegralModal({
                                     {type === 'OFTALMOLOGIA' ? 'Consulta Oftalmologica' : 'Consulta de Contactologia'}
                                 </div>
                                 <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>
-                                    Flujo modal inspirado en Python: alta separada, anamnesis previa y consulta en la misma ventana.
+                                    Flujo redisenado para reducir scroll, separar mejor los bloques y mantener visibles las acciones importantes.
                                 </div>
                             </div>
 

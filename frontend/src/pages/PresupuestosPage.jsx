@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
-import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList } from 'lucide-react'
+import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList, Clock } from 'lucide-react'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
 
@@ -18,6 +18,16 @@ const formatDateInputValue = value => {
     const day = String(date.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
 }
+const formatDateTimeLocalValue = value => {
+    if (!value) return ''
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+const buildDatePatchValue = value => (value ? `${value}T12:00:00` : null)
 const addMonthsToDateInput = (baseValue, months) => {
     const baseDate = baseValue ? new Date(`${baseValue}T12:00:00`) : new Date()
     if (Number.isNaN(baseDate.getTime())) return ''
@@ -380,6 +390,85 @@ function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
                 <button type="submit" className="btn btn-primary" disabled={guardar.isPending}>
                     {guardar.isPending ? 'Guardando...' : 'Guardar asignacion'}
                 </button>
+            </div>
+        </form>
+    )
+}
+
+function CorregirFechaPresupuestoModal({ presupuesto, onClose, onBusyChange }) {
+    const qc = useQueryClient()
+    const [fecha, setFecha] = useState(() => formatDateTimeLocalValue(presupuesto?.fecha) || formatDateTimeLocalValue(new Date()))
+    const [sincronizarVenta, setSincronizarVenta] = useState(presupuesto?.estado === 'VENDIDO')
+    const [error, setError] = useState('')
+
+    const guardar = useMutation({
+        mutationFn: payload => api.patch(`/presupuestos/${presupuesto.id}/fecha`, payload),
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries({ queryKey: ['presupuestos'] }),
+                qc.invalidateQueries({ queryKey: ['ventas'] }),
+                qc.invalidateQueries({ queryKey: ['ventas-optimizado'] }),
+            ])
+            onClose()
+        },
+        onError: err => {
+            setError(err?.response?.data?.detail || 'No se pudo corregir la fecha del presupuesto.')
+        },
+    })
+
+    useEffect(() => {
+        onBusyChange?.(guardar.isPending)
+        return () => onBusyChange?.(false)
+    }, [guardar.isPending, onBusyChange])
+
+    const handleSubmit = event => {
+        event.preventDefault()
+        if (!fecha) {
+            setError('Debes indicar una fecha valida.')
+            return
+        }
+        setError('')
+        guardar.mutate({
+            fecha: buildDatePatchValue(fecha),
+            actualizar_venta_relacionada: sincronizarVenta,
+        })
+    }
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div style={{ display: 'grid', gap: 16 }}>
+                <div className="card" style={{ padding: '14px 16px', marginBottom: 0 }}>
+                    <div style={{ fontWeight: 700 }}>{presupuesto?.codigo}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginTop: 4 }}>
+                        Cliente: {presupuesto?.cliente_nombre || 'Sin cliente'}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginTop: 4 }}>
+                        Fecha actual: {fmtDate(presupuesto?.fecha)}
+                    </div>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Nueva fecha del presupuesto</label>
+                    <input className="form-input" type="date" value={fecha} onChange={event => setFecha(event.target.value)} disabled={guardar.isPending} />
+                </div>
+                {presupuesto?.estado === 'VENDIDO' && (
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: guardar.isPending ? 'not-allowed' : 'pointer', opacity: guardar.isPending ? 0.7 : 1 }}>
+                        <input type="checkbox" checked={sincronizarVenta} onChange={event => setSincronizarVenta(event.target.checked)} disabled={guardar.isPending} style={{ marginTop: 2 }} />
+                        <span style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                            Cambiar tambien la fecha de la venta relacionada.
+                        </span>
+                    </label>
+                )}
+                {error ? (
+                    <div className="alert alert-error" style={{ marginBottom: 0 }}>
+                        <AlertCircle size={16} /> {error}
+                    </div>
+                ) : null}
+                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose} disabled={guardar.isPending}>Cancelar</button>
+                    <button type="submit" className="btn btn-primary" disabled={guardar.isPending}>
+                        {guardar.isPending ? 'Guardando fecha...' : 'Guardar fecha'}
+                    </button>
+                </div>
             </div>
         </form>
     )
@@ -971,6 +1060,7 @@ export default function PresupuestosPage() {
     const [buscar, setBuscar] = useState('')
     const [modal, setModal] = useState(false)
     const [editarPre, setEditarPre] = useState(null)     // presupuesto a editar
+    const [fechaPre, setFechaPre] = useState(null)
     const [asignacionPre, setAsignacionPre] = useState(null)
     const [estadoFiltro, setEstadoFiltro] = useState('')
     const [vendedorFiltro, setVendedorFiltro] = useState('')
@@ -984,6 +1074,7 @@ export default function PresupuestosPage() {
     const [presupuestoModalBusy, setPresupuestoModalBusy] = useState(false)
     const [convertirModalBusy, setConvertirModalBusy] = useState(false)
     const [asignacionModalBusy, setAsignacionModalBusy] = useState(false)
+    const [fechaModalBusy, setFechaModalBusy] = useState(false)
     const hasPendingNavigation = Boolean(pdfOpeningId || cancelingId || deletingId)
     const confirmNavigation = usePendingNavigationGuard(hasPendingNavigation, 'Hay una accion de presupuesto aun en proceso. ¿Seguro que desea salir de esta vista?')
 
@@ -1122,6 +1213,9 @@ export default function PresupuestosPage() {
                                         <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                             {['PENDIENTE', 'BORRADOR'].includes(p.estado) && (
                                                 <>
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setFechaPre(p)} disabled={rowBusy}>
+                                                        <Clock size={12} /> Fecha
+                                                    </button>
                                                     <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
                                                         <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
                                                     </button>
@@ -1142,9 +1236,14 @@ export default function PresupuestosPage() {
                                                 </button>
                                             )}
                                             {p.estado === 'VENDIDO' && (
-                                                <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
-                                                    <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
-                                                </button>
+                                                <>
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setFechaPre(p)} disabled={rowBusy}>
+                                                        <Clock size={12} /> Fecha
+                                                    </button>
+                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
+                                                        <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
+                                                    </button>
+                                                </>
                                             )}
                                         </td>
                                     </tr>
@@ -1202,6 +1301,17 @@ export default function PresupuestosPage() {
                     onCloseAttempt={() => window.alert('La asignacion comercial aun se esta guardando. Espera a que termine antes de cerrar.')}
                 >
                     <AsignacionComercialModal presupuesto={asignacionPre} onClose={() => setAsignacionPre(null)} onBusyChange={setAsignacionModalBusy} />
+                </Modal>
+            )}
+            {fechaPre && (
+                <Modal
+                    title={`Corregir fecha ${fechaPre.codigo}`}
+                    onClose={() => setFechaPre(null)}
+                    maxWidth="520px"
+                    closeDisabled={fechaModalBusy}
+                    onCloseAttempt={() => window.alert('La fecha del presupuesto aun se esta guardando. Espera a que termine antes de cerrar.')}
+                >
+                    <CorregirFechaPresupuestoModal presupuesto={fechaPre} onClose={() => setFechaPre(null)} onBusyChange={setFechaModalBusy} />
                 </Modal>
             )}
         </div>

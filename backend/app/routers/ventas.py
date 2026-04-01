@@ -22,7 +22,8 @@ from app.schemas.schemas import (
     VentaListItemOut, VentaListResponseOut,
     PresupuestoListItemOut, PresupuestoListResponseOut,
     VentasPdfMultipleRequest, AjusteVentaCreate, AjusteVentaUpdate,
-    AjusteVentaOut, AjusteVentaListResponseOut, PresupuestoAsignacionComercialIn
+    AjusteVentaOut, AjusteVentaListResponseOut, PresupuestoAsignacionComercialIn,
+    PresupuestoFechaUpdate, VentaFechaUpdate,
 )
 from fastapi.responses import StreamingResponse
 from app.utils.pdf_recibos_venta import (
@@ -736,6 +737,38 @@ def get_ventas_pendientes_cobro(
         session.close()
 
 
+@router.patch("/{venta_id}/fecha", response_model=VentaOut)
+def corregir_fecha_venta(
+    venta_id: int,
+    data: VentaFechaUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        venta = session.query(Venta).filter(Venta.id == venta_id).first()
+        if not venta:
+            raise HTTPException(status_code=404, detail="Venta no encontrada.")
+
+        venta.fecha = data.fecha
+
+        if data.actualizar_presupuesto_relacionado and venta.presupuesto_id:
+            presupuesto_relacionado = session.query(Presupuesto).filter(Presupuesto.id == venta.presupuesto_id).first()
+            if presupuesto_relacionado:
+                presupuesto_relacionado.fecha = data.fecha
+
+        session.commit()
+        session.refresh(venta)
+
+        venta_out = VentaOut.model_validate(venta)
+        venta_out.cliente_nombre = venta.cliente_rel.nombre if venta.cliente_rel else None
+        venta_out.vendedor_nombre = venta.vendedor_rel.nombre if getattr(venta, "vendedor_rel", None) else None
+        venta_out.canal_venta_nombre = venta.canal_venta_rel.nombre if getattr(venta, "canal_venta_rel", None) else None
+        return venta_out
+    finally:
+        session.close()
+
+
 @router.get("/historial-cobros-multiples", response_model=List[GrupoPagoOut])
 def listar_historial_cobros_multiples(
     tenant_slug: str = Depends(get_tenant_slug),
@@ -876,6 +909,33 @@ def revertir_grupo_pago(
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@pre_router.patch("/{pre_id}/fecha", response_model=PresupuestoOut)
+def corregir_fecha_presupuesto(
+    pre_id: int,
+    data: PresupuestoFechaUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user)
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        presupuesto = session.query(Presupuesto).filter(Presupuesto.id == pre_id).first()
+        if not presupuesto:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
+
+        presupuesto.fecha = data.fecha
+
+        if data.actualizar_venta_relacionada:
+            venta_relacionada = session.query(Venta).filter(Venta.presupuesto_id == presupuesto.id).first()
+            if venta_relacionada:
+                venta_relacionada.fecha = data.fecha
+
+        session.commit()
+        session.refresh(presupuesto)
+        return _build_presupuesto_out(presupuesto)
     finally:
         session.close()
 

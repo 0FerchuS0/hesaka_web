@@ -13,6 +13,36 @@ const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '
 const fmtDateTime = value => value ? new Date(value).toLocaleString('es-PY') : '-'
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
+const COMPRA_FLOW_OPTIONS = [
+    {
+        key: 'PEDIDO_CLIENTE',
+        title: 'Pedido de cliente',
+        description: 'Primero eliges la venta y luego completas proveedor y costos reales.',
+        tipoCompra: 'ORIGINAL',
+        startWithVentas: true,
+    },
+    {
+        key: 'STOCK',
+        title: 'Stock o servicio',
+        description: 'Carga libre para stock, laboratorio o compras no ligadas a una venta.',
+        tipoCompra: 'STOCK/SERVICIO',
+        startWithVentas: false,
+    },
+    {
+        key: 'GARANTIA',
+        title: 'Garantia',
+        description: 'Para reposiciones o cambios, con posibilidad de asociar una venta si hace falta.',
+        tipoCompra: 'GARANTIA',
+        startWithVentas: false,
+    },
+    {
+        key: 'REEMPLAZO',
+        title: 'Reemplazo',
+        description: 'Compra de reemplazo con datos tentativos editables.',
+        tipoCompra: 'REEMPLAZO',
+        startWithVentas: true,
+    },
+]
 
 function normalizarTelefonoWhatsapp(value) {
     let digits = String(value || '').replace(/\D/g, '')
@@ -228,6 +258,32 @@ function buildVentasResumen(compra) {
         venta_codigo: compra.ventas_codigos?.[index] || `VENTA #${ventaId}`,
         cliente_nombre: compra.clientes_nombres?.join(', ') || '',
     }))
+}
+
+function getVentaSuggestedProviders(venta) {
+    return Array.from(
+        new Map(
+            (venta?.items_pendientes || [])
+                .filter(item => item.proveedor_id || item.proveedor_nombre)
+                .map(item => [String(item.proveedor_id || item.proveedor_nombre), {
+                    proveedor_id: item.proveedor_id || null,
+                    proveedor_nombre: item.proveedor_nombre || 'Sin proveedor sugerido',
+                }])
+        ).values()
+    )
+}
+
+function getSuggestedProveedorFromVentas(ventas) {
+    const providers = Array.from(
+        new Map(
+            ventas
+                .flatMap(venta => getVentaSuggestedProviders(venta))
+                .filter(provider => provider.proveedor_id)
+                .map(provider => [provider.proveedor_id, provider])
+        ).values()
+    )
+    if (providers.length === 1) return providers[0]
+    return null
 }
 
 function ActionButton({ title, danger = false, onClick, children }) {
@@ -454,7 +510,7 @@ function VentaSelectorModal({ proveedorId, tipoCompra, selectedVentas, onConfirm
             if (buscar.trim()) params.append('buscar', buscar.trim())
             return api.get(`/compras/ventas-pendientes?${params.toString()}`).then(response => response.data)
         },
-        enabled: Boolean(proveedorId) && tipoCompra !== 'STOCK/SERVICIO',
+        enabled: tipoCompra !== 'STOCK/SERVICIO',
         retry: false,
     })
 
@@ -471,62 +527,98 @@ function VentaSelectorModal({ proveedorId, tipoCompra, selectedVentas, onConfirm
 
     return (
         <Modal title="Seleccionar Ventas" onClose={onClose} maxWidth="1100px">
-            {!proveedorId ? (
-                <div className="empty-state" style={{ padding: '36px 20px' }}>
-                    <AlertCircle size={34} />
-                    <p>Selecciona primero un proveedor para importar items automaticamente.</p>
-                </div>
-            ) : (
-                <>
-                    <div className="card mb-16" style={{ padding: '14px 16px' }}>
-                        <div className="search-bar">
-                            <Search size={16} />
-                            <input placeholder="Buscar por codigo de venta o cliente..." value={buscar} onChange={event => setBuscar(event.target.value)} />
-                        </div>
+            <>
+                <div className="card mb-16" style={{ padding: '14px 16px', display: 'grid', gap: 10 }}>
+                    <div className="search-bar">
+                        <Search size={16} />
+                        <input placeholder="Buscar por codigo de venta o cliente..." value={buscar} onChange={event => setBuscar(event.target.value)} />
                     </div>
-                    <div className="card" style={{ padding: 0, marginBottom: 16 }}>
-                        {isLoading ? (
-                            <div className="flex-center" style={{ padding: 60 }}><div className="spinner" style={{ width: 30, height: 30 }} /></div>
-                        ) : ventas.length === 0 ? (
-                            <div className="empty-state" style={{ padding: '36px 20px' }}>
-                                <PackagePlus size={34} />
-                                <p>No hay ventas con items pendientes para importar.</p>
-                            </div>
-                        ) : (
-                            <div className="table-container" style={{ maxHeight: '70vh', minHeight: '420px', overflowY: 'auto' }}>
-                                <table>
-                                    <thead>
-                                        <tr><th></th><th>Venta</th><th>Cliente</th><th>Fecha</th><th>Estado</th><th>Items</th></tr>
-                                    </thead>
-                                    <tbody>
-                                        {ventas.map(venta => (
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.45 }}>
+                        Aqui eliges primero la venta que necesita compra. El proveedor actual sirve solo como referencia y despues puedes cambiarlo si compras en otro lado.
+                    </div>
+                    {!proveedorId && (
+                        <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.24)', borderRadius: 8, padding: '10px 14px', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                            Todavia no elegiste proveedor. Puedes importar la venta igual y definir el proveedor real despues.
+                        </div>
+                    )}
+                </div>
+                <div className="card" style={{ padding: 0, marginBottom: 16 }}>
+                    {isLoading ? (
+                        <div className="flex-center" style={{ padding: 60 }}><div className="spinner" style={{ width: 30, height: 30 }} /></div>
+                    ) : ventas.length === 0 ? (
+                        <div className="empty-state" style={{ padding: '36px 20px' }}>
+                            <PackagePlus size={34} />
+                            <p>No hay ventas con items pendientes para importar.</p>
+                        </div>
+                    ) : (
+                        <div className="table-container" style={{ maxHeight: '70vh', minHeight: '420px', overflowY: 'auto' }}>
+                            <table>
+                                <thead>
+                                    <tr><th></th><th>Venta</th><th>Cliente</th><th>Fecha</th><th>Estado</th><th>Prov. sugerido</th><th>Items</th></tr>
+                                </thead>
+                                <tbody>
+                                    {ventas.map(venta => {
+                                        const proveedores = getVentaSuggestedProviders(venta)
+                                        return (
                                             <tr key={venta.venta_id}>
                                                 <td><input type="checkbox" checked={selectedIds.has(venta.venta_id)} onChange={() => toggleVenta(venta.venta_id)} style={{ accentColor: 'var(--primary-light)' }} /></td>
                                                 <td style={{ fontWeight: 600 }}>{venta.venta_codigo}</td>
                                                 <td>{venta.cliente_nombre}</td>
                                                 <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{fmtDate(venta.fecha)}</td>
                                                 <td>{estadoBadge(venta.estado_entrega || 'EN_LABORATORIO')}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>
+                                                    {proveedores.length ? proveedores.map(proveedor => proveedor.proveedor_nombre).join(', ') : 'Sin sugerencia'}
+                                                </td>
                                                 <td>{venta.items_pendientes.length}</td>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-                    <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
-                        <button type="button" className="btn btn-primary" onClick={() => onConfirm(ventasSeleccionadas)} disabled={ventasSeleccionadas.length === 0}>
-                            <CheckSquare size={15} /> Importar Seleccion
-                        </button>
-                    </div>
-                </>
-            )}
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                    <button type="button" className="btn btn-primary" onClick={() => onConfirm(ventasSeleccionadas)} disabled={ventasSeleccionadas.length === 0}>
+                        <CheckSquare size={15} /> Importar Seleccion
+                    </button>
+                </div>
+            </>
         </Modal>
     )
 }
 
-function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null }) {
+function CompraTipoSelectorModal({ onSelect, onClose }) {
+    return (
+        <Modal title="Nueva Compra" onClose={onClose} maxWidth="720px">
+            <div style={{ display: 'grid', gap: 14 }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                    Elige primero que tipo de compra vas a cargar. Asi el sistema abre el camino correcto y evita pasos innecesarios.
+                </div>
+                <div style={{ display: 'grid', gap: 12 }}>
+                    {COMPRA_FLOW_OPTIONS.map(option => (
+                        <button
+                            key={option.key}
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => onSelect(option)}
+                            style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '14px 16px', display: 'grid', gap: 4 }}
+                        >
+                            <span style={{ fontWeight: 700 }}>{option.title}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem', fontWeight: 400 }}>{option.description}</span>
+                        </button>
+                    ))}
+                </div>
+                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                </div>
+            </div>
+        </Modal>
+    )
+}
+
+function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, initialTipoCompra = 'ORIGINAL', startWithVentas = false }) {
     const queryClient = useQueryClient()
     const editando = Boolean(compraId)
     const [proveedor, setProveedor] = useState('')
@@ -534,13 +626,14 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null }) {
     const [nroFactura, setNroFactura] = useState('')
     const [condicionPago, setCondicionPago] = useState('CONTADO')
     const [fechaVencimiento, setFechaVencimiento] = useState('')
-    const [tipoCompra, setTipoCompra] = useState('ORIGINAL')
+    const [tipoCompra, setTipoCompra] = useState(initialTipoCompra)
     const [estadoEntrega, setEstadoEntrega] = useState('RECIBIDO')
     const [observaciones, setObservaciones] = useState('')
     const [ventasSeleccionadas, setVentasSeleccionadas] = useState([])
     const [items, setItems] = useState([createEmptyItem()])
     const [showVentasModal, setShowVentasModal] = useState(false)
     const [proveedorNombre, setProveedorNombre] = useState('')
+    const salesFlowInitializedRef = useRef(false)
 
     const { data: compraDetalle, isLoading: loadingCompra } = useQuery({
         queryKey: ['compra-detalle', compraId],
@@ -563,6 +656,12 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null }) {
         setVentasSeleccionadas(buildVentasResumen(compraDetalle))
         setItems(buildItemsFromCompra(compraDetalle))
     }, [compraDetalle])
+
+    useEffect(() => {
+        if (editando || salesFlowInitializedRef.current || !startWithVentas || initialTipoCompra === 'STOCK/SERVICIO') return
+        salesFlowInitializedRef.current = true
+        setShowVentasModal(true)
+    }, [editando, initialTipoCompra, startWithVentas])
 
     useEffect(() => {
         if (tipoCompra === 'STOCK/SERVICIO') {
@@ -610,6 +709,11 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null }) {
         const importados = buildImportedItems(ventas)
         setVentasSeleccionadas(ventas)
         setItems(importados.length ? [...manuales, ...importados] : (manuales.length ? manuales : [createEmptyItem()]))
+        const proveedorSugerido = getSuggestedProveedorFromVentas(ventas)
+        if (proveedorSugerido && !proveedor) {
+            setProveedor(String(proveedorSugerido.proveedor_id))
+            setProveedorNombre(proveedorSugerido.proveedor_nombre || '')
+        }
         setShowVentasModal(false)
     }
 
@@ -667,8 +771,13 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null }) {
                             <div style={{ fontWeight: 700 }}>Ventas Asociadas</div>
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{ventasSeleccionadas.length ? ventasSeleccionadas.map(venta => venta.venta_codigo).join(', ') : 'Ninguna venta seleccionada.'}</div>
                             {clientesTexto && <div style={{ marginTop: 6, color: 'var(--text-secondary)', fontSize: '0.82rem' }}>Clientes: {clientesTexto}</div>}
+                            {!proveedor && ventasSeleccionadas.length > 0 && (
+                                <div style={{ marginTop: 6, color: 'var(--warning)', fontSize: '0.82rem' }}>
+                                    Aun falta definir el proveedor real de esta compra antes de guardar.
+                                </div>
+                            )}
                         </div>
-                        <button type="button" className="btn btn-secondary" onClick={() => setShowVentasModal(true)} disabled={tipoCompra === 'STOCK/SERVICIO'}><PackagePlus size={15} /> Seleccionar Ventas</button>
+                        <button type="button" className="btn btn-secondary" onClick={() => setShowVentasModal(true)} disabled={tipoCompra === 'STOCK/SERVICIO'}><PackagePlus size={15} /> {ventasSeleccionadas.length ? 'Cambiar Ventas' : 'Seleccionar Ventas'}</button>
                     </div>
                 </div>
                 <div style={{ marginBottom: 16 }}>
@@ -1050,6 +1159,8 @@ export default function ComprasPage() {
     const [buscarDebounced, setBuscarDebounced] = useState('')
     const [estadoFiltro, setEstadoFiltro] = useState('')
     const [showCreate, setShowCreate] = useState(false)
+    const [showCreateType, setShowCreateType] = useState(false)
+    const [createConfig, setCreateConfig] = useState(null)
     const [compraFormId, setCompraFormId] = useState(null)
     const [compraDetalle, setCompraDetalle] = useState(null)
     const [compraEntrega, setCompraEntrega] = useState(null)
@@ -1138,7 +1249,7 @@ export default function ComprasPage() {
                     </div>
                 </div>
                 {hasActionAccess(user, 'compras.crear', 'compras') && (
-                    <button className="btn btn-primary" onClick={() => setShowCreate(true)} style={{ flexShrink: 0 }}>
+                    <button className="btn btn-primary" onClick={() => setShowCreateType(true)} style={{ flexShrink: 0 }}>
                         <Plus size={16} /> Nueva Compra
                     </button>
                 )}
@@ -1292,7 +1403,26 @@ export default function ComprasPage() {
                 </div>
             </div>
 
-            {showCreate && <Modal title="Nueva Compra" onClose={() => setShowCreate(false)} maxWidth="1100px"><CompraFormModal onClose={() => setShowCreate(false)} onWhatsappReady={setWhatsappRetiro} /></Modal>}
+            {showCreateType && (
+                <CompraTipoSelectorModal
+                    onClose={() => setShowCreateType(false)}
+                    onSelect={option => {
+                        setCreateConfig(option)
+                        setShowCreateType(false)
+                        setShowCreate(true)
+                    }}
+                />
+            )}
+            {showCreate && (
+                <Modal title="Nueva Compra" onClose={() => setShowCreate(false)} maxWidth="1100px">
+                    <CompraFormModal
+                        onClose={() => setShowCreate(false)}
+                        onWhatsappReady={setWhatsappRetiro}
+                        initialTipoCompra={createConfig?.tipoCompra || 'ORIGINAL'}
+                        startWithVentas={Boolean(createConfig?.startWithVentas)}
+                    />
+                </Modal>
+            )}
             {compraFormId && <Modal title={`Editar Compra #${compraFormId}`} onClose={() => setCompraFormId(null)} maxWidth="1100px"><CompraFormModal compraId={compraFormId} onClose={() => setCompraFormId(null)} /></Modal>}
             {compraDetalle && <Modal title={`Detalle Compra #${compraDetalle.id}`} onClose={() => setCompraDetalle(null)} maxWidth="980px"><DetalleCompraModal compraId={compraDetalle.id} onClose={() => setCompraDetalle(null)} /></Modal>}
             {compraEntrega && (

@@ -12,6 +12,16 @@ const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
 const fmtDateTime = d => d ? new Date(d).toLocaleString('es-PY', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 const gs = v => `Gs. ${new Intl.NumberFormat('es-PY').format(v ?? 0)}`
+const formatDateTimeLocalValue = value => {
+    if (!value) return ''
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+const buildDatePatchValue = value => (value ? `${value}T12:00:00` : null)
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
 const COMPROBANTE_WHATSAPP_TEMPLATE_KEY = 'hesaka-comprobante-whatsapp-template'
@@ -465,6 +475,94 @@ const downloadPDFPost = async (url, data) => {
     }
 }
 
+function CorregirFechaVentaModal({ venta, onClose, onBusyChange }) {
+    const qc = useQueryClient()
+    const [fecha, setFecha] = useState(() => formatDateTimeLocalValue(venta?.fecha))
+    const [actualizarPresupuesto, setActualizarPresupuesto] = useState(false)
+
+    const mutation = useMutation({
+        mutationFn: payload => api.patch(`/ventas/${venta.id}/fecha`, payload),
+        onSuccess: async () => {
+            await Promise.all([
+                qc.invalidateQueries(['ventas']),
+                qc.invalidateQueries(['ventas-optimizado']),
+                qc.invalidateQueries(['presupuestos']),
+            ])
+            onClose()
+        },
+    })
+
+    useEffect(() => {
+        onBusyChange?.(mutation.isPending)
+        return () => onBusyChange?.(false)
+    }, [mutation.isPending, onBusyChange])
+
+    const handleSubmit = event => {
+        event.preventDefault()
+        if (!fecha) {
+            window.alert('Debes seleccionar una fecha valida.')
+            return
+        }
+        mutation.mutate({
+            fecha: buildDatePatchValue(fecha),
+            actualizar_presupuesto_relacionado: actualizarPresupuesto,
+        })
+    }
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{venta.codigo}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.45 }}>
+                    Cliente: {venta.cliente_nombre || '—'}<br />
+                    Fecha actual: {fmtDate(venta.fecha)}<br />
+                    Total: {gs(venta.total)}
+                </div>
+            </div>
+
+            <div className="form-group">
+                <label className="form-label">Nueva fecha de la venta</label>
+                <input
+                    type="date"
+                    className="form-input"
+                    value={fecha}
+                    onChange={event => setFecha(event.target.value)}
+                    required
+                    disabled={mutation.isPending}
+                />
+            </div>
+
+            {venta.presupuesto_id && (
+                <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 16, cursor: mutation.isPending ? 'not-allowed' : 'pointer', opacity: mutation.isPending ? 0.7 : 1 }}>
+                    <input
+                        type="checkbox"
+                        checked={actualizarPresupuesto}
+                        onChange={event => setActualizarPresupuesto(event.target.checked)}
+                        disabled={mutation.isPending}
+                        style={{ accentColor: 'var(--primary)', width: 16, height: 16, marginTop: 2 }}
+                    />
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.45 }}>
+                        Cambiar tambien la fecha del presupuesto vinculado para que ambos queden alineados.
+                    </span>
+                </label>
+            )}
+
+            {mutation.isError && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}>
+                    <AlertCircle size={16} /> {getErrorText(mutation.error, 'No se pudo corregir la fecha de la venta.')}
+                </div>
+            )}
+
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose} disabled={mutation.isPending}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={mutation.isPending}>
+                    <Clock size={15} /> {mutation.isPending ? 'Guardando fecha...' : 'Guardar fecha'}
+                </button>
+            </div>
+        </form>
+    )
+}
+
 const openPdfDocument = async (url, fallbackFilename = 'documento.pdf') => {
     try {
         await requestAndOpenPdf(
@@ -894,7 +992,7 @@ function ClienteFichaModal({ clienteId, onClose }) {
 }
 
 // ─── Componente Menú de Acciones ───────────────────────────────────────────────
-function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onWhatsappRetiro, onWhatsappComprobante, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
+function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onCorregirFecha, onAnular, onWhatsappRetiro, onWhatsappComprobante, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
     const [open, setOpen] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [menuPosition, setMenuPosition] = useState(null)
@@ -979,6 +1077,9 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onW
                                 <Printer size={14} style={{ marginRight: 8 }} /> {exporting ? 'Abriendo PDF...' : 'Imprimir Detalles Venta'}
                             </button>
                         )}
+                        <button className="dropdown-item" onClick={() => handleAction(() => onCorregirFecha(venta))} disabled={actionBusy}>
+                            <Clock size={14} style={{ marginRight: 8 }} /> Corregir fecha
+                        </button>
                         {puedeExportar && venta.estado !== 'ANULADA' && (
                             <button className="dropdown-item" onClick={() => handleAction(() => onWhatsappComprobante(venta))} disabled={actionBusy}>
                                 <MessageCircle size={14} style={{ marginRight: 8 }} /> {whatsappBusy ? 'Preparando...' : 'Enviar comprobante por WhatsApp'}
@@ -1039,6 +1140,8 @@ export default function VentasPage() {
     const [clienteFichaId, setClienteFichaId] = useState(null)
     const [ventaPagosModalBusy, setVentaPagosModalBusy] = useState(false)
     const [ventaAjusteModalBusy, setVentaAjusteModalBusy] = useState(false)
+    const [ventaFecha, setVentaFecha] = useState(null)
+    const [ventaFechaModalBusy, setVentaFechaModalBusy] = useState(false)
     const [seleccionadas, setSeleccionadas] = useState([])
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
@@ -1342,6 +1445,7 @@ export default function VentasPage() {
                                                 venta={v}
                                                 onPagar={setVentaPagos}
                                                 onAjustar={setVentaAjuste}
+                                                onCorregirFecha={setVentaFecha}
                                                 onWhatsappRetiro={abrirWhatsappRetiro}
                                                 onWhatsappComprobante={abrirWhatsappComprobante}
                                                 onVerFicha={(venta) => setClienteFichaId(venta.cliente_id)}
@@ -1403,6 +1507,17 @@ export default function VentasPage() {
                             setVentaAjuste(null)
                         }}
                     />
+                </Modal>
+            )}
+            {ventaFecha && (
+                <Modal
+                    title={`Corregir fecha: ${ventaFecha.codigo}`}
+                    onClose={() => setVentaFecha(null)}
+                    maxWidth="520px"
+                    closeDisabled={ventaFechaModalBusy}
+                    onCloseAttempt={() => window.alert('La fecha de la venta aun se esta guardando. Espera a que termine antes de cerrar.')}
+                >
+                    <CorregirFechaVentaModal venta={ventaFecha} onClose={() => setVentaFecha(null)} onBusyChange={setVentaFechaModalBusy} />
                 </Modal>
             )}
             {clienteFichaId && (

@@ -631,6 +631,11 @@ class PresupuestoOut(BaseModel):
         from_attributes = True
 
 
+class PresupuestoFechaUpdate(BaseModel):
+    fecha: datetime
+    actualizar_venta_relacionada: bool = False
+
+
 # ──────────────────────────────────────────────
 # VENTAS
 # ──────────────────────────────────────────────
@@ -708,6 +713,11 @@ class VentaOut(BaseModel):
     pagos: List[PagoOut] = []
     class Config:
         from_attributes = True
+
+
+class VentaFechaUpdate(BaseModel):
+    fecha: datetime
+    actualizar_presupuesto_relacionado: bool = False
 
 
 # ──────────────────────────────────────────────

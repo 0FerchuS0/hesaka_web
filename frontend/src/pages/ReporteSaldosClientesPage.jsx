@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import LoadingButton from '../components/LoadingButton'
 import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api } from '../context/AuthContext'
@@ -369,6 +370,20 @@ export default function ReporteSaldosClientesPage() {
 
             <div className="card filters-panel" style={{ marginBottom: '20px' }}>
                 <h3 style={{ marginBottom: '15px', color: 'var(--text-primary)', fontSize: '1.05rem' }}>Filtros</h3>
+                <div
+                    style={{
+                        marginBottom: 14,
+                        padding: '10px 14px',
+                        borderRadius: 12,
+                        border: '1px solid rgba(59,130,246,0.22)',
+                        background: 'rgba(37,99,235,0.08)',
+                        color: 'var(--text-muted)',
+                        fontSize: '0.85rem',
+                        lineHeight: 1.5,
+                    }}
+                >
+                    El rango de fechas filtra las ventas incluidas en la deuda mostrada y en el detalle del cliente.
+                </div>
                 <div className="filters-grid">
                     <div className="form-group">
                         <label>Desde</label>
@@ -409,7 +424,7 @@ export default function ReporteSaldosClientesPage() {
                     </div>
                 </div>
                 <div className="filters-actions" style={{ display: 'flex', gap: '10px', marginTop: '15px', flexWrap: 'wrap' }}>
-                    <button className="btn btn-primary" onClick={aplicarFiltros}>Aplicar filtros</button>
+                    <LoadingButton className="btn btn-primary" onClick={aplicarFiltros} loading={loading} loadingText="Aplicando filtros...">Aplicar filtros</LoadingButton>
                     <button className="btn btn-secondary" onClick={limpiarFiltros}>Limpiar</button>
                 </div>
             </div>

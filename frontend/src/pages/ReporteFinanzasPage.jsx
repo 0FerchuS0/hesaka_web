@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
 import { exportReportBlob } from '../utils/reportExports'
 
@@ -13,7 +14,8 @@ function fmtDate(value) {
 
 export default function ReporteFinanzasPage() {
     const [loading, setLoading] = useState(false)
-    const [exporting, setExporting] = useState(false)
+    const [exportingPdf, setExportingPdf] = useState(false)
+    const [exportingExcel, setExportingExcel] = useState(false)
     const [error, setError] = useState('')
     const [vista, setVista] = useState('todos')
     const [data, setData] = useState(null)
@@ -105,7 +107,7 @@ export default function ReporteFinanzasPage() {
 
     const exportarPDF = async () => {
         try {
-            setExporting(true)
+            setExportingPdf(true)
             const params = new URLSearchParams()
             if (filtros.desdeInicio) {
                 params.append('desde_inicio', 'true')
@@ -131,13 +133,13 @@ export default function ReporteFinanzasPage() {
         } catch (err) {
             console.error('Error exportando PDF financiero:', err)
         } finally {
-            setExporting(false)
+            setExportingPdf(false)
         }
     }
 
     const exportarExcel = async () => {
         try {
-            setExporting(true)
+            setExportingExcel(true)
             const params = new URLSearchParams()
             if (filtros.desdeInicio) {
                 params.append('desde_inicio', 'true')
@@ -162,7 +164,7 @@ export default function ReporteFinanzasPage() {
         } catch (err) {
             console.error('Error exportando Excel financiero:', err)
         } finally {
-            setExporting(false)
+            setExportingExcel(false)
         }
     }
 
@@ -252,16 +254,16 @@ export default function ReporteFinanzasPage() {
                     </div>
                 </div>
                 <div className="filters-actions" style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-                    <button className="btn btn-primary" onClick={() => cargarReporte(filtros)}>
+                    <LoadingButton className="btn btn-primary" onClick={() => cargarReporte(filtros)} loading={loading} loadingText="Aplicando filtros...">
                         Aplicar Filtros
-                    </button>
+                    </LoadingButton>
                     <div style={{ flex: 1 }} />
-                    <button className="btn" style={{ backgroundColor: '#27ae60', color: 'white' }} onClick={exportarExcel} disabled={exporting}>
-                        {exporting ? 'Exportando...' : 'Excel'}
-                    </button>
-                    <button className="btn" style={{ backgroundColor: '#e74c3c', color: 'white' }} onClick={exportarPDF} disabled={exporting}>
-                        {exporting ? 'Exportando...' : 'PDF'}
-                    </button>
+                    <LoadingButton className="btn" style={{ backgroundColor: '#27ae60', color: 'white' }} onClick={exportarExcel} loading={exportingExcel} loadingText="Exportando Excel..." disabled={exportingPdf}>
+                        Excel
+                    </LoadingButton>
+                    <LoadingButton className="btn" style={{ backgroundColor: '#e74c3c', color: 'white' }} onClick={exportarPDF} loading={exportingPdf} loadingText="Exportando PDF..." disabled={exportingExcel}>
+                        PDF
+                    </LoadingButton>
                 </div>
             </div>
 

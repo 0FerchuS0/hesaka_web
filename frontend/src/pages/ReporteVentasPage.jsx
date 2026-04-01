@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
 import { formatCurrency, formatDate } from '../utils/formatters'
 import { exportReportBlob } from '../utils/reportExports'
@@ -12,7 +13,8 @@ export default function ReporteVentasPage() {
     const primerDia = useMemo(() => new Date(hoy.getFullYear(), hoy.getMonth(), 1), [hoy])
 
     const [loading, setLoading] = useState(false)
-    const [exporting, setExporting] = useState(false)
+    const [exportingPdf, setExportingPdf] = useState(false)
+    const [exportingExcel, setExportingExcel] = useState(false)
     const [data, setData] = useState(null)
     const [error, setError] = useState('')
     const [clientes, setClientes] = useState([])
@@ -43,9 +45,12 @@ export default function ReporteVentasPage() {
     const totalCostos = Number(data?.total_costos ?? 0)
     const utilidadBrutaTotal = Number(data?.utilidad_bruta_total ?? 0)
     const totalComisiones = Number(data?.total_comisiones ?? 0)
+    const totalComisionesReferidor = Number(data?.total_comisiones_referidor ?? 0)
+    const totalComisionesBancarias = Number(data?.total_comisiones_bancarias ?? 0)
     const utilidadNeta = Number(data?.utilidad_neta ?? 0)
     const margenPromedio = Number(data?.margen_promedio ?? 0)
     const cantidadVentas = Number(data?.cantidad_ventas ?? ventas.length)
+    const ticketPromedio = Number(data?.ticket_promedio ?? 0)
 
     useEffect(() => {
         cargarReporte(filtrosAplicados)
@@ -137,7 +142,11 @@ export default function ReporteVentasPage() {
 
     const exportar = async tipo => {
         try {
-            setExporting(true)
+            if (tipo === 'pdf') {
+                setExportingPdf(true)
+            } else {
+                setExportingExcel(true)
+            }
             const params = new URLSearchParams()
             if (filtrosAplicados.fechaDesde) params.append('fecha_desde', filtrosAplicados.fechaDesde)
             if (filtrosAplicados.fechaHasta) params.append('fecha_hasta', filtrosAplicados.fechaHasta)
@@ -155,7 +164,11 @@ export default function ReporteVentasPage() {
         } catch (err) {
             console.error(`Error al exportar ${tipo.toUpperCase()}:`, err)
         } finally {
-            setExporting(false)
+            if (tipo === 'pdf') {
+                setExportingPdf(false)
+            } else {
+                setExportingExcel(false)
+            }
         }
     }
 
@@ -225,41 +238,69 @@ export default function ReporteVentasPage() {
                 </div>
 
                 <div className="filters-actions" style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-                    <button className="btn btn-primary" onClick={aplicarFiltros}>Aplicar filtros</button>
+                    <LoadingButton className="btn btn-primary" onClick={aplicarFiltros} loading={loading} loadingText="Aplicando filtros...">Aplicar filtros</LoadingButton>
                     <button className="btn btn-secondary" onClick={limpiarFiltros}>Limpiar</button>
                     <div style={{ flex: 1 }} />
-                    <button className="btn" style={{ backgroundColor: '#27ae60', color: 'white' }} onClick={() => exportar('excel')} disabled={exporting}>
-                        {exporting ? 'Cargando...' : 'Excel'}
-                    </button>
-                    <button className="btn" style={{ backgroundColor: '#e74c3c', color: 'white' }} onClick={() => exportar('pdf')} disabled={exporting}>
-                        {exporting ? 'Cargando...' : 'PDF'}
-                    </button>
+                    <LoadingButton className="btn" style={{ backgroundColor: '#27ae60', color: 'white' }} onClick={() => exportar('excel')} loading={exportingExcel} loadingText="Exportando Excel..." disabled={exportingPdf}>
+                        Excel
+                    </LoadingButton>
+                    <LoadingButton className="btn" style={{ backgroundColor: '#e74c3c', color: 'white' }} onClick={() => exportar('pdf')} loading={exportingPdf} loadingText="Exportando PDF..." disabled={exportingExcel}>
+                        PDF
+                    </LoadingButton>
                 </div>
             </div>
 
             {data && (
                 <div className="kpi-grid">
                     <div className="kpi-card" style={{ borderLeft: '4px solid #3498db' }}>
-                        <div className="kpi-title">Ingreso total</div>
+                        <div className="kpi-title">Total vendido</div>
                         <div className="kpi-value db-blue">{formatCurrency(totalVentas)}</div>
                         <div className="kpi-subtitle">{cantidadVentas} operaciones</div>
                     </div>
                     <div className="kpi-card" style={{ borderLeft: '4px solid #e74c3c' }}>
-                        <div className="kpi-title">Costo mercaderia</div>
+                        <div className="kpi-title">Costo total</div>
                         <div className="kpi-value db-red">{formatCurrency(totalCostos)}</div>
+                        <div className="kpi-subtitle">Costo real de compra cuando existe compra asociada</div>
                     </div>
                     <div className="kpi-card" style={{ borderLeft: '4px solid #f39c12' }}>
                         <div className="kpi-title">Utilidad bruta</div>
                         <div className="kpi-value db-orange">{formatCurrency(utilidadBrutaTotal)}</div>
-                        <div className="kpi-subtitle">Margen prom: {margenPromedio.toFixed(2)}%</div>
+                        <div className="kpi-subtitle">Antes de comisiones · margen prom: {margenPromedio.toFixed(2)}%</div>
                     </div>
                     <div className="kpi-card" style={{ borderLeft: '4px solid #9b59b6' }}>
-                        <div className="kpi-title">Gastos por comisiones</div>
+                        <div className="kpi-title">Comisiones totales</div>
                         <div className="kpi-value db-purple">{formatCurrency(totalComisiones)}</div>
+                        <div className="kpi-subtitle">
+                            Referidores: {formatCurrency(totalComisionesReferidor)} · Bancarias: {formatCurrency(totalComisionesBancarias)}
+                        </div>
+                    </div>
+                    <div className="kpi-card" style={{ borderLeft: '4px solid #14b8a6' }}>
+                        <div className="kpi-title">Ticket promedio</div>
+                        <div className="kpi-value" style={{ color: '#14b8a6' }}>{formatCurrency(ticketPromedio)}</div>
+                        <div className="kpi-subtitle">Promedio por venta del periodo</div>
                     </div>
                     <div className="kpi-card highlight-kpi" style={{ borderLeft: '4px solid #2ecc71', backgroundColor: 'rgba(46, 204, 113, 0.1)' }}>
                         <div className="kpi-title" style={{ color: '#2ecc71' }}>Utilidad neta</div>
                         <div className="kpi-value db-green">{formatCurrency(utilidadNeta)}</div>
+                        <div className="kpi-subtitle">Utilidad bruta menos comisiones</div>
+                    </div>
+                </div>
+            )}
+
+            {data && (
+                <div className="card" style={{ marginBottom: 20, border: '1px solid rgba(59,130,246,0.18)', background: 'linear-gradient(180deg, rgba(15,23,42,0.94) 0%, rgba(17,24,39,0.88) 100%)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Lectura del resumen</h3>
+                            <div className="page-subtitle" style={{ marginTop: 6 }}>
+                                Total vendido menos costo total = utilidad bruta. Luego se restan comisiones de referidor y bancarias para obtener utilidad neta.
+                            </div>
+                        </div>
+                        <div style={{ minWidth: 260, color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: 1.55 }}>
+                            <div><strong style={{ color: 'var(--text-primary)' }}>Margen promedio:</strong> {margenPromedio.toFixed(2)}%</div>
+                            <div><strong style={{ color: 'var(--text-primary)' }}>Ventas analizadas:</strong> {cantidadVentas}</div>
+                            <div><strong style={{ color: 'var(--text-primary)' }}>Periodo:</strong> {filtrosAplicados.fechaDesde || 'Inicio'} a {filtrosAplicados.fechaHasta || 'Hoy'}</div>
+                        </div>
                     </div>
                 </div>
             )}

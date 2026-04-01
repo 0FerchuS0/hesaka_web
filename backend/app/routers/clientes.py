@@ -69,6 +69,7 @@ from app.utils.configuracion_general import (
 )
 from app.utils.media_storage import save_logo_for_tenant
 from app.utils.excel_reporte_clientes import generar_excel_reporte_clientes
+from app.utils.filename_utils import sanitize_filename_component
 from app.utils.pdf_fichas import generar_pdf_ficha_cliente, generar_pdf_ficha_proveedor
 from app.utils.pdf_reporte_clientes import generar_pdf_reporte_clientes
 
@@ -840,7 +841,7 @@ def exportar_clientes_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": 'inline; filename="reporte_clientes.pdf"'},
+            headers={"Content-Disposition": f'inline; filename="reporte_clientes_{sanitize_filename_component(referidor.nombre if referidor else buscar, "general")}.pdf"'},
         )
     finally:
         session.close()
@@ -924,7 +925,7 @@ def exportar_ficha_cliente_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'inline; filename="ficha_cliente_{cliente_id}.pdf"'},
+            headers={"Content-Disposition": f'inline; filename="ficha_cliente_{sanitize_filename_component(cliente.nombre, "cliente")}.pdf"'},
         )
     finally:
         session.close()
@@ -1068,7 +1069,7 @@ def exportar_ficha_proveedor_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'inline; filename="ficha_proveedor_{prov_id}.pdf"'},
+            headers={"Content-Disposition": f'inline; filename="ficha_proveedor_{sanitize_filename_component(proveedor.nombre, "proveedor")}.pdf"'},
         )
     finally:
         session.close()

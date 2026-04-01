@@ -6,6 +6,7 @@ import Modal from '../components/Modal'
 import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye, MessageCircle, RotateCcw } from 'lucide-react'
 import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
+import { requestAndOpenPdf } from '../utils/fileDownloads'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -13,6 +14,8 @@ const fmtDateTime = d => d ? new Date(d).toLocaleString('es-PY', { dateStyle: 's
 const gs = v => `Gs. ${new Intl.NumberFormat('es-PY').format(v ?? 0)}`
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
+const COMPROBANTE_WHATSAPP_TEMPLATE_KEY = 'hesaka-comprobante-whatsapp-template'
+const DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE = 'Hola {cliente}, te compartimos el comprobante de tu venta {venta} de {empresa}. En este chat puedes responder cualquier consulta.'
 const getErrorText = (err, fallback) => {
     const detail = err?.response?.data?.detail
     if (typeof detail === 'string' && detail.trim()) return detail
@@ -52,28 +55,84 @@ function getRetiroWhatsappTemplate() {
     return localStorage.getItem(RETIRO_WHATSAPP_TEMPLATE_KEY) || DEFAULT_RETIRO_WHATSAPP_TEMPLATE
 }
 
-function buildRetiroWhatsappMessage(context, template = DEFAULT_RETIRO_WHATSAPP_TEMPLATE) {
-    const ventaTexto = context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : ''
-    return (template || DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
-        .replaceAll('{cliente}', context?.cliente_nombre || '')
-        .replaceAll('{venta}', ventaTexto)
-        .replaceAll('{empresa}', 'HESAKA')
+function applyWhatsappTemplate(template, replacements) {
+    return Object.entries(replacements).reduce(
+        (result, [placeholder, value]) => result.replaceAll(placeholder, value ?? ''),
+        template || '',
+    )
 }
 
-function buildRetiroWhatsappLink(context, message = '') {
+function buildRetiroWhatsappMessage(context, template = DEFAULT_RETIRO_WHATSAPP_TEMPLATE, empresa = 'HESAKA') {
+    const ventaTexto = context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : ''
+    return applyWhatsappTemplate(template || DEFAULT_RETIRO_WHATSAPP_TEMPLATE, {
+        '{cliente}': context?.cliente_nombre || '',
+        '{venta}': ventaTexto,
+        '{empresa}': empresa,
+    })
+}
+
+function buildRetiroTemplateFromMessage(message, context, empresa = 'HESAKA') {
+    let template = message || ''
+    const replacements = [
+        [context?.cliente_nombre || '', '{cliente}'],
+        [context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : '', '{venta}'],
+        [empresa || '', '{empresa}'],
+    ]
+    replacements.forEach(([value, placeholder]) => {
+        if (!value) return
+        template = template.replaceAll(value, placeholder)
+    })
+    return template
+}
+
+function buildRetiroWhatsappLink(context, message = '', empresa = 'HESAKA') {
     const telefono = normalizarTelefonoWhatsapp(context?.cliente_telefono)
     if (!telefono) return ''
-    const finalMessage = message || buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate())
+    const finalMessage = buildRetiroWhatsappMessage(context, message || getRetiroWhatsappTemplate(), empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
 }
 
-function WhatsappRetiroModal({ context, onClose }) {
-    const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
-    const whatsappLink = buildRetiroWhatsappLink(context, message)
+function getComprobanteWhatsappTemplate() {
+    if (typeof window === 'undefined') return DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE
+    return localStorage.getItem(COMPROBANTE_WHATSAPP_TEMPLATE_KEY) || DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE
+}
+
+function buildComprobanteWhatsappMessage(context, template = DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE, empresa = 'HESAKA') {
+    return applyWhatsappTemplate(template || DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE, {
+        '{cliente}': context?.cliente_nombre || '',
+        '{venta}': context?.venta_codigo || '',
+        '{empresa}': empresa,
+    })
+}
+
+function buildComprobanteTemplateFromMessage(message, context, empresa = 'HESAKA') {
+    let template = message || ''
+    const replacements = [
+        [context?.cliente_nombre || '', '{cliente}'],
+        [context?.venta_codigo || '', '{venta}'],
+        [empresa || '', '{empresa}'],
+    ]
+    replacements.forEach(([value, placeholder]) => {
+        if (!value) return
+        template = template.replaceAll(value, placeholder)
+    })
+    return template
+}
+
+function buildComprobanteWhatsappLink(context, message = '', empresa = 'HESAKA') {
+    const telefono = normalizarTelefonoWhatsapp(context?.cliente_telefono)
+    if (!telefono) return ''
+    const finalMessage = buildComprobanteWhatsappMessage(context, message || getComprobanteWhatsappTemplate(), empresa)
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
+}
+
+function WhatsappRetiroModal({ context, onClose, empresaNombre = 'HESAKA' }) {
+    const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))
+    const whatsappLink = buildRetiroWhatsappLink(context, message, empresaNombre)
 
     useEffect(() => {
-        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
-    }, [context])
+        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))
+    }, [context, empresaNombre])
 
     return (
         <div style={{ display: 'grid', gap: 16 }}>
@@ -99,16 +158,98 @@ function WhatsappRetiroModal({ context, onClose }) {
 
             <div className="flex gap-12" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
                 <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
-                    <button type="button" className="btn btn-secondary" onClick={() => setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))}>
+                    <button type="button" className="btn btn-secondary" onClick={() => setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))}>
                         <RotateCcw size={15} /> Restaurar sugerido
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={() => { localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, message); window.alert('Plantilla de retiro guardada.') }}>
+                    <button type="button" className="btn btn-secondary" onClick={() => { localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, buildRetiroTemplateFromMessage(message, context, empresaNombre)); window.alert('Plantilla de retiro guardada.') }}>
                         Guardar plantilla
                     </button>
                 </div>
                 <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
                     <button type="button" className="btn btn-secondary" onClick={onClose}>Cerrar</button>
                     <button type="button" className="btn btn-primary" disabled={!whatsappLink} onClick={() => window.open(whatsappLink, '_blank', 'noopener,noreferrer')}>
+                        <MessageCircle size={15} /> Abrir WhatsApp
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function WhatsappComprobanteModal({ context, onClose, empresaNombre = 'HESAKA' }) {
+    const [message, setMessage] = useState(() => buildComprobanteWhatsappMessage(context, getComprobanteWhatsappTemplate(), empresaNombre))
+    const [pdfOpening, setPdfOpening] = useState(false)
+    const whatsappLink = buildComprobanteWhatsappLink(context, message, empresaNombre)
+
+    useEffect(() => {
+        setMessage(buildComprobanteWhatsappMessage(context, getComprobanteWhatsappTemplate(), empresaNombre))
+    }, [context, empresaNombre])
+
+    const abrirComprobante = async () => {
+        if (!context?.pdf_url || pdfOpening) return
+        setPdfOpening(true)
+        try {
+            await requestAndOpenPdf(
+                () => api.get(context.pdf_url, { responseType: 'blob' }),
+                context?.pdf_filename || 'comprobante_venta.pdf',
+            )
+        } catch (error) {
+            window.alert(getErrorText(error, 'No se pudo abrir el comprobante.'))
+        } finally {
+            setPdfOpening(false)
+        }
+    }
+
+    return (
+        <div style={{ display: 'grid', gap: 16 }}>
+            <div className="card" style={{ marginBottom: 0, padding: '14px 16px' }}>
+                <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{context?.cliente_nombre || 'Sin cliente'}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Telefono: {context?.cliente_telefono || 'No disponible'}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Venta: {context?.venta_codigo || '-'}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Archivo sugerido: {context?.pdf_filename || 'comprobante_venta.pdf'}</div>
+                </div>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Mensaje de WhatsApp</label>
+                <textarea className="form-input" rows={6} value={message} onChange={e => setMessage(e.target.value)} style={{ resize: 'vertical' }} />
+                <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.78rem' }}>Variables utiles: {'{cliente}'}, {'{venta}'}, {'{empresa}'}</div>
+            </div>
+
+            {!whatsappLink && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}>
+                    <AlertCircle size={16} /> No se pudo convertir el telefono del cliente a un formato valido para WhatsApp.
+                </div>
+            )}
+
+            <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.18)', borderRadius: 8, padding: '10px 14px', color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.5 }}>
+                Flujo sugerido: primero abre el comprobante, luego abre WhatsApp y adjunta el PDF desde la vista previa o desde la descarga.
+            </div>
+
+            <div className="flex gap-12" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={() => setMessage(buildComprobanteWhatsappMessage(context, getComprobanteWhatsappTemplate(), empresaNombre))} disabled={pdfOpening}>
+                        <RotateCcw size={15} /> Restaurar sugerido
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => {
+                            localStorage.setItem(COMPROBANTE_WHATSAPP_TEMPLATE_KEY, buildComprobanteTemplateFromMessage(message, context, empresaNombre))
+                            window.alert('Plantilla de comprobante guardada.')
+                        }}
+                        disabled={pdfOpening}
+                    >
+                        Guardar plantilla
+                    </button>
+                </div>
+                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose} disabled={pdfOpening}>Cerrar</button>
+                    <button type="button" className="btn btn-secondary" onClick={abrirComprobante} disabled={pdfOpening}>
+                        <Printer size={15} /> {pdfOpening ? 'Generando PDF...' : 'Abrir comprobante'}
+                    </button>
+                    <button type="button" className="btn btn-primary" disabled={!whatsappLink || pdfOpening} onClick={() => window.open(whatsappLink, '_blank', 'noopener,noreferrer')}>
                         <MessageCircle size={15} /> Abrir WhatsApp
                     </button>
                 </div>
@@ -324,6 +465,30 @@ const downloadPDFPost = async (url, data) => {
     }
 }
 
+const openPdfDocument = async (url, fallbackFilename = 'documento.pdf') => {
+    try {
+        await requestAndOpenPdf(
+            () => api.get(url, { responseType: 'blob' }),
+            fallbackFilename,
+        )
+    } catch (error) {
+        console.error("Error al abrir PDF:", error)
+        alert("No se pudo cargar el PDF.")
+    }
+}
+
+const openPdfDocumentPost = async (url, data, fallbackFilename = 'documento.pdf') => {
+    try {
+        await requestAndOpenPdf(
+            () => api.post(url, data, { responseType: 'blob' }),
+            fallbackFilename,
+        )
+    } catch (error) {
+        console.error("Error al abrir PDF:", error)
+        alert(error?.response?.data?.detail || "No se pudo cargar el PDF.")
+    }
+}
+
 const METODOS_PAGO = [
     { value: 'EFECTIVO', label: '💵 Efectivo' },
     { value: 'TARJETA', label: '💳 Tarjeta' },
@@ -458,7 +623,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
         if (pdfOpeningPagoId === pagoId) return
         setPdfOpeningPagoId(pagoId)
         try {
-            await downloadPDF(`/ventas/${ventaId}/pagos/${pagoId}/pdf`)
+            await openPdfDocument(`/ventas/${ventaId}/pagos/${pagoId}/pdf`, `pago_${pagoId}.pdf`)
         } finally {
             setPdfOpeningPagoId(null)
         }
@@ -729,7 +894,7 @@ function ClienteFichaModal({ clienteId, onClose }) {
 }
 
 // ─── Componente Menú de Acciones ───────────────────────────────────────────────
-function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onWhatsappRetiro, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
+function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onWhatsappRetiro, onWhatsappComprobante, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
     const [open, setOpen] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [menuPosition, setMenuPosition] = useState(null)
@@ -758,7 +923,7 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onW
         setOpen(false)
         setExporting(true)
         try {
-            await downloadPDF(`/ventas/${venta.id}/pdf`)
+            await openPdfDocument(`/ventas/${venta.id}/pdf`, `venta_${venta.codigo || venta.id}.pdf`)
         } finally {
             setExporting(false)
         }
@@ -812,6 +977,11 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onAnular, onW
                         {puedeExportar && (
                             <button className="dropdown-item" onClick={() => handleAction(handleExport)} disabled={actionBusy}>
                                 <Printer size={14} style={{ marginRight: 8 }} /> {exporting ? 'Abriendo PDF...' : 'Imprimir Detalles Venta'}
+                            </button>
+                        )}
+                        {puedeExportar && venta.estado !== 'ANULADA' && (
+                            <button className="dropdown-item" onClick={() => handleAction(() => onWhatsappComprobante(venta))} disabled={actionBusy}>
+                                <MessageCircle size={14} style={{ marginRight: 8 }} /> {whatsappBusy ? 'Preparando...' : 'Enviar comprobante por WhatsApp'}
                             </button>
                         )}
                         {venta.estado !== 'ANULADA' && venta.estado_entrega === 'RECIBIDO' && (
@@ -875,7 +1045,14 @@ export default function VentasPage() {
     const [pdfConjuntoBusy, setPdfConjuntoBusy] = useState(false)
     const [anularBusyId, setAnularBusyId] = useState(null)
     const [whatsappRetiro, setWhatsappRetiro] = useState(null)
+    const [whatsappComprobante, setWhatsappComprobante] = useState(null)
     const [whatsappBusyId, setWhatsappBusyId] = useState(null)
+    const { data: configPublica } = useQuery({
+        queryKey: ['configuracion-general-publica'],
+        queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
+        retry: false,
+    })
+    const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
     const confirmPageNavigation = usePendingNavigationGuard(Boolean(pdfConjuntoBusy || anularBusyId), 'Hay una accion de venta aun en proceso. ¿Seguro que desea salir de esta vista?')
 
     useEffect(() => {
@@ -969,7 +1146,7 @@ export default function VentasPage() {
         }
         setPdfConjuntoBusy(true)
         try {
-            await downloadPDFPost('/ventas/pdf-multiple', { venta_ids: seleccionadasVisibles })
+            await openPdfDocumentPost('/ventas/pdf-multiple', { venta_ids: seleccionadasVisibles }, 'ventas_seleccionadas.pdf')
         } finally {
             setPdfConjuntoBusy(false)
         }
@@ -997,6 +1174,30 @@ export default function VentasPage() {
             })
         } catch (error) {
             alert(getErrorText(error, 'No se pudo preparar el mensaje de WhatsApp.'))
+        } finally {
+            setWhatsappBusyId(null)
+        }
+    }
+
+    const abrirWhatsappComprobante = async (venta) => {
+        if (!venta?.cliente_id) {
+            alert('Esta venta no tiene un cliente vinculado.')
+            return
+        }
+        try {
+            setWhatsappBusyId(venta.id)
+            const { data: cliente } = await api.get(`/clientes/${venta.cliente_id}`)
+            setWhatsappComprobante({
+                venta_id: venta.id,
+                venta_codigo: venta.codigo,
+                cliente_id: venta.cliente_id,
+                cliente_nombre: venta.cliente_nombre,
+                cliente_telefono: cliente?.telefono || '',
+                pdf_url: `/ventas/${venta.id}/pdf`,
+                pdf_filename: `${venta.cliente_nombre || 'Cliente'}_${venta.codigo || `venta_${venta.id}`}_comprobante.pdf`,
+            })
+        } catch (error) {
+            alert(getErrorText(error, 'No se pudo preparar el comprobante para WhatsApp.'))
         } finally {
             setWhatsappBusyId(null)
         }
@@ -1142,6 +1343,7 @@ export default function VentasPage() {
                                                 onPagar={setVentaPagos}
                                                 onAjustar={setVentaAjuste}
                                                 onWhatsappRetiro={abrirWhatsappRetiro}
+                                                onWhatsappComprobante={abrirWhatsappComprobante}
                                                 onVerFicha={(venta) => setClienteFichaId(venta.cliente_id)}
                                                 onAnular={(ventaId) => {
                                                     setAnularBusyId(ventaId)
@@ -1210,7 +1412,12 @@ export default function VentasPage() {
             )}
             {whatsappRetiro && (
                 <Modal title="Aviso de retiro por WhatsApp" onClose={() => setWhatsappRetiro(null)} maxWidth="680px">
-                    <WhatsappRetiroModal context={whatsappRetiro} onClose={() => setWhatsappRetiro(null)} />
+                    <WhatsappRetiroModal context={whatsappRetiro} onClose={() => setWhatsappRetiro(null)} empresaNombre={empresaNombre} />
+                </Modal>
+            )}
+            {whatsappComprobante && (
+                <Modal title="Enviar comprobante por WhatsApp" onClose={() => setWhatsappComprobante(null)} maxWidth="720px">
+                    <WhatsappComprobanteModal context={whatsappComprobante} onClose={() => setWhatsappComprobante(null)} empresaNombre={empresaNombre} />
                 </Modal>
             )}
         </div>

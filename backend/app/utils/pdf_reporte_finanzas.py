@@ -9,6 +9,33 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
+GREEN_TEXT = colors.HexColor("#15803d")
+GREEN_BG = colors.HexColor("#dcfce7")
+RED_TEXT = colors.HexColor("#b91c1c")
+RED_BG = colors.HexColor("#fee2e2")
+BLUE_TEXT = colors.HexColor("#1d4ed8")
+BLUE_BG = colors.HexColor("#dbeafe")
+AMBER_TEXT = colors.HexColor("#b45309")
+AMBER_BG = colors.HexColor("#fef3c7")
+NEUTRAL_BG = colors.HexColor("#f8fafc")
+
+
+def _build_currency_cell(value, is_negative=False):
+    prefix = "- " if is_negative else ""
+    color = RED_TEXT if is_negative else GREEN_TEXT
+    amount = f"{int(abs(value)):,}".replace(",", ".")
+    return Paragraph(
+        f'<font color="{color}"><b>{prefix}Gs. {amount}</b></font>',
+        ParagraphStyle(
+            "AmountCell",
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            alignment=TA_LEFT,
+        ),
+    )
+
+
 def generar_pdf_reporte_finanzas(
     resumen,
     config,
@@ -99,6 +126,19 @@ def generar_pdf_reporte_finanzas(
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bdc3c7")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("BACKGROUND", (0, 1), (-1, 1), GREEN_BG),
+        ("TEXTCOLOR", (0, 1), (-1, 1), GREEN_TEXT),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 2), (-1, 2), RED_BG),
+        ("TEXTCOLOR", (0, 2), (-1, 2), RED_TEXT),
+        ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 3), (-1, 3), BLUE_BG if resumen.resultado_neto >= 0 else AMBER_BG),
+        ("TEXTCOLOR", (0, 3), (-1, 3), BLUE_TEXT if resumen.resultado_neto >= 0 else AMBER_TEXT),
+        ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 9), (-1, 11), NEUTRAL_BG),
+        ("FONTNAME", (0, 9), (-1, 11), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 11), (-1, 11), BLUE_BG),
+        ("TEXTCOLOR", (0, 11), (-1, 11), BLUE_TEXT),
     ]))
     elements.append(resumen_table)
     elements.append(Spacer(1, 0.8 * cm))
@@ -116,19 +156,23 @@ def generar_pdf_reporte_finanzas(
     ]]
 
     for mov in resumen.todos:
+        es_egreso = "EGRESO" in (mov.tipo or "").upper() or "(-)" in (mov.tipo or "")
         detail_data.append([
             Paragraph(mov.fecha.strftime("%d/%m/%Y %H:%M"), cell_style),
             Paragraph(mov.origen, cell_style),
             Paragraph(mov.banco_nombre or "-", cell_style),
             Paragraph(mov.categoria or "-", cell_style),
-            Paragraph(mov.tipo, cell_style),
+            Paragraph(
+                f'<font color="{RED_TEXT if es_egreso else GREEN_TEXT}"><b>{mov.tipo}</b></font>',
+                cell_style,
+            ),
             Paragraph(mov.concepto or "-", cell_style),
             Paragraph(mov.referencia or "-", cell_style),
-            Paragraph(f"{int(mov.monto):,}".replace(",", "."), cell_style),
+            _build_currency_cell(mov.monto, es_egreso),
         ])
 
     detail_table = Table(detail_data, colWidths=[2.3 * cm, 1.7 * cm, 2.2 * cm, 2.7 * cm, 1.9 * cm, 3.6 * cm, 2.4 * cm, 1.9 * cm])
-    detail_table.setStyle(TableStyle([
+    detail_style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -139,7 +183,16 @@ def generar_pdf_reporte_finanzas(
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
+    ]
+
+    for row_index, mov in enumerate(resumen.todos, start=1):
+        es_egreso = "EGRESO" in (mov.tipo or "").upper() or "(-)" in (mov.tipo or "")
+        if es_egreso:
+            detail_style.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#fff5f5")))
+        else:
+            detail_style.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#f0fdf4")))
+
+    detail_table.setStyle(TableStyle(detail_style))
     elements.append(detail_table)
 
     doc.build(elements)

@@ -31,6 +31,7 @@ from app.utils.pdf_recibos_venta import (
     generar_recibos_ventas_concatenado,
 )
 from app.utils.pdf_presupuestos import generar_pdf_presupuesto
+from app.utils.filename_utils import sanitize_filename_component
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
 pre_router = APIRouter(prefix="/api/presupuestos", tags=["Presupuestos"])
@@ -1285,7 +1286,9 @@ def descargar_recibo_pago(
         config = session.query(ConfiguracionEmpresa).first()
         
         pdf_buffer = generar_recibo_pago_individual(pago, venta, cliente, config)
-        filename = f"{cliente.nombre if cliente else 'Cliente'}_recibo_pago_{pago.id}.pdf"
+        cliente_slug = sanitize_filename_component(cliente.nombre if cliente else None, "cliente")
+        venta_slug = sanitize_filename_component(venta.codigo if venta else None, "venta")
+        filename = f"{cliente_slug}_{venta_slug}_pago_{pago.id}.pdf"
         return StreamingResponse(
             pdf_buffer, 
             media_type="application/pdf", 
@@ -1313,7 +1316,9 @@ def descargar_recibo_venta_consolidado(
         config = session.query(ConfiguracionEmpresa).first()
         
         pdf_buffer = generar_recibo_venta_consolidado(venta, cliente, list(venta.pagos), config)
-        filename = f"{cliente.nombre if cliente else 'Cliente'}_recibo_venta_{venta.codigo}.pdf"
+        cliente_slug = sanitize_filename_component(cliente.nombre if cliente else None, "cliente")
+        venta_slug = sanitize_filename_component(venta.codigo, "venta")
+        filename = f"{cliente_slug}_{venta_slug}_comprobante.pdf"
         return StreamingResponse(
             pdf_buffer, 
             media_type="application/pdf", 
@@ -1361,7 +1366,11 @@ def descargar_recibos_ventas_multiples(
 
         config = session.query(ConfiguracionEmpresa).first()
         pdf_buffer = generar_recibos_ventas_concatenado(ventas_data, config=config)
-        nombre_archivo = f"ventas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        codigos = [sanitize_filename_component(venta.codigo, "venta") for venta in ventas[:3]]
+        sufijo = "_".join(codigos) if codigos else datetime.now().strftime('%Y%m%d_%H%M%S')
+        if len(ventas) > 3:
+            sufijo = f"{sufijo}_y_{len(ventas) - 3}_mas"
+        nombre_archivo = f"ventas_{sufijo}.pdf"
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
@@ -1389,7 +1398,9 @@ def descargar_pdf_presupuesto(
             raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
         config = session.query(ConfiguracionEmpresa).first()
         pdf_buffer = generar_pdf_presupuesto(presupuesto, config)
-        filename = f"{presupuesto.codigo}_presupuesto.pdf"
+        cliente_slug = sanitize_filename_component(presupuesto.cliente_rel.nombre if presupuesto.cliente_rel else None, "cliente")
+        codigo_slug = sanitize_filename_component(presupuesto.codigo, "presupuesto")
+        filename = f"{cliente_slug}_{codigo_slug}_presupuesto.pdf"
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",

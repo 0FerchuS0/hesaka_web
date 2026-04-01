@@ -19,8 +19,19 @@ def generar_excel_reporte_finanzas(
     font_subtitle = Font(name="Arial", size=11, italic=True)
     font_header = Font(name="Arial", size=10, bold=True, color="FFFFFF")
     font_bold = Font(name="Arial", size=10, bold=True)
+    font_income = Font(name="Arial", size=10, bold=True, color="15803D")
+    font_expense = Font(name="Arial", size=10, bold=True, color="B91C1C")
+    font_result_positive = Font(name="Arial", size=10, bold=True, color="1D4ED8")
+    font_result_negative = Font(name="Arial", size=10, bold=True, color="B45309")
     fill_header = PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
     fill_success = PatternFill(start_color="2ECC71", end_color="2ECC71", fill_type="solid")
+    fill_income = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    fill_expense = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    fill_result_positive = PatternFill(start_color="DBEAFE", end_color="DBEAFE", fill_type="solid")
+    fill_result_negative = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+    fill_neutral = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    fill_row_income = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
+    fill_row_expense = PatternFill(start_color="FFF5F5", end_color="FFF5F5", fill_type="solid")
     border = Border(
         left=Side(style="thin", color="BDC3C7"),
         right=Side(style="thin", color="BDC3C7"),
@@ -94,11 +105,28 @@ def generar_excel_reporte_finanzas(
             ws[f"B{row_idx}"].alignment = align_right
             if i in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11]:
                 ws[f"B{row_idx}"].number_format = "#,##0"
-            if i == 3:
-                ws[f"A{row_idx}"].fill = fill_success
-                ws[f"B{row_idx}"].fill = fill_success
-                ws[f"A{row_idx}"].font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
-                ws[f"B{row_idx}"].font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+            if i == 1:
+                ws[f"A{row_idx}"].fill = fill_income
+                ws[f"B{row_idx}"].fill = fill_income
+                ws[f"A{row_idx}"].font = font_income
+                ws[f"B{row_idx}"].font = font_income
+            elif i == 2:
+                ws[f"A{row_idx}"].fill = fill_expense
+                ws[f"B{row_idx}"].fill = fill_expense
+                ws[f"A{row_idx}"].font = font_expense
+                ws[f"B{row_idx}"].font = font_expense
+            elif i == 3:
+                resultado_fill = fill_result_positive if resumen.resultado_neto >= 0 else fill_result_negative
+                resultado_font = font_result_positive if resumen.resultado_neto >= 0 else font_result_negative
+                ws[f"A{row_idx}"].fill = resultado_fill
+                ws[f"B{row_idx}"].fill = resultado_fill
+                ws[f"A{row_idx}"].font = resultado_font
+                ws[f"B{row_idx}"].font = resultado_font
+            elif i in [9, 10, 11]:
+                ws[f"A{row_idx}"].fill = fill_neutral
+                ws[f"B{row_idx}"].fill = fill_neutral
+                ws[f"A{row_idx}"].font = font_bold
+                ws[f"B{row_idx}"].font = font_bold
         row_idx += 1
 
     row_idx += 2
@@ -118,6 +146,7 @@ def generar_excel_reporte_finanzas(
     row_idx += 1
 
     for mov in resumen.todos:
+        es_egreso = "EGRESO" in (mov.tipo or "").upper() or "(-)" in (mov.tipo or "")
         row_data = [
             mov.fecha.strftime("%d/%m/%Y %H:%M"),
             mov.origen,
@@ -132,11 +161,15 @@ def generar_excel_reporte_finanzas(
             cell = ws.cell(row=row_idx, column=idx)
             cell.value = value
             cell.border = border
+            cell.fill = fill_row_expense if es_egreso else fill_row_income
             if idx == 8:
                 cell.number_format = "#,##0"
                 cell.alignment = align_right
+                cell.font = font_expense if es_egreso else font_income
             elif idx in [1, 2, 3, 4, 5]:
                 cell.alignment = align_center
+                if idx == 5:
+                    cell.font = font_expense if es_egreso else font_income
             else:
                 cell.alignment = align_left
         row_idx += 1

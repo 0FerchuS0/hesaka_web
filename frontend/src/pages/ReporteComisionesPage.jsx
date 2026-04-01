@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../context/AuthContext'
+import LoadingButton from '../components/LoadingButton'
 import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { Landmark, ReceiptText, Trash2, Wallet } from 'lucide-react'
@@ -354,9 +355,9 @@ export default function ReporteComisionesPage() {
                     </div>
                 </div>
                 <div className="filters-actions" style={{ display: 'flex', gap: 10, marginTop: 15, flexWrap: 'wrap' }}>
-                    <button className="btn btn-primary" onClick={aplicarFiltros}>
+                    <LoadingButton className="btn btn-primary" onClick={aplicarFiltros} loading={loading} loadingText="Aplicando filtros...">
                         Aplicar filtros
-                    </button>
+                    </LoadingButton>
                     <button className="btn btn-secondary" onClick={limpiarFiltros}>
                         Limpiar
                     </button>

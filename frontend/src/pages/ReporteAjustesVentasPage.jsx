@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Edit, FileText, Plus, Trash2 } from 'lucide-react'
 
+import LoadingButton from '../components/LoadingButton'
 import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api } from '../context/AuthContext'
@@ -446,7 +447,7 @@ export default function ReporteAjustesVentasPage() {
                     </div>
                     <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 14, flexWrap: 'wrap' }}>
                         <button type="button" className="btn btn-secondary" onClick={limpiarFiltros}>Limpiar</button>
-                        <button type="button" className="btn btn-primary" onClick={aplicarFiltros}>Aplicar filtros</button>
+                        <LoadingButton type="button" className="btn btn-primary" onClick={aplicarFiltros} loading={loading} loadingText="Aplicando filtros...">Aplicar filtros</LoadingButton>
                     </div>
                 </div>
 

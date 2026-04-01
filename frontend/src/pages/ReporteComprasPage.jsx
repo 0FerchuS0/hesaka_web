@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
 import { exportReportBlob } from '../utils/reportExports'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
@@ -14,7 +15,8 @@ function fmtDate(value) {
 
 export default function ReporteComprasPage() {
     const [loading, setLoading] = useState(false)
-    const [exporting, setExporting] = useState(false)
+    const [exportingPdf, setExportingPdf] = useState(false)
+    const [exportingExcel, setExportingExcel] = useState(false)
     const [error, setError] = useState('')
     const [data, setData] = useState(null)
     const [proveedores, setProveedores] = useState([])
@@ -100,25 +102,25 @@ export default function ReporteComprasPage() {
 
     const exportarPDF = async () => {
         try {
-            setExporting(true)
+            setExportingPdf(true)
             const params = construirParams(filtros)
             await exportReportBlob(`/reportes/compras/pdf?${params.toString()}`, 'application/pdf', { openInNewTab: true })
         } catch (err) {
             console.error('Error exportando PDF de compras:', err)
         } finally {
-            setExporting(false)
+            setExportingPdf(false)
         }
     }
 
     const exportarExcel = async () => {
         try {
-            setExporting(true)
+            setExportingExcel(true)
             const params = construirParams(filtros)
             await exportReportBlob(`/reportes/compras/excel?${params.toString()}`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         } catch (err) {
             console.error('Error exportando Excel de compras:', err)
         } finally {
-            setExporting(false)
+            setExportingExcel(false)
         }
     }
 
@@ -188,14 +190,14 @@ export default function ReporteComprasPage() {
                     </div>
                 </div>
                 <div className="filters-actions" style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-                    <button className="btn btn-primary" onClick={() => cargarReporte(filtros)}>Aplicar Filtros</button>
+                    <LoadingButton className="btn btn-primary" onClick={() => cargarReporte(filtros)} loading={loading} loadingText="Aplicando filtros...">Aplicar Filtros</LoadingButton>
                     <div style={{ flex: 1 }} />
-                    <button className="btn" style={{ backgroundColor: '#27ae60', color: 'white' }} onClick={exportarExcel} disabled={exporting}>
-                        {exporting ? 'Exportando...' : 'Excel'}
-                    </button>
-                    <button className="btn" style={{ backgroundColor: '#e74c3c', color: 'white' }} onClick={exportarPDF} disabled={exporting}>
-                        {exporting ? 'Exportando...' : 'PDF'}
-                    </button>
+                    <LoadingButton className="btn" style={{ backgroundColor: '#27ae60', color: 'white' }} onClick={exportarExcel} loading={exportingExcel} loadingText="Exportando Excel..." disabled={exportingPdf}>
+                        Excel
+                    </LoadingButton>
+                    <LoadingButton className="btn" style={{ backgroundColor: '#e74c3c', color: 'white' }} onClick={exportarPDF} loading={exportingPdf} loadingText="Exportando PDF..." disabled={exportingExcel}>
+                        PDF
+                    </LoadingButton>
                 </div>
             </div>
 

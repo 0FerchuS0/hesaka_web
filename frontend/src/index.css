@@ -600,12 +600,20 @@ tr:hover td {
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   padding: 9px 18px;
   border-radius: var(--radius-sm);
   font-size: 0.875rem;
   font-weight: 600;
   transition: all 0.15s ease;
+}
+
+.btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .btn-primary {
@@ -647,6 +655,16 @@ tr:hover td {
 .btn-icon {
   padding: 8px;
   border-radius: 8px;
+}
+
+.btn-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
 }
 
 /* ─── Formulario ─────────────────────────────────────────────────── */

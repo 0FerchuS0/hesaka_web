@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FileText, FlaskConical } from 'lucide-react'
 
+import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
 import { exportReportBlob } from '../utils/reportExports'
 
@@ -18,6 +19,7 @@ export default function ReporteTrabajosLaboratorioPage() {
     const formatYMD = value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
 
     const [loading, setLoading] = useState(false)
+    const [exportingPdf, setExportingPdf] = useState(false)
     const [error, setError] = useState('')
     const [data, setData] = useState({ trabajos: [], total_trabajos: 0, total_saldo_pendiente: 0 })
     const [filtros, setFiltros] = useState({
@@ -55,11 +57,16 @@ export default function ReporteTrabajosLaboratorioPage() {
     const aplicarFiltros = () => setFiltrosAplicados({ ...filtros })
 
     const exportarPdf = async () => {
-        const params = new URLSearchParams()
-        if (filtrosAplicados.fechaDesde) params.append('fecha_desde', filtrosAplicados.fechaDesde)
-        if (filtrosAplicados.fechaHasta) params.append('fecha_hasta', filtrosAplicados.fechaHasta)
-        if (filtrosAplicados.buscar?.trim()) params.append('buscar', filtrosAplicados.buscar.trim())
-        await exportReportBlob(`/reportes/trabajos-laboratorio/pdf?${params.toString()}`, 'application/pdf', { openInNewTab: true })
+        try {
+            setExportingPdf(true)
+            const params = new URLSearchParams()
+            if (filtrosAplicados.fechaDesde) params.append('fecha_desde', filtrosAplicados.fechaDesde)
+            if (filtrosAplicados.fechaHasta) params.append('fecha_hasta', filtrosAplicados.fechaHasta)
+            if (filtrosAplicados.buscar?.trim()) params.append('buscar', filtrosAplicados.buscar.trim())
+            await exportReportBlob(`/reportes/trabajos-laboratorio/pdf?${params.toString()}`, 'application/pdf', { openInNewTab: true })
+        } finally {
+            setExportingPdf(false)
+        }
     }
 
     return (
@@ -69,10 +76,10 @@ export default function ReporteTrabajosLaboratorioPage() {
                     <h1 className="page-title">Trabajos en Laboratorio</h1>
                     <p className="page-subtitle">Controla ventas que siguen en laboratorio, con detalle del trabajo y saldo pendiente.</p>
                 </div>
-                <button type="button" className="btn btn-secondary" onClick={exportarPdf}>
+                <LoadingButton type="button" className="btn btn-secondary" onClick={exportarPdf} loading={exportingPdf} loadingText="Exportando PDF...">
                     <FileText size={16} />
                     PDF
-                </button>
+                </LoadingButton>
             </div>
 
             <div className="card" style={{ marginBottom: 18 }}>
@@ -90,9 +97,9 @@ export default function ReporteTrabajosLaboratorioPage() {
                         <input className="form-input" value={filtros.buscar} onChange={event => setFiltros(prev => ({ ...prev, buscar: event.target.value }))} placeholder="Codigo o cliente..." />
                     </div>
                     <div className="form-group">
-                        <button type="button" className="btn btn-primary" onClick={aplicarFiltros} style={{ width: '100%' }}>
+                        <LoadingButton type="button" className="btn btn-primary" onClick={aplicarFiltros} style={{ width: '100%' }} loading={loading} loadingText="Aplicando filtros...">
                             Aplicar filtros
-                        </button>
+                        </LoadingButton>
                     </div>
                 </div>
             </div>

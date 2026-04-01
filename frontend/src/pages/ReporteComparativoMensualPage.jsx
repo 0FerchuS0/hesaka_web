@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { BarChart3, CalendarRange, ChartColumnBig, CircleDollarSign, Gem, Percent, TrendingUp } from 'lucide-react'
 
+import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
 import { formatCurrency } from '../utils/formatters'
 
@@ -41,11 +43,18 @@ const metricCardStyle = {
     background: 'rgba(255,255,255,0.02)',
 }
 
+const panelStyle = {
+    borderRadius: 20,
+    border: '1px solid rgba(148, 163, 184, 0.14)',
+    background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.94) 0%, rgba(17, 24, 39, 0.88) 100%)',
+    boxShadow: '0 24px 60px rgba(0, 0, 0, 0.24)',
+}
+
 const headerCellStyle = {
     position: 'sticky',
     top: 0,
     zIndex: 2,
-    background: '#202431',
+    background: 'linear-gradient(180deg, #1f2432 0%, #171c28 100%)',
 }
 
 function SummaryCard({ icon, accent, accentSoft, title, value, subtitle }) {
@@ -76,6 +85,30 @@ function SummaryCard({ icon, accent, accentSoft, title, value, subtitle }) {
                     {subtitle}
                 </div>
             </div>
+        </div>
+    )
+}
+
+function SectionEyebrow({ icon: Icon, text, color = '#7dd3fc' }) {
+    return (
+        <div
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 12px',
+                borderRadius: 999,
+                background: `${color}18`,
+                color,
+                border: `1px solid ${color}26`,
+                fontSize: '0.78rem',
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+            }}
+        >
+            <Icon size={14} />
+            {text}
         </div>
     )
 }
@@ -130,18 +163,29 @@ export default function ReporteComparativoMensualPage() {
 
     return (
         <div className="page-container">
-            <header className="page-header" style={{ marginBottom: 20 }}>
+            <header
+                className="page-header"
+                style={{
+                    marginBottom: 22,
+                    padding: '22px 24px',
+                    borderRadius: 22,
+                    border: '1px solid rgba(56, 189, 248, 0.14)',
+                    background: 'radial-gradient(circle at top left, rgba(14, 165, 233, 0.12), transparent 42%), linear-gradient(180deg, rgba(6, 18, 33, 0.94) 0%, rgba(10, 18, 30, 0.88) 100%)',
+                }}
+            >
                 <div>
+                    <SectionEyebrow icon={ChartColumnBig} text="Analisis interanual" />
                     <h1 className="page-title">Reporte Comparativo Mensual (Interanual)</h1>
-                    <p className="page-subtitle">
+                    <p className="page-subtitle" style={{ maxWidth: 880 }}>
                         Replica del comparativo Python: 13 meses, con cierre mensual completo o corte acumulado por dia.
                     </p>
                 </div>
             </header>
 
-            <div className="card filters-panel" style={{ marginBottom: 20 }}>
+            <div className="card filters-panel" style={{ ...panelStyle, marginBottom: 22 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
                     <div>
+                        <SectionEyebrow icon={CalendarRange} text="Configuracion" color="#93c5fd" />
                         <h3 style={{ marginBottom: 6, color: 'var(--text-primary)', fontSize: '1.05rem' }}>Configuracion del reporte</h3>
                         <div className="page-subtitle">
                             Elige si quieres revisar cierre mensual completo o un corte acumulado hasta un dia especifico.
@@ -162,10 +206,10 @@ export default function ReporteComparativoMensualPage() {
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1.3fr) minmax(220px, 1fr) auto', gap: 16, alignItems: 'end' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1.3fr) minmax(220px, 1fr) auto', gap: 18, alignItems: 'end' }}>
                     <div className="form-group">
                         <label>Tipo de comparativo</label>
-                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
                             <button
                                 type="button"
                                 className={`btn ${filtros.modo === 'MES' ? 'btn-primary' : 'btn-secondary'}`}
@@ -210,9 +254,9 @@ export default function ReporteComparativoMensualPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        <button className="btn btn-primary" onClick={() => setFiltrosAplicados({ ...filtros })} disabled={loading}>
-                            {loading ? 'Generando...' : 'Generar reporte'}
-                        </button>
+                        <LoadingButton className="btn btn-primary" onClick={() => setFiltrosAplicados({ ...filtros })} loading={loading} loadingText="Generando reporte...">
+                            Generar reporte
+                        </LoadingButton>
                     </div>
                 </div>
             </div>
@@ -227,7 +271,7 @@ export default function ReporteComparativoMensualPage() {
                     }}
                 >
                     <SummaryCard
-                        icon="$"
+                        icon={<CircleDollarSign size={24} />}
                         accent="#38bdf8"
                         accentSoft="rgba(56, 189, 248, 0.14)"
                         title="Ventas acumuladas"
@@ -235,7 +279,7 @@ export default function ReporteComparativoMensualPage() {
                         subtitle={`${filas.length} periodos comparados`}
                     />
                     <SummaryCard
-                        icon="%"
+                        icon={<Percent size={24} />}
                         accent="#f59e0b"
                         accentSoft="rgba(245, 158, 11, 0.14)"
                         title="Comisiones acumuladas"
@@ -243,7 +287,7 @@ export default function ReporteComparativoMensualPage() {
                         subtitle="Total de comisiones del comparativo"
                     />
                     <SummaryCard
-                        icon="+"
+                        icon={<TrendingUp size={24} />}
                         accent="#22c55e"
                         accentSoft="rgba(34, 197, 94, 0.14)"
                         title="Utilidad neta acumulada"
@@ -251,7 +295,7 @@ export default function ReporteComparativoMensualPage() {
                         subtitle={`Margen promedio ${formatPercent(promedioMargen)}`}
                     />
                     <SummaryCard
-                        icon="*"
+                        icon={<Gem size={22} />}
                         accent="#a855f7"
                         accentSoft="rgba(168, 85, 247, 0.14)"
                         title="Mejor mes"
@@ -262,9 +306,10 @@ export default function ReporteComparativoMensualPage() {
             )}
 
             {filaActual && (
-                <div className="card" style={{ marginBottom: 20 }}>
+                <div className="card" style={{ ...panelStyle, marginBottom: 20 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
                         <div>
+                            <SectionEyebrow icon={BarChart3} text="Lectura rapida" color="#86efac" />
                             <h3 style={{ color: 'var(--text-primary)', fontSize: '1.05rem', marginBottom: 6 }}>Lectura del periodo actual</h3>
                             <div className="page-subtitle">
                                 Resumen rapido del periodo de referencia para ubicar tendencia, ventas y comparativos sin leer toda la tabla.
@@ -286,7 +331,7 @@ export default function ReporteComparativoMensualPage() {
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-                        <div style={metricCardStyle}>
+                        <div style={{ ...metricCardStyle, background: 'linear-gradient(180deg, rgba(59,130,246,0.08), rgba(255,255,255,0.02))' }}>
                             <div className="kpi-title">Periodo de referencia</div>
                             <div style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: '1.2rem', marginTop: 8 }}>{filaActual.mes_anio}</div>
                             <div className="kpi-subtitle" style={{ marginTop: 6 }}>
@@ -294,13 +339,13 @@ export default function ReporteComparativoMensualPage() {
                             </div>
                         </div>
 
-                        <div style={metricCardStyle}>
+                        <div style={{ ...metricCardStyle, background: 'linear-gradient(180deg, rgba(14,165,233,0.08), rgba(255,255,255,0.02))' }}>
                             <div className="kpi-title">Ventas del periodo</div>
                             <div style={{ color: '#93c5fd', fontWeight: 800, fontSize: '1.2rem', marginTop: 8 }}>{formatCurrency(filaActual.total_ventas)}</div>
                             <div className="kpi-subtitle" style={{ marginTop: 6 }}>{filaActual.cantidad_ventas} ventas registradas</div>
                         </div>
 
-                        <div style={metricCardStyle}>
+                        <div style={{ ...metricCardStyle, background: 'linear-gradient(180deg, rgba(245,158,11,0.08), rgba(255,255,255,0.02))' }}>
                             <div className="kpi-title">Vs mes anterior</div>
                             <div style={{ color: getVariationColor(filaActual.variacion_vs_mes_anterior), fontWeight: 800, fontSize: '1.2rem', marginTop: 8 }}>
                                 {formatPercent(filaActual.variacion_vs_mes_anterior)}
@@ -310,7 +355,7 @@ export default function ReporteComparativoMensualPage() {
                             </div>
                         </div>
 
-                        <div style={metricCardStyle}>
+                        <div style={{ ...metricCardStyle, background: 'linear-gradient(180deg, rgba(168,85,247,0.08), rgba(255,255,255,0.02))' }}>
                             <div className="kpi-title">Vs mismo mes ano anterior</div>
                             <div style={{ color: getVariationColor(filaActual.variacion_vs_mismo_mes_ano_anterior), fontWeight: 800, fontSize: '1.2rem', marginTop: 8 }}>
                                 {formatPercent(filaActual.variacion_vs_mismo_mes_ano_anterior)}
@@ -323,9 +368,10 @@ export default function ReporteComparativoMensualPage() {
                 </div>
             )}
 
-            <div className="card">
+            <div className="card" style={panelStyle}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
                     <div>
+                        <SectionEyebrow icon={BarChart3} text="Tabla comparativa" color="#c4b5fd" />
                         <h3 style={{ color: 'var(--text-primary)', fontSize: '1.05rem', marginBottom: 6 }}>Detalle comparativo</h3>
                         <div className="page-subtitle">
                             Azul para ventas, rojo para costos, verde para utilidad neta y badges para margen y variaciones.

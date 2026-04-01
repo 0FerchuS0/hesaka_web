@@ -6,6 +6,7 @@ import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList } from 'lucide-react'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
+import { requestAndOpenPdf } from '../utils/fileDownloads'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -25,11 +26,10 @@ const addMonthsToDateInput = (baseValue, months) => {
     return formatDateInputValue(next)
 }
 const abrirPresupuestoPdf = async presupuestoId => {
-    const response = await api.get(`/presupuestos/${presupuestoId}/pdf`, { responseType: 'blob' })
-    const file = new Blob([response.data], { type: 'application/pdf' })
-    const fileURL = URL.createObjectURL(file)
-    window.open(fileURL, '_blank')
-    setTimeout(() => URL.revokeObjectURL(fileURL), 30000)
+    await requestAndOpenPdf(
+        () => api.get(`/presupuestos/${presupuestoId}/pdf`, { responseType: 'blob' }),
+        `presupuesto_${presupuestoId}.pdf`,
+    )
 }
 const estadoBadge = e => {
     const m = { PENDIENTE: 'badge-yellow', VENDIDO: 'badge-green', VENCIDO: 'badge-red', CANCELADO: 'badge-gray' }

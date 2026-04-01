@@ -48,6 +48,7 @@ from app.schemas.schemas import (
 )
 from app.utils.auth import get_current_user
 from app.utils.excel_historial_pagos_proveedor import generar_excel_historial_pagos_proveedor
+from app.utils.filename_utils import sanitize_filename_component
 from app.utils.pdf_compra import generar_pdf_compra
 from app.utils.pdf_pago_proveedor import generar_pdf_pago_proveedor
 
@@ -924,7 +925,9 @@ def descargar_pago_proveedor_pdf(
 
         config = session.query(ConfiguracionEmpresa).first()
         pdf_buffer = generar_pdf_pago_proveedor(grupo, config)
-        filename = f"pago_proveedor_{grupo_id}.pdf"
+        proveedor_slug = sanitize_filename_component(grupo.get("proveedor_nombre"), "proveedor")
+        documento_slug = sanitize_filename_component("_".join(sorted(grupo.get("documentos") or []))[:80], "pago")
+        filename = f"{proveedor_slug}_{documento_slug}_pago.pdf"
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
@@ -1707,7 +1710,9 @@ def descargar_compra_pdf(
 
         config = session.query(ConfiguracionEmpresa).first()
         pdf_buffer = generar_pdf_compra(compra, config)
-        filename = f"compra_{compra.id}.pdf"
+        proveedor_slug = sanitize_filename_component(compra.proveedor_rel.nombre if compra.proveedor_rel else None, "proveedor")
+        documento_slug = sanitize_filename_component(compra.nro_factura or compra.nro_documento_original or f"compra_{compra.id}", "compra")
+        filename = f"{proveedor_slug}_{documento_slug}_compra.pdf"
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",

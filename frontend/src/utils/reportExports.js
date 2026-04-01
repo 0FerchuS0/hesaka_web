@@ -1,22 +1,21 @@
 import { api } from '../context/AuthContext'
+import { requestAndDownloadFile, requestAndOpenPdf } from './fileDownloads'
 
 export async function exportReportBlob(url, contentType, { openInNewTab = false } = {}) {
-    const response = await api.get(url, { responseType: 'blob' })
-    const blob = new Blob([response.data], { type: contentType })
-    const objectUrl = window.URL.createObjectURL(blob)
+    const normalizedContentType = String(contentType || '').toLowerCase()
+    const isPdf = normalizedContentType.includes('pdf')
 
-    if (openInNewTab) {
-        window.open(objectUrl, '_blank', 'noopener,noreferrer')
-        window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000)
+    if (isPdf || openInNewTab) {
+        await requestAndOpenPdf(
+            () => api.get(url, { responseType: 'blob' }),
+            'documento.pdf',
+        )
         return
     }
 
-    const link = document.createElement('a')
-    link.href = objectUrl
-    link.target = '_blank'
-    link.rel = 'noopener noreferrer'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000)
+    await requestAndDownloadFile(
+        () => api.get(url, { responseType: 'blob' }),
+        'archivo',
+        contentType,
+    )
 }

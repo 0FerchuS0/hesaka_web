@@ -19,8 +19,14 @@ from app.utils.excel_reporte_compras import generar_excel_reporte_compras
 from app.utils.pdf_estado_cuenta_cliente import generar_pdf_estado_cuenta_cliente
 from app.utils.pdf_reporte_trabajos_lab import generar_pdf_reporte_trabajos_lab
 from app.utils.configuracion_general import obtener_canal_principal
+from app.utils.filename_utils import build_period_suffix, sanitize_filename_component
 
 router = APIRouter(prefix="/api/reportes", tags=["Reportes"])
+
+
+def _build_report_filename(base: str, fecha_desde=None, fecha_hasta=None, extension: str = "pdf") -> str:
+    periodo = build_period_suffix(fecha_desde, fecha_hasta)
+    return f"{base}_{periodo}.{extension}"
 
 # --- Esquemas de Respuesta ---
 class ReporteVentaOut(BaseModel):
@@ -44,9 +50,12 @@ class ResumenReporteVentasOut(BaseModel):
     total_costos: float
     utilidad_bruta_total: float
     total_comisiones: float
+    total_comisiones_referidor: float = 0.0
+    total_comisiones_bancarias: float = 0.0
     utilidad_neta: float
     margen_promedio: float
     cantidad_ventas: int
+    ticket_promedio: float = 0.0
     por_vendedor: List["ResumenGrupoVentasOut"] = Field(default_factory=list)
     por_canal: List["ResumenGrupoVentasOut"] = Field(default_factory=list)
 
@@ -553,74 +562,6 @@ def _obtener_comparativa_dashboard(session: Session) -> ComparativaVentasDashboa
     )
 
 
-def _obtener_metricas_ventas_periodo(session: Session, fecha_desde: datetime, fecha_hasta: datetime):
-    ventas_db = (
-        session.query(Venta)
-        .filter(
-            Venta.fecha >= fecha_desde,
-            Venta.fecha <= fecha_hasta,
-            Venta.estado.notin_(['ANULADO', 'ANULADA'])
-        )
-        .order_by(Venta.fecha.desc())
-        .all()
-    )
-
-    total_ventas = 0.0
-    total_costos = 0.0
-    total_comisiones_referidor = 0.0
-    total_comisiones_bancarias = 0.0
-    compra_costos_por_item = {
-        int(row.presupuesto_item_id): float(row.costo_real_total or 0.0)
-        for row in session.query(
-            CompraDetalle.presupuesto_item_id.label("presupuesto_item_id"),
-            func.coalesce(func.sum(CompraDetalle.subtotal), 0.0).label("costo_real_total"),
-        )
-        .filter(CompraDetalle.presupuesto_item_id.isnot(None))
-        .group_by(CompraDetalle.presupuesto_item_id)
-        .all()
-    }
-
-    for venta in ventas_db:
-        total_ventas += float(venta.total or 0.0)
-
-        presupuesto = venta.presupuesto_rel
-        if presupuesto and presupuesto.items:
-            for item in presupuesto.items:
-                costo_compra_real = compra_costos_por_item.get(int(item.id), None)
-                if costo_compra_real is not None:
-                    total_costos += costo_compra_real
-                else:
-                    costo_unitario = float(getattr(item, 'costo_unitario', 0.0) or 0.0)
-                    cantidad = int(getattr(item, 'cantidad', 0) or 0)
-                    total_costos += costo_unitario * cantidad
-
-        total_comisiones_referidor += float(getattr(venta, 'comision_monto', 0.0) or 0.0)
-
-        for pago in getattr(venta, 'pagos', []) or []:
-            if pago.metodo_pago == 'TARJETA':
-                porcentaje_comision = 3.3
-                banco = getattr(pago, 'banco_rel', None)
-                if banco and getattr(banco, 'porcentaje_comision', None):
-                    porcentaje_comision = banco.porcentaje_comision
-                total_comisiones_bancarias += float(pago.monto or 0.0) * (float(porcentaje_comision) / 100.0)
-
-    utilidad_bruta = total_ventas - total_costos
-    total_comisiones = total_comisiones_referidor + total_comisiones_bancarias
-    utilidad_neta = utilidad_bruta - total_comisiones
-    cantidad_ventas = len(ventas_db)
-    ticket_promedio = (total_ventas / cantidad_ventas) if cantidad_ventas > 0 else 0.0
-
-    return {
-        'cantidad_ventas': cantidad_ventas,
-        'total_ventas': float(total_ventas),
-        'total_costos': float(total_costos),
-        'utilidad_bruta': float(utilidad_bruta),
-        'total_comisiones': float(total_comisiones),
-        'utilidad_neta': float(utilidad_neta),
-        'ticket_promedio': float(ticket_promedio),
-    }
-
-
 def _porcentaje_variacion(actual: float, base: float) -> Optional[float]:
     if base in (None, 0):
         return None
@@ -796,13 +737,28 @@ def _obtener_resumen_dashboard(session: Session) -> DashboardResumenOut:
 
     ventas_pendientes_count = (
         session.query(Venta)
-        .filter(Venta.estado == 'PENDIENTE')
+        .filter(
+            Venta.saldo > 0,
+            Venta.estado.notin_(['ANULADO', 'ANULADA']),
+        )
+        .count()
+    )
+
+    compras_pendientes_count = (
+        session.query(Compra)
+        .filter(
+            Compra.saldo > 0,
+            Compra.estado.notin_(['ANULADO', 'ANULADA']),
+        )
         .count()
     )
 
     compras_pendientes_db = (
         session.query(Compra)
-        .filter(Compra.estado == 'PENDIENTE')
+        .filter(
+            Compra.saldo > 0,
+            Compra.estado.notin_(['ANULADO', 'ANULADA']),
+        )
         .order_by(Compra.fecha.desc())
         .limit(5)
         .all()
@@ -846,7 +802,7 @@ def _obtener_resumen_dashboard(session: Session) -> DashboardResumenOut:
     return DashboardResumenOut(
         saldo_caja=float(saldo_caja or 0.0),
         ventas_pendientes_count=ventas_pendientes_count,
-        compras_pendientes_count=len(compras_pendientes_db),
+        compras_pendientes_count=compras_pendientes_count,
         ventas_recientes=[
             DashboardVentaRecienteOut(
                 id=venta.id,
@@ -1010,6 +966,7 @@ def _obtener_datos_reporte_ventas(
     total_comisiones = suma_comisiones_referidor + suma_comisiones_bancarias
     utilidad_neta = suma_utilidad_bruta - total_comisiones
     margen_prom_global = (suma_utilidad_bruta / suma_ventas * 100) if suma_ventas > 0 else 0.0
+    ticket_promedio = (suma_ventas / len(resultado_ventas)) if resultado_ventas else 0.0
     por_vendedor = [
         ResumenGrupoVentasOut(
             clave=item["clave"],
@@ -1041,9 +998,12 @@ def _obtener_datos_reporte_ventas(
         total_costos=suma_costos,
         utilidad_bruta_total=suma_utilidad_bruta,
         total_comisiones=total_comisiones,
+        total_comisiones_referidor=suma_comisiones_referidor,
+        total_comisiones_bancarias=suma_comisiones_bancarias,
         utilidad_neta=utilidad_neta,
         margen_promedio=margen_prom_global,
         cantidad_ventas=len(resultado_ventas),
+        ticket_promedio=ticket_promedio,
         por_vendedor=por_vendedor,
         por_canal=por_canal,
     )
@@ -1099,7 +1059,7 @@ def _obtener_datos_reporte_compras(
     if estado:
         query = query.filter(Compra.estado == estado)
     else:
-        query = query.filter(Compra.estado != 'ANULADO')
+        query = query.filter(Compra.estado.notin_(['ANULADO', 'ANULADA']))
     if tipo_documento:
         query = query.filter(Compra.tipo_documento == tipo_documento)
     if condicion_pago:
@@ -1407,6 +1367,11 @@ def _obtener_datos_saldos_clientes(
         )
     )
 
+    if fecha_desde:
+        query = query.filter(Venta.fecha >= inicio)
+    if fecha_hasta:
+        query = query.filter(Venta.fecha <= fin)
+
     if cliente_id:
         query = query.filter(Venta.cliente_id == cliente_id)
 
@@ -1473,6 +1438,8 @@ def _obtener_detalle_saldo_cliente(
             Venta.cliente_id == cliente_id,
             Venta.saldo > 0,
             Venta.estado.notin_(["ANULADO", "ANULADA"]),
+            Venta.fecha >= inicio,
+            Venta.fecha <= fin,
         )
         .order_by(Venta.fecha.desc())
     )
@@ -1754,7 +1721,7 @@ def exportar_reporte_ventas_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": "inline; filename=reporte_ventas.pdf"}
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_ventas", fecha_desde, fecha_hasta)}"'}
         )
     finally:
         session.close()
@@ -1790,7 +1757,7 @@ def exportar_reporte_compras_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": "inline; filename=reporte_compras.pdf"}
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_compras", fecha_desde, fecha_hasta)}"'}
         )
     finally:
         session.close()
@@ -1808,12 +1775,13 @@ def exportar_estado_cuenta_cliente_pdf(
     try:
         fecha_desde, fecha_hasta, _, _ = _inicio_fin_periodo(fecha_desde, fecha_hasta)
         detalle = _obtener_detalle_saldo_cliente(session, cliente_id, fecha_desde, fecha_hasta)
+        cliente_slug = sanitize_filename_component(detalle.cliente.nombre if detalle and detalle.cliente else None, "cliente")
         config = session.query(ConfiguracionEmpresa).first()
         pdf_buffer = generar_pdf_estado_cuenta_cliente(detalle, config, fecha_desde, fecha_hasta)
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": f"inline; filename=estado_cuenta_cliente_{cliente_id}.pdf"}
+            headers={"Content-Disposition": f'inline; filename="estado_cuenta_{cliente_slug}_{build_period_suffix(fecha_desde, fecha_hasta)}.pdf"'}
         )
     finally:
         session.close()
@@ -1849,7 +1817,7 @@ def exportar_reporte_ventas_excel(
         return StreamingResponse(
             excel_buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "inline; filename=reporte_ventas.xlsx"}
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_ventas", fecha_desde, fecha_hasta, "xlsx")}"'}
         )
     finally:
         session.close()
@@ -1885,7 +1853,7 @@ def exportar_reporte_compras_excel(
         return StreamingResponse(
             excel_buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "inline; filename=reporte_compras.xlsx"}
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_compras", fecha_desde, fecha_hasta, "xlsx")}"'}
         )
     finally:
         session.close()
@@ -1925,7 +1893,7 @@ def exportar_reporte_finanzas_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": "inline; filename=reporte_finanzas.pdf"}
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_finanzas", fecha_desde, fecha_hasta)}"'}
         )
     finally:
         session.close()
@@ -1965,7 +1933,7 @@ def exportar_reporte_finanzas_excel(
         return StreamingResponse(
             excel_buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "inline; filename=reporte_finanzas.xlsx"}
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_finanzas", fecha_desde, fecha_hasta, "xlsx")}"'}
         )
     finally:
         session.close()
@@ -2054,7 +2022,7 @@ def exportar_reporte_trabajos_laboratorio_pdf(
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": "inline; filename=reporte_trabajos_laboratorio.pdf"},
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_trabajos_laboratorio", fecha_desde, fecha_hasta)}"'},
         )
     finally:
         session.close()

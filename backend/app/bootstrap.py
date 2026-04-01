@@ -4,15 +4,171 @@ from urllib.parse import urlparse
 
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_admin_session, get_session_for_tenant, init_tenant_db
 from app.models.admin_models import Tenant
-from app.models.models import Usuario
+from app.models.models import Atributo, Categoria, CategoriaGasto, ConfiguracionEmpresa, Producto, Usuario
 from app.utils.auth import hash_password
 
 
 logger = logging.getLogger(__name__)
+
+
+PROTECTED_HESAKA_ADMIN = {
+    "email": "admin@hesaka.com",
+    "password": "admin123",
+    "name": "Administrador HESAKA",
+}
+
+
+def _seed_categoria(
+    session: Session,
+    nombre: str,
+    prefijo: str,
+    descripcion: str | None = None,
+    categoria_padre=None,
+) -> Categoria:
+    categoria = session.query(Categoria).filter(Categoria.nombre == nombre).first()
+    if not categoria:
+        categoria = Categoria(
+            nombre=nombre,
+            prefijo=prefijo,
+            descripcion=descripcion,
+            categoria_padre=categoria_padre,
+        )
+        session.add(categoria)
+        session.flush()
+        return categoria
+
+    categoria.prefijo = categoria.prefijo or prefijo
+    if descripcion and not categoria.descripcion:
+        categoria.descripcion = descripcion
+    if categoria_padre and not categoria.categoria_padre_id:
+        categoria.categoria_padre = categoria_padre
+    session.flush()
+    return categoria
+
+
+def _seed_categoria_gasto(
+    session: Session,
+    nombre: str,
+    descripcion: str | None = None,
+    categoria_padre=None,
+) -> CategoriaGasto:
+    categoria = session.query(CategoriaGasto).filter(CategoriaGasto.nombre == nombre).first()
+    if not categoria:
+        categoria = CategoriaGasto(
+            nombre=nombre,
+            descripcion=descripcion,
+            categoria_padre=categoria_padre,
+        )
+        session.add(categoria)
+        session.flush()
+        return categoria
+
+    if descripcion and not categoria.descripcion:
+        categoria.descripcion = descripcion
+    if categoria_padre and not categoria.categoria_padre_id:
+        categoria.categoria_padre = categoria_padre
+    session.flush()
+    return categoria
+
+
+def _seed_default_catalogs(tenant_slug: str, tenant_name: str, tenant_email: str, tenant_phone: str) -> None:
+    tenant_session = None
+    try:
+        tenant_session = get_session_for_tenant(tenant_slug)
+
+        config = tenant_session.query(ConfiguracionEmpresa).first()
+        if not config:
+            config = ConfiguracionEmpresa(
+                id=1,
+                nombre=tenant_name,
+                email=tenant_email,
+                telefono=tenant_phone or None,
+            )
+            tenant_session.add(config)
+        else:
+            if not (config.nombre or "").strip():
+                config.nombre = tenant_name
+            if tenant_email and not config.email:
+                config.email = tenant_email
+            if tenant_phone and not config.telefono:
+                config.telefono = tenant_phone
+
+        atributo_uso = tenant_session.query(Atributo).filter(Atributo.nombre == "Uso").first()
+        if not atributo_uso:
+            atributo_uso = Atributo(nombre="Uso")
+            tenant_session.add(atributo_uso)
+            tenant_session.flush()
+
+        armazones = _seed_categoria(tenant_session, "Armazones", "ARM", "Armazones y monturas opticas")
+        cristales = _seed_categoria(tenant_session, "Cristales", "CRI", "Cristales oftalmicos y tratamientos")
+        lentes_contacto = _seed_categoria(tenant_session, "Lentes de contacto", "LCO", "Lentes de contacto y soluciones")
+        accesorios = _seed_categoria(tenant_session, "Accesorios", "ACC", "Accesorios opticos y de limpieza")
+        servicios = _seed_categoria(tenant_session, "Servicios y varios", "SER", "Servicios, repuestos y ventas comodin")
+
+        _seed_categoria(tenant_session, "Recetados", "ARMR", categoria_padre=armazones)
+        _seed_categoria(tenant_session, "De sol", "ARMS", categoria_padre=armazones)
+        _seed_categoria(tenant_session, "Monofocales", "CRIM", categoria_padre=cristales)
+        _seed_categoria(tenant_session, "Bifocales", "CRIB", categoria_padre=cristales)
+        _seed_categoria(tenant_session, "Multifocales / progresivos", "CRIP", categoria_padre=cristales)
+        _seed_categoria(tenant_session, "Blandos", "LCOB", categoria_padre=lentes_contacto)
+        _seed_categoria(tenant_session, "Rigidos", "LCOR", categoria_padre=lentes_contacto)
+        _seed_categoria(tenant_session, "Soluciones", "LCOS", categoria_padre=lentes_contacto)
+        _seed_categoria(tenant_session, "Limpieza", "ACCL", categoria_padre=accesorios)
+        _seed_categoria(tenant_session, "Estuches y extras", "ACCE", categoria_padre=accesorios)
+        categoria_varios = _seed_categoria(tenant_session, "Varios", "VAR", categoria_padre=servicios)
+
+        if atributo_uso not in categoria_varios.atributos_disponibles:
+            categoria_varios.atributos_disponibles.append(atributo_uso)
+
+        producto_varios = tenant_session.query(Producto).filter(Producto.codigo == "VAR00001").first()
+        if not producto_varios:
+            producto_varios = Producto(
+                codigo="VAR00001",
+                nombre="VARIOS",
+                categoria_rel=categoria_varios,
+                precio_venta=0.0,
+                costo=0.0,
+                costo_variable=True,
+                stock_actual=0,
+                impuesto=10,
+                descripcion="Producto comodin para ventas personalizadas o conceptos varios.",
+                activo=True,
+                bajo_pedido=False,
+            )
+            tenant_session.add(producto_varios)
+            tenant_session.flush()
+        else:
+            producto_varios.nombre = "VARIOS"
+            producto_varios.categoria_rel = categoria_varios
+            producto_varios.costo_variable = True
+            if producto_varios.costo is None:
+                producto_varios.costo = 0.0
+            producto_varios.precio_venta = producto_varios.precio_venta or 0.0
+            producto_varios.activo = True
+
+        if atributo_uso not in producto_varios.atributos:
+            producto_varios.atributos.append(atributo_uso)
+
+        gastos_operativos = _seed_categoria_gasto(tenant_session, "Gastos operativos", "Gastos generales de la optica")
+        _seed_categoria_gasto(tenant_session, "Alquiler", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Sueldos", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Servicios basicos", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Internet y telefonia", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Impuestos", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Marketing", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Insumos", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Mantenimiento", categoria_padre=gastos_operativos)
+        _seed_categoria_gasto(tenant_session, "Movilidad", categoria_padre=gastos_operativos)
+
+        tenant_session.commit()
+    finally:
+        if tenant_session:
+            tenant_session.close()
 
 
 def _maintenance_connection():
@@ -38,32 +194,38 @@ def _database_exists(cursor, db_name: str) -> bool:
     return cursor.fetchone() is not None
 
 
-def ensure_tenant_admin_user(tenant_slug: str) -> None:
-    admin_email = os.getenv("HESAKA_ADMIN_EMAIL", "admin@hesaka.com")
-    admin_password = os.getenv("HESAKA_ADMIN_PASSWORD", "admin123")
-    admin_name = os.getenv("HESAKA_ADMIN_NAME", "Admin HESAKA")
+def ensure_tenant_admin_users(tenant_slug: str) -> None:
+    tenant_admin = {
+        "email": os.getenv("HESAKA_ADMIN_EMAIL", "admin@hesaka.com"),
+        "password": os.getenv("HESAKA_ADMIN_PASSWORD", "admin123"),
+        "name": os.getenv("HESAKA_ADMIN_NAME", "Administrador del cliente"),
+    }
+    protected_admins: list[dict[str, str]] = [PROTECTED_HESAKA_ADMIN]
+    if tenant_admin["email"].strip().lower() != PROTECTED_HESAKA_ADMIN["email"]:
+        protected_admins.append(tenant_admin)
 
     tenant_session = None
     try:
         tenant_session = get_session_for_tenant(tenant_slug)
-        has_users = tenant_session.query(Usuario.id).first() is not None
-        admin_user = tenant_session.query(Usuario).filter(Usuario.email == admin_email).first()
+        for admin_data in protected_admins:
+            admin_email = admin_data["email"].strip().lower()
+            admin_user = tenant_session.query(Usuario).filter(Usuario.email == admin_email).first()
 
-        if admin_user:
-            admin_user.nombre_completo = admin_name
+            if not admin_user:
+                admin_user = Usuario(
+                    email=admin_email,
+                    hashed_password=hash_password(admin_data["password"]),
+                    nombre_completo=admin_data["name"],
+                    rol="ADMIN",
+                    activo=True,
+                )
+                tenant_session.add(admin_user)
+                continue
+
+            admin_user.nombre_completo = admin_data["name"]
             admin_user.rol = "ADMIN"
             admin_user.activo = True
-            if not admin_user.hashed_password:
-                admin_user.hashed_password = hash_password(admin_password)
-        elif not has_users:
-            admin_user = Usuario(
-                email=admin_email,
-                hashed_password=hash_password(admin_password),
-                nombre_completo=admin_name,
-                rol="ADMIN",
-                activo=True,
-            )
-            tenant_session.add(admin_user)
+            admin_user.hashed_password = hash_password(admin_data["password"])
 
         tenant_session.commit()
     finally:
@@ -117,6 +279,7 @@ def bootstrap_default_tenant():
         admin_session.close()
 
     init_tenant_db(tenant_slug)
-    ensure_tenant_admin_user(tenant_slug)
+    ensure_tenant_admin_users(tenant_slug)
+    _seed_default_catalogs(tenant_slug, tenant_name, tenant_email, tenant_phone)
 
     logger.info("Bootstrap del tenant '%s' completado.", tenant_slug)

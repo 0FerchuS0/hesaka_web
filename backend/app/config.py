@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = "password"
     TENANT_DB_PREFIX: str = "hesaka_"
     DEFAULT_TENANT_SLUG: str | None = None
+    REPLICA_POSTGRES_HOST: str = "localhost"
+    REPLICA_POSTGRES_PORT: int = 5432
+    REPLICA_POSTGRES_USER: str = "postgres"
+    REPLICA_POSTGRES_PASSWORD: str = "password"
+    REPLICA_TENANT_DB_PREFIX: str = "hesaka_"
+    SYNC_BATCH_SIZE: int = 1000
 
     # JWT
     SECRET_KEY: str = "cambia_esta_clave_secreta_en_produccion"
@@ -44,6 +50,13 @@ class Settings(BaseSettings):
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{db_name}"
+        )
+
+    def get_replica_db_url(self, tenant_slug: str) -> str:
+        db_name = f"{self.REPLICA_TENANT_DB_PREFIX}{tenant_slug}"
+        return (
+            f"postgresql://{self.REPLICA_POSTGRES_USER}:{self.REPLICA_POSTGRES_PASSWORD}"
+            f"@{self.REPLICA_POSTGRES_HOST}:{self.REPLICA_POSTGRES_PORT}/{db_name}"
         )
 
     @property

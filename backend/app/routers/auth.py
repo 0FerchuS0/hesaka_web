@@ -20,6 +20,11 @@ from app.utils.auth import create_access_token, get_current_user, hash_password,
 
 router = APIRouter(prefix="/api/auth", tags=["Autenticacion"])
 
+PROTECTED_USER_EMAILS = {
+    "admin@hesaka.com",
+    "admkoeti@hesaka.com",
+}
+
 
 def parse_permisos(usuario: Usuario) -> list[str]:
     raw = usuario.permisos_json or "[]"
@@ -152,6 +157,11 @@ def actualizar_estado_usuario(
         usuario = session.query(Usuario).filter(Usuario.id == usuario_id).first()
         if not usuario:
             raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+        if not data.activo and (usuario.email or "").strip().lower() in PROTECTED_USER_EMAILS:
+            raise HTTPException(
+                status_code=400,
+                detail="Este usuario protegido no se puede desactivar.",
+            )
         usuario.activo = data.activo
         session.commit()
         session.refresh(usuario)

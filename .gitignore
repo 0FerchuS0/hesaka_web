@@ -55,4 +55,8 @@ dist/
 
 # Local backups / database dumps
 backend/backups/
+backend/media/
+backend/venv/
+backend/__pycache__/
+frontend/.env
 *.dump

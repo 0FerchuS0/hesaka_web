@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import psycopg2
 from fastapi import UploadFile
 
-from app.bootstrap import ensure_tenant_admin_user
+from app.bootstrap import ensure_tenant_admin_users
 from app.config import settings
 from app.database import Base, dispose_tenant_engine, init_tenant_db
 from app.models import clinica_models, models  # noqa: F401
@@ -198,7 +198,7 @@ def _restore_backup_path(tenant_slug: str, backup_path: Path) -> BackupInfo:
     )
     dispose_tenant_engine(tenant_slug)
     init_tenant_db(tenant_slug)
-    ensure_tenant_admin_user(tenant_slug)
+    ensure_tenant_admin_users(tenant_slug)
 
     stat = backup_path.stat()
     return BackupInfo(

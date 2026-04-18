@@ -4,9 +4,11 @@ import { AlertCircle, CheckSquare, Eye, FileText, MessageCircle, PackagePlus, Pe
 import { createPortal } from 'react-dom'
 
 import Modal from '../components/Modal'
+import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api, useAuth } from '../context/AuthContext'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
+import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
@@ -822,6 +824,8 @@ function PagoCompraModal({ compra, onClose }) {
     const [metodoPago, setMetodoPago] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
     const [nroComprobante, setNroComprobante] = useState('')
+    const { data: jornadaEstado } = useFinancialJornadaStatus()
+    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
 
     const { data: pagos = [], isLoading: pagosLoading } = useQuery({
         queryKey: ['compra-pagos', compra.id],
@@ -860,6 +864,7 @@ function PagoCompraModal({ compra, onClose }) {
 
     const handleSubmit = event => {
         event.preventDefault()
+        if (!jornadaAbierta) return
         registrarPago.mutate({
             monto: parseFloat(monto) || 0,
             metodo_pago: metodoPago,
@@ -870,6 +875,7 @@ function PagoCompraModal({ compra, onClose }) {
 
     return (
         <form onSubmit={handleSubmit}>
+            <FinancialJornadaNotice compact />
             <div className="card mb-16" style={{ padding: '14px 16px' }}>
                 <div style={{ display: 'grid', gap: 6 }}>
                     <div style={{ fontWeight: 700 }}>{compra.proveedor_nombre || 'Sin proveedor'}</div>
@@ -901,7 +907,7 @@ function PagoCompraModal({ compra, onClose }) {
                                         <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{pago.banco_nombre || '-'}</td>
                                         <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{pago.nro_comprobante || '-'}</td>
                                         <td style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--success)' }}>Gs. {fmt(pago.monto)}</td>
-                                        <td><button type="button" className="btn btn-danger btn-sm" onClick={() => { if (confirm('¿Eliminar este pago? Se revertirá en caja o banco.')) eliminarPago.mutate(pago.id) }} disabled={eliminarPago.isPending}>Eliminar</button></td>
+                                        <td><button type="button" className="btn btn-danger btn-sm" onClick={() => { if (confirm('¿Eliminar este pago? Se revertirá en caja o banco.')) eliminarPago.mutate(pago.id) }} disabled={eliminarPago.isPending || !jornadaAbierta}>Eliminar</button></td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -911,14 +917,14 @@ function PagoCompraModal({ compra, onClose }) {
             </div>
 
             <div className="grid-2 mb-16">
-                <div className="form-group"><label className="form-label">Monto a Pagar</label><input type="number" min="0" max={compra.saldo || 0} step="0.01" className="form-input" value={monto} onChange={event => setMonto(event.target.value)} /></div>
-                <div className="form-group"><label className="form-label">Metodo de Pago</label><select className="form-select" value={metodoPago} onChange={event => setMetodoPago(event.target.value)}><option value="EFECTIVO">EFECTIVO</option><option value="TRANSFERENCIA">TRANSFERENCIA</option><option value="TARJETA">TARJETA</option><option value="CHEQUE">CHEQUE</option></select></div>
-                <div className="form-group"><label className="form-label">Banco</label><select className="form-select" value={bancoId} onChange={event => setBancoId(event.target.value)} disabled={metodoPago === 'EFECTIVO'}><option value="">Seleccionar banco</option>{bancos.map(banco => <option key={banco.id} value={banco.id}>{banco.nombre_banco}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">Nro. Comprobante</label><input className="form-input" value={nroComprobante} onChange={event => setNroComprobante(event.target.value)} placeholder="Opcional" /></div>
+                <div className="form-group"><label className="form-label">Monto a Pagar</label><input type="number" min="0" max={compra.saldo || 0} step="0.01" className="form-input" value={monto} onChange={event => setMonto(event.target.value)} disabled={!jornadaAbierta || registrarPago.isPending} /></div>
+                <div className="form-group"><label className="form-label">Metodo de Pago</label><select className="form-select" value={metodoPago} onChange={event => setMetodoPago(event.target.value)} disabled={!jornadaAbierta || registrarPago.isPending}><option value="EFECTIVO">EFECTIVO</option><option value="TRANSFERENCIA">TRANSFERENCIA</option><option value="TARJETA">TARJETA</option><option value="CHEQUE">CHEQUE</option></select></div>
+                <div className="form-group"><label className="form-label">Banco</label><select className="form-select" value={bancoId} onChange={event => setBancoId(event.target.value)} disabled={!jornadaAbierta || metodoPago === 'EFECTIVO' || registrarPago.isPending}><option value="">Seleccionar banco</option>{bancos.map(banco => <option key={banco.id} value={banco.id}>{banco.nombre_banco}</option>)}</select></div>
+                <div className="form-group"><label className="form-label">Nro. Comprobante</label><input className="form-input" value={nroComprobante} onChange={event => setNroComprobante(event.target.value)} placeholder="Opcional" disabled={!jornadaAbierta || registrarPago.isPending} /></div>
             </div>
 
             {(registrarPago.isError || eliminarPago.isError) && <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}><AlertCircle size={16} /> {registrarPago.error?.response?.data?.detail || eliminarPago.error?.response?.data?.detail || 'Error al procesar el pago.'}</div>}
-            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button><button type="submit" className="btn btn-primary" disabled={registrarPago.isPending}>{registrarPago.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Wallet size={15} /> Registrar Pago</>}</button></div>
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button><button type="submit" className="btn btn-primary" disabled={registrarPago.isPending || !jornadaAbierta}>{registrarPago.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Wallet size={15} /> Registrar Pago</>}</button></div>
         </form>
     )
 }

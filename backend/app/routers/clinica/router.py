@@ -185,7 +185,7 @@ def _serializar_vademecum_patologia(patologia):
     )
 
 
-def _query_historial_general_oftalmologia(session, desde_dt, hasta_dt, paciente_id=None, doctor_id=None, termino: str = ""):
+def _query_historial_general_oftalmologia(session, desde_dt=None, hasta_dt=None, paciente_id=None, doctor_id=None, termino: str = ""):
     query = (
         session.query(
             ConsultaOftalmologica.id.label("id"),
@@ -206,8 +206,11 @@ def _query_historial_general_oftalmologia(session, desde_dt, hasta_dt, paciente_
         .join(Paciente, Paciente.id == ConsultaOftalmologica.paciente_id)
         .outerjoin(Doctor, Doctor.id == ConsultaOftalmologica.doctor_id)
         .outerjoin(LugarAtencion, LugarAtencion.id == ConsultaOftalmologica.lugar_atencion_id)
-        .filter(ConsultaOftalmologica.fecha >= desde_dt, ConsultaOftalmologica.fecha < hasta_dt)
     )
+    if desde_dt:
+        query = query.filter(ConsultaOftalmologica.fecha >= desde_dt)
+    if hasta_dt:
+        query = query.filter(ConsultaOftalmologica.fecha < hasta_dt)
     if paciente_id:
         query = query.filter(ConsultaOftalmologica.paciente_id == paciente_id)
     if doctor_id:
@@ -228,7 +231,7 @@ def _query_historial_general_oftalmologia(session, desde_dt, hasta_dt, paciente_
     return query
 
 
-def _query_historial_general_contactologia(session, desde_dt, hasta_dt, paciente_id=None, doctor_id=None, termino: str = ""):
+def _query_historial_general_contactologia(session, desde_dt=None, hasta_dt=None, paciente_id=None, doctor_id=None, termino: str = ""):
     query = (
         session.query(
             ConsultaContactologia.id.label("id"),
@@ -249,8 +252,11 @@ def _query_historial_general_contactologia(session, desde_dt, hasta_dt, paciente
         .join(Paciente, Paciente.id == ConsultaContactologia.paciente_id)
         .outerjoin(Doctor, Doctor.id == ConsultaContactologia.doctor_id)
         .outerjoin(LugarAtencion, LugarAtencion.id == ConsultaContactologia.lugar_atencion_id)
-        .filter(ConsultaContactologia.fecha >= desde_dt, ConsultaContactologia.fecha < hasta_dt)
     )
+    if desde_dt:
+        query = query.filter(ConsultaContactologia.fecha >= desde_dt)
+    if hasta_dt:
+        query = query.filter(ConsultaContactologia.fecha < hasta_dt)
     if paciente_id:
         query = query.filter(ConsultaContactologia.paciente_id == paciente_id)
     if doctor_id:
@@ -271,7 +277,7 @@ def _query_historial_general_contactologia(session, desde_dt, hasta_dt, paciente
     return query
 
 
-def _query_historial_general_recetas(session, desde_dt, hasta_dt, paciente_id=None, doctor_nombre_filtrado=None, termino: str = ""):
+def _query_historial_general_recetas(session, desde_dt=None, hasta_dt=None, paciente_id=None, doctor_nombre_filtrado=None, termino: str = ""):
     query = (
         session.query(
             RecetaMedicamento.id.label("id"),
@@ -290,8 +296,11 @@ def _query_historial_general_recetas(session, desde_dt, hasta_dt, paciente_id=No
             RecetaMedicamento.observaciones.label("observaciones"),
         )
         .join(Paciente, Paciente.id == RecetaMedicamento.paciente_id)
-        .filter(RecetaMedicamento.fecha_emision >= desde_dt, RecetaMedicamento.fecha_emision < hasta_dt)
     )
+    if desde_dt:
+        query = query.filter(RecetaMedicamento.fecha_emision >= desde_dt)
+    if hasta_dt:
+        query = query.filter(RecetaMedicamento.fecha_emision < hasta_dt)
     if paciente_id:
         query = query.filter(RecetaMedicamento.paciente_id == paciente_id)
     if doctor_nombre_filtrado:
@@ -2321,9 +2330,8 @@ def obtener_historial_clinico_general(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
-        desde_dt = _inicio_dia(fecha_desde or hoy.replace(day=1))
-        hasta_dt = _inicio_dia(fecha_hasta or hoy) + timedelta(days=1)
+        desde_dt = _inicio_dia(fecha_desde) if fecha_desde else None
+        hasta_dt = _inicio_dia(fecha_hasta) + timedelta(days=1) if fecha_hasta else None
         tipo_normalizado = (tipo or "TODOS").strip().upper()
         termino = (buscar or "").strip()
         doctor_nombre_filtrado = None

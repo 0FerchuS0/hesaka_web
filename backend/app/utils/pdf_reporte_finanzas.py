@@ -112,8 +112,11 @@ def generar_pdf_reporte_finanzas(
         ["Ingresos Banco", f"{int(resumen.ingresos_banco):,}".replace(",", ".")],
         ["Egresos Caja", f"{int(resumen.egresos_caja):,}".replace(",", ".")],
         ["Egresos Banco", f"{int(resumen.egresos_banco):,}".replace(",", ".")],
-        ["Saldo Actual Caja", f"{int(resumen.saldo_actual_caja):,}".replace(",", ".")],
-        ["Saldo Actual Bancos", f"{int(resumen.saldo_actual_bancos):,}".replace(",", ".")],
+        ["Ingreso del Dia", f"{int(getattr(resumen, 'total_cobrado_ventas_con_saldo', 0.0)):,}".replace(",", ".")],
+        ["Credito del Dia", f"{int(getattr(resumen, 'cuentas_por_cobrar_dia', 0.0)):,}".replace(",", ".")],
+        ["Venta Total del Dia", f"{int(getattr(resumen, 'venta_total_dia', 0.0)):,}".replace(",", ".")],
+        ["Cantidad de Ventas del Dia", str(int(getattr(resumen, "cantidad_ventas_dia", 0) or 0))],
+        ["Ventas con Saldo Pendiente", str(int(getattr(resumen, "cantidad_ventas_cobrar_dia", 0) or 0))],
         ["Saldo Final Total", f"{int(resumen.saldo_final_total):,}".replace(",", ".")],
         ["Cantidad Movimientos", str(len(resumen.todos))],
     ]
@@ -135,18 +138,50 @@ def generar_pdf_reporte_finanzas(
         ("BACKGROUND", (0, 3), (-1, 3), BLUE_BG if resumen.resultado_neto >= 0 else AMBER_BG),
         ("TEXTCOLOR", (0, 3), (-1, 3), BLUE_TEXT if resumen.resultado_neto >= 0 else AMBER_TEXT),
         ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
-        ("BACKGROUND", (0, 9), (-1, 11), NEUTRAL_BG),
-        ("FONTNAME", (0, 9), (-1, 11), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 9), (-1, 13), NEUTRAL_BG),
+        ("FONTNAME", (0, 9), (-1, 13), "Helvetica-Bold"),
         ("BACKGROUND", (0, 11), (-1, 11), BLUE_BG),
         ("TEXTCOLOR", (0, 11), (-1, 11), BLUE_TEXT),
+        ("FONTNAME", (0, 11), (-1, 11), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 14), (-1, 14), BLUE_BG),
+        ("TEXTCOLOR", (0, 14), (-1, 14), BLUE_TEXT),
+        ("FONTNAME", (0, 14), (-1, 14), "Helvetica-Bold"),
     ]))
     elements.append(resumen_table)
     elements.append(Spacer(1, 0.8 * cm))
+
+    desglose_medios = list(getattr(resumen, "desglose_medios", []) or [])
+    if desglose_medios:
+        elements.append(Paragraph("DESGLOSE POR MEDIO", section_style))
+        desglose_data = [["Medio", "Ingresos", "Egresos", "Neto", "Movimientos"]]
+        for item in desglose_medios:
+            desglose_data.append([
+                item.get("medio") or "-",
+                f"{int(item.get('ingresos') or 0):,}".replace(",", "."),
+                f"{int(item.get('egresos') or 0):,}".replace(",", "."),
+                f"{int(item.get('neto') or 0):,}".replace(",", "."),
+                str(item.get("cantidad_movimientos") or 0),
+            ])
+
+        desglose_table = Table(desglose_data, colWidths=[4.4 * cm, 3 * cm, 3 * cm, 3 * cm, 2.2 * cm])
+        desglose_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f766e")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (1, 1), (3, -1), "RIGHT"),
+            ("ALIGN", (4, 1), (4, -1), "CENTER"),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#bdc3c7")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ]))
+        elements.append(desglose_table)
+        elements.append(Spacer(1, 0.6 * cm))
 
     elements.append(Paragraph("DETALLE DE MOVIMIENTOS", section_style))
     detail_data = [[
         "Fecha",
         "Origen",
+        "Medio",
         "Banco",
         "Categoria",
         "Tipo",
@@ -160,6 +195,7 @@ def generar_pdf_reporte_finanzas(
         detail_data.append([
             Paragraph(mov.fecha.strftime("%d/%m/%Y %H:%M"), cell_style),
             Paragraph(mov.origen, cell_style),
+            Paragraph(getattr(mov, "medio", "-") or "-", cell_style),
             Paragraph(mov.banco_nombre or "-", cell_style),
             Paragraph(mov.categoria or "-", cell_style),
             Paragraph(
@@ -171,7 +207,7 @@ def generar_pdf_reporte_finanzas(
             _build_currency_cell(mov.monto, es_egreso),
         ])
 
-    detail_table = Table(detail_data, colWidths=[2.3 * cm, 1.7 * cm, 2.2 * cm, 2.7 * cm, 1.9 * cm, 3.6 * cm, 2.4 * cm, 1.9 * cm])
+    detail_table = Table(detail_data, colWidths=[1.9 * cm, 1.3 * cm, 1.8 * cm, 1.8 * cm, 2.2 * cm, 1.5 * cm, 3.1 * cm, 1.8 * cm, 1.6 * cm])
     detail_style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),

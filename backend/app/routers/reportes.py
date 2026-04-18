@@ -495,7 +495,7 @@ def _obtener_comparativa_dashboard(session: Session) -> ComparativaVentasDashboa
     ahora = datetime.now()
 
     inicio_actual = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    fin_actual = ahora
+    fin_actual = ahora.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     primer_dia_actual = ahora.replace(day=1)
     ultimo_dia_mes_anterior = primer_dia_actual - timedelta(days=1)

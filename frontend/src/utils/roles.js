@@ -55,6 +55,10 @@ export const actionRoles = {
     'finanzas.transferencias': ['ADMIN', 'CAJERO'],
     'finanzas.conciliar': ['ADMIN', 'CAJERO'],
     'finanzas.editar_cuentas': ['ADMIN', 'CAJERO'],
+    'finanzas.jornada_abrir': ['ADMIN', 'CAJERO'],
+    'finanzas.jornada_corte': ['ADMIN', 'CAJERO'],
+    'finanzas.jornada_rendir': ['ADMIN', 'CAJERO'],
+    'finanzas.jornada_rendicion_editar': ['ADMIN', 'CAJERO'],
 
     'cuentas_por_pagar.pagar': ['ADMIN', 'CAJERO'],
     'cuentas_por_pagar.revertir': ['ADMIN', 'CAJERO'],
@@ -162,6 +166,10 @@ export const permissionCatalog = [
                     { key: 'finanzas.transferencias', label: 'Transferencias internas' },
                     { key: 'finanzas.conciliar', label: 'Conciliar transferencias' },
                     { key: 'finanzas.editar_cuentas', label: 'Editar cuentas bancarias' },
+                    { key: 'finanzas.jornada_abrir', label: 'Abrir jornada financiera' },
+                    { key: 'finanzas.jornada_corte', label: 'Generar cortes de jornada' },
+                    { key: 'finanzas.jornada_rendir', label: 'Registrar rendiciones de jornada' },
+                    { key: 'finanzas.jornada_rendicion_editar', label: 'Editar rendiciones de jornada' },
                 ],
             },
             {

@@ -494,6 +494,18 @@ export default function ProductosPage() {
         retry: false,
     })
 
+    const editingProductId = modal && modal !== 'nuevo' ? modal.id : null
+    const {
+        data: editingProductDetail,
+        isFetching: isFetchingEditingProduct,
+    } = useQuery({
+        queryKey: ['producto-detalle', editingProductId],
+        queryFn: () => api.get(`/productos/${editingProductId}`).then(response => response.data),
+        enabled: Boolean(editingProductId),
+        retry: false,
+        staleTime: 30000,
+    })
+
     const categoriasOrdenadas = useMemo(() => orderCategorias(categorias), [categorias])
 
     const crear = useMutation({
@@ -501,6 +513,7 @@ export default function ProductosPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['productos'] })
             queryClient.invalidateQueries({ queryKey: ['productos-optimizado'] })
+            queryClient.invalidateQueries({ queryKey: ['producto-detalle'] })
             setModal(null)
         },
     })
@@ -510,6 +523,7 @@ export default function ProductosPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['productos'] })
             queryClient.invalidateQueries({ queryKey: ['productos-optimizado'] })
+            queryClient.invalidateQueries({ queryKey: ['producto-detalle'] })
             setModal(null)
         },
     })
@@ -718,12 +732,19 @@ export default function ProductosPage() {
 
             {modal && (
                 <Modal title={modal === 'nuevo' ? 'Nuevo Producto' : `Editar: ${modal.nombre}`} onClose={() => setModal(null)} maxWidth="760px">
-                    <ProductoForm
-                        initial={modal !== 'nuevo' ? modal : {}}
-                        onSave={handleSave}
-                        onCancel={() => setModal(null)}
-                        loading={crear.isPending || editar.isPending}
-                    />
+                    {modal !== 'nuevo' && isFetchingEditingProduct && !editingProductDetail ? (
+                        <div className="flex-center" style={{ padding: 40 }}>
+                            <div className="spinner" style={{ width: 28, height: 28 }} />
+                        </div>
+                    ) : (
+                        <ProductoForm
+                            key={modal === 'nuevo' ? 'nuevo' : `edit-${editingProductId}`}
+                            initial={modal !== 'nuevo' ? (editingProductDetail || modal) : {}}
+                            onSave={handleSave}
+                            onCancel={() => setModal(null)}
+                            loading={crear.isPending || editar.isPending}
+                        />
+                    )}
                 </Modal>
             )}
         </div>

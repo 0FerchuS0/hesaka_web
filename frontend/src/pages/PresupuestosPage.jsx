@@ -343,8 +343,12 @@ function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
     const submit = event => {
         event.preventDefault()
         setError('')
+        if (!vendedor) {
+            setError('Debes seleccionar un vendedor.')
+            return
+        }
         guardar.mutate({
-            vendedor_id: vendedor ? parseInt(vendedor, 10) : null,
+            vendedor_id: parseInt(vendedor, 10),
             canal_venta_id: canalVenta ? parseInt(canalVenta, 10) : null,
         })
     }
@@ -364,9 +368,9 @@ function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
 
             <div className="grid-2 mb-16">
                 <div className="form-group">
-                    <label className="form-label">Vendedor</label>
-                    <select className="form-select" value={vendedor} onChange={e => setVendedor(e.target.value)}>
-                        <option value="">Sin vendedor asignado</option>
+                    <label className="form-label">Vendedor *</label>
+                    <select className="form-select" value={vendedor} onChange={e => setVendedor(e.target.value)} required>
+                        <option value="">Selecciona un vendedor</option>
                         {vendedores.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}
                     </select>
                 </div>
@@ -713,6 +717,10 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const handleSubmit = e => {
         e.preventDefault()
         if (!cliente) return
+        if (!vendedor) {
+            window.alert('Debes seleccionar un vendedor antes de guardar el presupuesto.')
+            return
+        }
         // Alerta si hay referidor pero sin comisión
         if (referidor && (!comision || parseFloat(comision) === 0)) {
             if (!window.confirm('El referidor seleccionado no tiene comisión asignada. ¿Desea guardar el presupuesto igual?')) return
@@ -730,7 +738,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             consulta_clinica_id: noRequiereProximoControl ? null : (consultaClinicaVinculada?.id || null),
             consulta_clinica_tipo: noRequiereProximoControl ? null : (consultaClinicaVinculada?.tipo || null),
             referidor_id: referidor ? parseInt(referidor) : null,
-            vendedor_id: vendedor ? parseInt(vendedor) : null,
+            vendedor_id: parseInt(vendedor, 10),
             canal_venta_id: canalVenta ? parseInt(canalVenta) : null,
             comision_monto: parseFloat(comision) || 0,
             items: items.filter(i => i.producto_id).map(i => ({
@@ -884,14 +892,15 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
 
             <div className="grid-2 mb-16">
                 <div className="form-group">
-                    <label className="form-label">Vendedor</label>
+                    <label className="form-label">Vendedor *</label>
                     <select
                         className="form-select"
                         value={vendedor}
                         onChange={e => setVendedor(e.target.value)}
                         style={{ background: '#1a1d27', color: 'var(--text-primary)' }}
+                        required
                     >
-                        <option value="" style={{ background: '#1a1d27' }}>Sin vendedor asignado</option>
+                        <option value="" style={{ background: '#1a1d27' }}>Selecciona un vendedor</option>
                         {vendedores.map(v => <option key={v.id} value={v.id} style={{ background: '#1a1d27' }}>{v.nombre}</option>)}
                     </select>
                 </div>

@@ -24,6 +24,7 @@ const PresupuestosPage = lazy(() => import('./pages/PresupuestosPage'))
 const VentasPage = lazy(() => import('./pages/VentasPage'))
 const ComprasPage = lazy(() => import('./pages/ComprasPage'))
 const CajaPage = lazy(() => import('./pages/CajaPage'))
+const JornadaRendicionesPage = lazy(() => import('./pages/JornadaRendicionesPage'))
 const GastosPage = lazy(() => import('./pages/GastosPage'))
 const CuentasPorPagarPage = lazy(() => import('./pages/CuentasPorPagarPage'))
 const ReporteVentasPage = lazy(() => import('./pages/ReporteVentasPage'))
@@ -196,6 +197,7 @@ function AppLayout() {
                         <Route path="/ventas/ajustes" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><ReporteAjustesVentasPage /></RouteErrorBoundary></RoleRoute>} />
                         <Route path="/compras" element={<RoleRoute allowedRoles="compras"><ComprasPage /></RoleRoute>} />
                         <Route path="/caja" element={<RoleRoute allowedRoles="finanzas"><CajaPage /></RoleRoute>} />
+                        <Route path="/finanzas/jornada" element={<RoleRoute allowedRoles="finanzas"><JornadaRendicionesPage /></RoleRoute>} />
                         <Route path="/bancos" element={<Navigate to="/caja" replace />} />
                         <Route path="/ventas/cobro-multiple" element={<RoleRoute allowedRoles="cobros"><CobroMultiplePage /></RoleRoute>} />
                         <Route path="/ventas/historial-cobros-multiples" element={<RoleRoute allowedRoles="cobros"><HistorialCobrosMultiplesPage /></RoleRoute>} />

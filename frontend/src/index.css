@@ -56,6 +56,8 @@
 html {
   font-size: 15px;
   scroll-behavior: smooth;
+  /* Listas nativas de <select> (Chrome/Edge Windows): fondo oscuro en lugar de blanco */
+  color-scheme: dark;
 }
 
 body {
@@ -65,6 +67,19 @@ body {
   line-height: 1.6;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Portales de menús contextuales: fuera de #root para no verse limitados por overflow de tablas/cards */
+#hesaka-dropdown-root {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  overflow: visible;
+  pointer-events: none;
+}
+
+#hesaka-dropdown-root > * {
+  pointer-events: auto;
 }
 
 a {
@@ -704,6 +719,17 @@ tr:hover td {
   color: var(--text-muted);
 }
 
+/* Selects: muchas pantallas usan class="form-input" en <select>; el desplegable nativo
+   necesita color-scheme + option con contraste (Firefox respeta option; Chrome usa el esquema). */
+select.form-input,
+select.form-select,
+select:not([class*="react-select"]) {
+  color-scheme: dark;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
 .form-select {
   width: 100%;
   background: rgba(255, 255, 255, 0.04);
@@ -932,7 +958,16 @@ tr:hover td {
 }
 
 .dropdown-item:hover {
-  background: var(--surface-hover);
+  background: var(--bg-card-hover);
+}
+
+.dropdown-item:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.dropdown-item:disabled:hover {
+  background: transparent;
 }
 
 .sidebar-submenu {
@@ -1039,10 +1074,20 @@ tr:hover td {
   }
 }
 
-/* ─── Dropdowns: opción visible en modo oscuro ──────────────────────── */
+/* ─── Dropdowns nativos: texto legible en lista desplegada ───────── */
+select option,
+.form-input option,
 .form-select option {
-  background: #1a1d27;
-  color: #f0f4ff;
+  background-color: #1e2230;
+  color: #e8ecff;
+}
+
+select option:checked,
+select option:hover,
+.form-input option:checked,
+.form-select option:checked {
+  background-color: var(--primary-dark);
+  color: #fff;
 }
 
 /* ─── Correcciones Globales React-Select ─── */

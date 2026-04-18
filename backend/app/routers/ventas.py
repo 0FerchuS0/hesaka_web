@@ -33,6 +33,7 @@ from app.utils.pdf_recibos_venta import (
 )
 from app.utils.pdf_presupuestos import generar_pdf_presupuesto
 from app.utils.filename_utils import sanitize_filename_component
+from app.utils.jornada import require_jornada_abierta
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
 pre_router = APIRouter(prefix="/api/presupuestos", tags=["Presupuestos"])
@@ -53,6 +54,7 @@ def _get_siguiente_codigo(session, modelo, prefijo: str) -> str:
 
 def _registrar_en_caja(session, monto: float, concepto: str, pago_venta_id: Optional[int] = None, grupo_pago_id: Optional[str] = None):
     """Registra un ingreso de efectivo en caja, actualizando el saldo."""
+    jornada = require_jornada_abierta(session)
     caja = session.query(ConfiguracionCaja).first()
     if not caja:
         caja = ConfiguracionCaja(id=1, saldo_actual=0.0)
@@ -67,6 +69,7 @@ def _registrar_en_caja(session, monto: float, concepto: str, pago_venta_id: Opti
         saldo_anterior=saldo_ant,
         saldo_nuevo=caja.saldo_actual,
         pago_venta_id=pago_venta_id,
+        jornada_id=jornada.id,
     )
     session.add(mov)
     return mov
@@ -75,6 +78,7 @@ def _registrar_en_caja(session, monto: float, concepto: str, pago_venta_id: Opti
 def _registrar_en_banco(session, banco_id: int, monto: float, concepto: str,
                         tipo: str = "INGRESO", pago_venta_id: Optional[int] = None, grupo_pago_id: Optional[str] = None):
     """Registra un movimiento bancario (ingreso o egreso), actualizando el saldo del banco."""
+    jornada = require_jornada_abierta(session)
     banco = session.query(Banco).filter(Banco.id == banco_id).first()
     if not banco:
         raise HTTPException(status_code=404, detail=f"Banco ID {banco_id} no encontrado.")
@@ -92,6 +96,7 @@ def _registrar_en_banco(session, banco_id: int, monto: float, concepto: str,
         saldo_nuevo=banco.saldo_actual,
         pago_venta_id=pago_venta_id,
         grupo_pago_id=grupo_pago_id,
+        jornada_id=jornada.id,
     )
     session.add(mov)
     session.flush()
@@ -161,6 +166,7 @@ def _procesar_pago(session, pago: Pago, venta_codigo: str):
 def _revertir_pago(session, pago: Pago, venta_codigo: str):
     """Deshace todos los movimientos financieros asociados a un pago."""
     from app.models.models import GastoOperativo
+    require_jornada_abierta(session)
 
     # Revertir movimientos banco vinculados a este pago
     movs_banco = session.query(MovimientoBanco).filter(
@@ -529,6 +535,9 @@ def crear_presupuesto(data: PresupuestoCreate, tenant_slug: str = Depends(get_te
         codigo = _get_siguiente_codigo(session, Presupuesto, "PRE")
         items_data = data.items
         pres_data = data.model_dump(exclude={"items"})
+        vendedor = session.query(Vendedor).filter(Vendedor.id == data.vendedor_id).first()
+        if not vendedor:
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
         if pres_data.get("no_requiere_proximo_control"):
             pres_data["fecha_proximo_control"] = None
             pres_data["consulta_clinica_id"] = None
@@ -611,6 +620,9 @@ def editar_presupuesto(pre_id: int, data: PresupuestoCreate, tenant_slug: str = 
         # Actualizar campos del presupuesto
         items_data = data.items
         pres_dict = data.model_dump(exclude={"items"})
+        vendedor = session.query(Vendedor).filter(Vendedor.id == data.vendedor_id).first()
+        if not vendedor:
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
         if pres_dict.get("no_requiere_proximo_control"):
             pres_dict["fecha_proximo_control"] = None
             pres_dict["consulta_clinica_id"] = None
@@ -953,10 +965,9 @@ def actualizar_asignacion_comercial_presupuesto(
         if not p:
             raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
 
-        if data.vendedor_id:
-            vendedor = session.query(Vendedor).filter(Vendedor.id == data.vendedor_id).first()
-            if not vendedor:
-                raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
+        vendedor = session.query(Vendedor).filter(Vendedor.id == data.vendedor_id).first()
+        if not vendedor:
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
 
         if data.canal_venta_id:
             canal = session.query(CanalVenta).filter(CanalVenta.id == data.canal_venta_id).first()
@@ -1101,6 +1112,9 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
         codigo = _get_siguiente_codigo(session, Venta, "VEN")
         pagos_data = data.pagos
         venta_data = data.model_dump(exclude={"pagos"})
+        vendedor = session.query(Vendedor).filter(Vendedor.id == data.vendedor_id).first()
+        if not vendedor:
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
 
         venta = Venta(
             codigo=codigo,

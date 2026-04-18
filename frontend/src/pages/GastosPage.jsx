@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, Edit2, Plus, Receipt, Tags, Trash2, Wallet } from 'lucide-react'
 
 import Modal from '../components/Modal'
+import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api } from '../context/AuthContext'
+import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
 function fmt(value) {
@@ -44,6 +46,8 @@ export default function GastosPage() {
         banco_id: '',
         fecha: new Date().toISOString().slice(0, 16),
     })
+    const { data: jornadaEstado } = useFinancialJornadaStatus()
+    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
 
     const resetFormGasto = () => setFormGasto({
         categoria_id: '',
@@ -162,6 +166,7 @@ export default function GastosPage() {
 
     return (
         <div className="page-body">
+            <FinancialJornadaNotice compact />
             <div className="flex-between mb-24">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 40, height: 40, background: 'rgba(239,68,68,0.15)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -176,7 +181,7 @@ export default function GastosPage() {
                     <button className="btn btn-secondary" onClick={() => setModalCategoria(true)}>
                         <Tags size={16} /> Nueva Categoria
                     </button>
-                    <button className="btn btn-primary" onClick={() => { resetFormGasto(); setModalGasto('nuevo') }}>
+                    <button className="btn btn-primary" onClick={() => { resetFormGasto(); setModalGasto('nuevo') }} disabled={!jornadaAbierta}>
                         <Plus size={16} /> Registrar Gasto
                     </button>
                 </div>
@@ -260,6 +265,7 @@ export default function GastosPage() {
                                             <button
                                                 className="btn btn-secondary btn-sm btn-icon"
                                                 onClick={() => {
+                                                    if (!jornadaAbierta) return
                                                     setFormGasto({
                                                         categoria_id: String(gasto.categoria_id),
                                                         monto: String(gasto.monto ?? ''),
@@ -271,6 +277,7 @@ export default function GastosPage() {
                                                     })
                                                     setModalGasto(gasto)
                                                 }}
+                                                disabled={!jornadaAbierta}
                                                 title="Editar gasto"
                                             >
                                                 <Edit2 size={14} />
@@ -278,7 +285,7 @@ export default function GastosPage() {
                                             <button
                                                 className="btn btn-danger btn-sm btn-icon"
                                                 onClick={() => eliminarGasto.mutate(gasto.id)}
-                                                disabled={eliminarGasto.isPending}
+                                                disabled={eliminarGasto.isPending || !jornadaAbierta}
                                                 title="Eliminar gasto"
                                             >
                                                 <Trash2 size={14} />
@@ -498,7 +505,7 @@ export default function GastosPage() {
                         </div>
                         <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
                             <button type="button" className="btn btn-secondary" onClick={() => { if (confirmCloseGastoModal()) setModalGasto(null) }} disabled={gastoModalBusy}>Cancelar</button>
-                            <button type="submit" className="btn btn-primary" disabled={gastoModalBusy}>
+                            <button type="submit" className="btn btn-primary" disabled={gastoModalBusy || !jornadaAbierta}>
                                 {gastoModalBusy ? (modalGasto === 'nuevo' ? 'Guardando gasto...' : 'Guardando cambios...') : (modalGasto === 'nuevo' ? 'Registrar Gasto' : 'Guardar Cambios')}
                             </button>
                         </div>

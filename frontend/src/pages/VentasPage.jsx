@@ -3,10 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
+import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye, MessageCircle, RotateCcw } from 'lucide-react'
 import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
+import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -613,6 +615,8 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 16))
     const [pdfOpeningPagoId, setPdfOpeningPagoId] = useState(null)
     const [deletingPagoId, setDeletingPagoId] = useState(null)
+    const { data: jornadaEstado } = useFinancialJornadaStatus()
+    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
 
     const { data: venta, isLoading } = useQuery({
         queryKey: ['venta', ventaId],
@@ -707,7 +711,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
 
     const handleSubmit = e => {
         e.preventDefault()
-        if (cobrar.isPending) return
+        if (cobrar.isPending || !jornadaAbierta) return
         cobrar.mutate({
             monto: parseFloat(monto),
             metodo_pago: metodo,
@@ -729,6 +733,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <FinancialJornadaNotice compact />
             {/* Info Resumen */}
             <div style={{ background: 'rgba(26,86,219,0.06)', border: '1px solid rgba(26,86,219,0.15)', borderRadius: 10, padding: '12px 16px', display: 'flex', justifyContent: 'space-between' }}>
                 <div>
@@ -773,7 +778,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                                             </button>
                                             <button className="btn-icon" style={{ color: 'var(--danger)' }} title="Eliminar/Revertir pago"
                                                 onClick={() => { if (confirm('¿Eliminar cobro? Se revertirá en caja/bancos.')) eliminar.mutate(p.id) }}
-                                                disabled={deletingPagoId === p.id || cobrar.isPending}>
+                                                disabled={deletingPagoId === p.id || cobrar.isPending || !jornadaAbierta}>
                                                 <Trash2 size={14} />
                                             </button>
                                         </div>
@@ -792,11 +797,11 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                     <div className="grid-2 mb-12">
                         <div className="form-group">
                             <label className="form-label">Monto (Gs.)</label>
-                            <input className="form-input" type="number" value={monto} onChange={e => setMonto(e.target.value)} required placeholder="0" max={venta.saldo} min={0} step="any" disabled={cobrar.isPending} />
+                            <input className="form-input" type="number" value={monto} onChange={e => setMonto(e.target.value)} required placeholder="0" max={venta.saldo} min={0} step="any" disabled={cobrar.isPending || !jornadaAbierta} />
                         </div>
                         <div className="form-group">
                             <label className="form-label">Método</label>
-                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={cobrar.isPending}>
+                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={cobrar.isPending || !jornadaAbierta}>
                                 {METODOS_PAGO.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                             </select>
                         </div>
@@ -804,7 +809,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                     {['TARJETA', 'TRANSFERENCIA'].includes(metodo) && (
                         <div className="form-group mb-12">
                             <label className="form-label">Banco Destino *</label>
-                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={cobrar.isPending}>
+                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={cobrar.isPending || !jornadaAbierta}>
                                 <option value="">Seleccionar banco...</option>
                                 {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre_banco} — {b.numero_cuenta}</option>)}
                             </select>
@@ -816,11 +821,11 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                     <div className="grid-2 mb-16">
                         <div className="form-group">
                             <label className="form-label">Fecha del Pago</label>
-                            <input className="form-input" type="datetime-local" value={fecha} onChange={e => setFecha(e.target.value)} required disabled={cobrar.isPending} />
+                            <input className="form-input" type="datetime-local" value={fecha} onChange={e => setFecha(e.target.value)} required disabled={cobrar.isPending || !jornadaAbierta} />
                         </div>
                         <div className="form-group">
                             <label className="form-label">Nota (opcional)</label>
-                            <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Pago parcial..." disabled={cobrar.isPending} />
+                            <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Pago parcial..." disabled={cobrar.isPending || !jornadaAbierta} />
                         </div>
                     </div>
                     {cobrar.isError && (
@@ -829,7 +834,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                         </div>
                     )}
                     <div className="flex gap-8" style={{ justifyContent: 'flex-end' }}>
-                        <button type="submit" className="btn btn-primary" disabled={cobrar.isPending}>
+                        <button type="submit" className="btn btn-primary" disabled={cobrar.isPending || !jornadaAbierta}>
                             {cobrar.isPending ? 'Aplicando cobro...' : 'Aplicar Cobro'}
                         </button>
                     </div>

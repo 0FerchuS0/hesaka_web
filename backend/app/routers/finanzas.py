@@ -4,28 +4,106 @@ from uuid import uuid4
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import and_, func, or_
 
 from app.database import get_session_for_tenant
 from app.middleware.tenant import get_tenant_slug
-from app.models.models import Banco, CategoriaGasto, ConfiguracionCaja, GastoOperativo, MovimientoBanco, MovimientoCaja
+from app.models.models import (
+    Banco,
+    CategoriaGasto,
+    ConfiguracionCaja,
+    ConfiguracionEmpresa,
+    CorteJornadaFinanciera,
+    DestinatarioRendicion,
+    GastoOperativo,
+    JornadaFinanciera,
+    MovimientoBanco,
+    MovimientoCaja,
+    RendicionJornadaFinanciera,
+    Usuario,
+)
 from app.schemas.schemas import (
     BancoCreate,
     BancoOut,
+    CorteJornadaOut,
     CategoriaGastoCreate,
     CategoriaGastoOut,
+    DestinatarioRendicionCreate,
+    DestinatarioRendicionOut,
+    DestinatarioRendicionUpdate,
     GastoCreate,
     GastoOut,
+    JornadaAperturaCreate,
+    JornadaEstadoOut,
+    JornadaHistorialOut,
+    MovimientosPosterioresUltimoCorteOut,
+    PendienteRendicionOut,
     MovimientoBancoOut,
     MovimientoCajaOut,
+    RendicionJornadaCreate,
+    RendicionHistorialOut,
+    RendicionHistorialListResponseOut,
+    RendicionJornadaOut,
+    RendicionJornadaUpdate,
     TransferenciaInternaCreate,
     TransferenciaInternaHistorialOut,
     TransferenciaInternaOut,
 )
-from app.utils.auth import get_current_user
+from app.utils.auth import get_current_user, require_action, require_admin
+from app.utils.excel_rendicion_jornada import generar_excel_rendicion_jornada
+from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
+from app.utils.filename_utils import format_date_for_filename
+from app.utils.jornada import (
+    abrir_jornada_actual,
+    construir_alerta_movimientos_posteriores,
+    construir_cuentas_por_cobrar_dia,
+    construir_resumen_corte,
+    construir_resumen_jornada_historica,
+    construir_resumen_jornada,
+    construir_resumen_jornada_reporte,
+    construir_resumen_rendicion,
+    construir_pendiente_rendicion,
+    crear_corte_jornada_actual,
+    crear_rendicion_jornada_actual,
+    actualizar_rendicion_jornada,
+    obtener_movimientos_posteriores_ultimo_corte,
+    obtener_ultima_rendicion_vigente,
+    obtener_ultimo_corte_jornada,
+    obtener_jornada_actual,
+    require_jornada_abierta,
+    serializar_corte,
+    serializar_rendicion_historial,
+    serializar_rendicion,
+)
+from app.utils.pdf_reporte_finanzas import generar_pdf_reporte_finanzas
+from app.utils.pdf_rendicion_jornada import generar_pdf_rendicion_jornada
 
 caja_router = APIRouter(prefix="/api/caja", tags=["Caja"])
 banco_router = APIRouter(prefix="/api/bancos", tags=["Bancos"])
 gasto_router = APIRouter(prefix="/api/gastos", tags=["Gastos"])
+
+
+def _serializar_estado_jornada(session) -> JornadaEstadoOut:
+    jornada = obtener_jornada_actual(session)
+    ultimo_corte = obtener_ultimo_corte_jornada(session, jornada.id) if jornada else None
+    ultima_rendicion = obtener_ultima_rendicion_vigente(session, jornada.id) if jornada else None
+    return JornadaEstadoOut(
+        jornada_id=jornada.id if jornada else None,
+        fecha=datetime.now().date(),
+        estado=jornada.estado if jornada else "SIN_ABRIR",
+        abierta=bool(jornada and jornada.estado == "ABIERTA"),
+        fecha_hora_apertura=jornada.fecha_hora_apertura if jornada else None,
+        usuario_apertura_id=jornada.usuario_apertura_id if jornada else None,
+        usuario_apertura_nombre=jornada.usuario_apertura_nombre if jornada else None,
+        observacion_apertura=jornada.observacion_apertura if jornada else None,
+        resumen=construir_resumen_jornada(session, jornada),
+        ultimo_corte=serializar_corte(session, ultimo_corte) if ultimo_corte else None,
+        ultima_rendicion=serializar_rendicion(session, ultima_rendicion) if ultima_rendicion else None,
+        pendiente_rendicion=construir_pendiente_rendicion(session, jornada),
+        cuentas_por_cobrar_dia=construir_cuentas_por_cobrar_dia(session, jornada),
+        alerta_movimientos_posteriores=construir_alerta_movimientos_posteriores(session),
+    )
 
 
 def _build_gasto_out(gasto: GastoOperativo) -> GastoOut:
@@ -45,6 +123,7 @@ def _obtener_o_crear_caja(session):
 
 
 def _revertir_impacto_gasto(session, gasto: GastoOperativo):
+    require_jornada_abierta(session)
     if gasto.movimiento_caja_id:
         movimiento = session.query(MovimientoCaja).filter(MovimientoCaja.id == gasto.movimiento_caja_id).first()
         caja = session.query(ConfiguracionCaja).first()
@@ -63,6 +142,7 @@ def _revertir_impacto_gasto(session, gasto: GastoOperativo):
 
 
 def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaGasto):
+    jornada = require_jornada_abierta(session)
     if gasto.metodo_pago == "EFECTIVO":
         caja = session.query(ConfiguracionCaja).first()
         if not caja:
@@ -79,6 +159,7 @@ def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaG
             saldo_anterior=saldo_ant,
             saldo_nuevo=caja.saldo_actual,
             gasto_operativo_id=gasto.id,
+            jornada_id=jornada.id,
         )
         session.add(movimiento)
         session.flush()
@@ -101,6 +182,7 @@ def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaG
         saldo_anterior=saldo_ant,
         saldo_nuevo=banco.saldo_actual,
         gasto_operativo_id=gasto.id,
+        jornada_id=jornada.id,
     )
     session.add(movimiento)
     session.flush()
@@ -115,12 +197,642 @@ def _normalizar_concepto_transferencia(concepto: Optional[str]) -> Optional[str]
     return concepto.split(marker, 1)[1] if marker in concepto else concepto
 
 
+def _build_corte_filename(corte: CorteJornadaFinanciera, extension: str) -> str:
+    fecha = format_date_for_filename(corte.fecha_hora_corte) or "sin_fecha"
+    hora = corte.fecha_hora_corte.strftime("%H-%M") if corte.fecha_hora_corte else "sin_hora"
+    return f"corte_jornada_{fecha}_{hora}.{extension}"
+
+
+def _build_rendicion_filename(rendicion: RendicionJornadaFinanciera, extension: str) -> str:
+    fecha = format_date_for_filename(rendicion.fecha_hora_rendicion) or "sin_fecha"
+    hora = rendicion.fecha_hora_rendicion.strftime("%H-%M") if rendicion.fecha_hora_rendicion else "sin_hora"
+    return f"rendicion_jornada_{fecha}_{hora}.{extension}"
+
+
+def _build_jornada_filename(jornada: JornadaFinanciera, extension: str) -> str:
+    fecha = format_date_for_filename(jornada.fecha) or "sin_fecha"
+    return f"informe_jornada_{fecha}.{extension}"
+
+
 @caja_router.get("/saldo")
 def saldo_caja(tenant_slug: str = Depends(get_tenant_slug), current_user=Depends(get_current_user)):
     session = get_session_for_tenant(tenant_slug)
     try:
         caja = session.query(ConfiguracionCaja).first()
         return {"saldo_actual": caja.saldo_actual if caja else 0.0}
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/estado-actual", response_model=JornadaEstadoOut)
+def obtener_estado_jornada_actual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        return _serializar_estado_jornada(session)
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/abrir", response_model=JornadaEstadoOut)
+def abrir_jornada_financiera_actual(
+    data: JornadaAperturaCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("finanzas.jornada_abrir", "finanzas")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        abrir_jornada_actual(session, current_user, data.observacion)
+        session.commit()
+        return _serializar_estado_jornada(session)
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/cortes", response_model=List[CorteJornadaOut])
+def listar_cortes_jornada_actual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = obtener_jornada_actual(session)
+        if not jornada:
+            return []
+        cortes = (
+            session.query(CorteJornadaFinanciera)
+            .filter(CorteJornadaFinanciera.jornada_id == jornada.id)
+            .order_by(CorteJornadaFinanciera.fecha_hora_corte.desc(), CorteJornadaFinanciera.id.desc())
+            .all()
+        )
+        return [serializar_corte(session, corte) for corte in cortes]
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/cortes", response_model=CorteJornadaOut)
+def registrar_corte_jornada_actual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("finanzas.jornada_corte", "finanzas")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = require_jornada_abierta(session)
+        corte = crear_corte_jornada_actual(session, jornada, current_user)
+        session.commit()
+        return serializar_corte(session, corte)
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/cortes/{corte_id}/pdf")
+def descargar_corte_jornada_pdf(
+    corte_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        corte = session.query(CorteJornadaFinanciera).filter(CorteJornadaFinanciera.id == corte_id).first()
+        if not corte:
+            raise HTTPException(status_code=404, detail="Corte no encontrado.")
+
+        resumen = construir_resumen_corte(session, corte)
+        config = session.query(ConfiguracionEmpresa).first()
+        pdf_buffer = generar_pdf_reporte_finanzas(resumen, config, corte.fecha_hora_corte.date(), corte.fecha_hora_corte.date())
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{_build_corte_filename(corte, "pdf")}"'},
+        )
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/cortes/{corte_id}/excel")
+def descargar_corte_jornada_excel(
+    corte_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        corte = session.query(CorteJornadaFinanciera).filter(CorteJornadaFinanciera.id == corte_id).first()
+        if not corte:
+            raise HTTPException(status_code=404, detail="Corte no encontrado.")
+
+        resumen = construir_resumen_corte(session, corte)
+        config = session.query(ConfiguracionEmpresa).first()
+        excel_buffer = generar_excel_reporte_finanzas(resumen, config, corte.fecha_hora_corte.date(), corte.fecha_hora_corte.date())
+        return StreamingResponse(
+            excel_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'inline; filename="{_build_corte_filename(corte, "xlsx")}"'},
+        )
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/pendiente-rendir", response_model=PendienteRendicionOut)
+def obtener_pendiente_rendicion_actual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = obtener_jornada_actual(session)
+        return construir_pendiente_rendicion(session, jornada)
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/rendiciones", response_model=List[RendicionJornadaOut])
+def listar_rendiciones_jornada_actual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = obtener_jornada_actual(session)
+        if not jornada:
+            return []
+        rendiciones = (
+            session.query(RendicionJornadaFinanciera)
+            .filter(RendicionJornadaFinanciera.jornada_id == jornada.id)
+            .order_by(RendicionJornadaFinanciera.fecha_hora_rendicion.desc(), RendicionJornadaFinanciera.id.desc())
+            .all()
+        )
+        return [serializar_rendicion(session, rendicion) for rendicion in rendiciones]
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/rendiciones", response_model=RendicionJornadaOut)
+def registrar_rendicion_jornada_actual(
+    data: RendicionJornadaCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("finanzas.jornada_rendir", "finanzas")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = require_jornada_abierta(session)
+        rendicion = crear_rendicion_jornada_actual(
+            session,
+            jornada,
+            current_user,
+            destinatario_id=data.destinatario_id,
+            monto_rendido=data.monto_rendido,
+            observacion=data.observacion,
+        )
+        session.commit()
+        return serializar_rendicion(session, rendicion)
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.patch("/jornada/rendiciones/{rendicion_id}", response_model=RendicionJornadaOut)
+def editar_rendicion_jornada(
+    rendicion_id: int,
+    data: RendicionJornadaUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("finanzas.jornada_rendicion_editar", "finanzas")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        rendicion = session.query(RendicionJornadaFinanciera).filter(RendicionJornadaFinanciera.id == rendicion_id).first()
+        if not rendicion:
+            raise HTTPException(status_code=404, detail="Rendicion no encontrada.")
+
+        rendicion_actualizada = actualizar_rendicion_jornada(
+            session,
+            rendicion,
+            current_user,
+            fecha_hora_rendicion=data.fecha_hora_rendicion,
+            destinatario_id=data.destinatario_id,
+            monto_rendido=data.monto_rendido,
+            observacion=data.observacion,
+            motivo_ajuste=data.motivo_ajuste,
+        )
+        session.commit()
+        return serializar_rendicion(session, rendicion_actualizada)
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/rendiciones/{rendicion_id}", response_model=RendicionJornadaOut)
+def obtener_detalle_rendicion_jornada(
+    rendicion_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        rendicion = session.query(RendicionJornadaFinanciera).filter(RendicionJornadaFinanciera.id == rendicion_id).first()
+        if not rendicion:
+            raise HTTPException(status_code=404, detail="Rendicion no encontrada.")
+        return serializar_rendicion(session, rendicion)
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/rendiciones/{rendicion_id}/pdf")
+def descargar_rendicion_jornada_pdf(
+    rendicion_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        rendicion = session.query(RendicionJornadaFinanciera).filter(RendicionJornadaFinanciera.id == rendicion_id).first()
+        if not rendicion:
+            raise HTTPException(status_code=404, detail="Rendicion no encontrada.")
+
+        resumen = construir_resumen_rendicion(session, rendicion)
+        config = session.query(ConfiguracionEmpresa).first()
+        pdf_buffer = generar_pdf_rendicion_jornada(rendicion, resumen, config)
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{_build_rendicion_filename(rendicion, "pdf")}"'},
+        )
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/rendiciones/{rendicion_id}/excel")
+def descargar_rendicion_jornada_excel(
+    rendicion_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        rendicion = session.query(RendicionJornadaFinanciera).filter(RendicionJornadaFinanciera.id == rendicion_id).first()
+        if not rendicion:
+            raise HTTPException(status_code=404, detail="Rendicion no encontrada.")
+
+        resumen = construir_resumen_rendicion(session, rendicion)
+        config = session.query(ConfiguracionEmpresa).first()
+        excel_buffer = generar_excel_rendicion_jornada(rendicion, resumen, config)
+        return StreamingResponse(
+            excel_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'inline; filename="{_build_rendicion_filename(rendicion, "xlsx")}"'},
+        )
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/historial/jornadas", response_model=List[JornadaHistorialOut])
+def listar_historial_jornadas(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    limit: int = Query(15, ge=1, le=60),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornadas = (
+            session.query(JornadaFinanciera)
+            .order_by(JornadaFinanciera.fecha.desc(), JornadaFinanciera.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return [construir_resumen_jornada_historica(session, jornada) for jornada in jornadas]
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/historial/jornadas/{jornada_id}/pdf")
+def descargar_jornada_historica_pdf(
+    jornada_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == jornada_id).first()
+        if not jornada:
+            raise HTTPException(status_code=404, detail="Jornada no encontrada.")
+        resumen = construir_resumen_jornada_reporte(session, jornada)
+        config = session.query(ConfiguracionEmpresa).first()
+        pdf_buffer = generar_pdf_reporte_finanzas(resumen, config, jornada.fecha, jornada.fecha)
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{_build_jornada_filename(jornada, "pdf")}"'},
+        )
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/historial/jornadas/{jornada_id}/excel")
+def descargar_jornada_historica_excel(
+    jornada_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == jornada_id).first()
+        if not jornada:
+            raise HTTPException(status_code=404, detail="Jornada no encontrada.")
+        resumen = construir_resumen_jornada_reporte(session, jornada)
+        config = session.query(ConfiguracionEmpresa).first()
+        excel_buffer = generar_excel_reporte_finanzas(resumen, config, jornada.fecha, jornada.fecha)
+        return StreamingResponse(
+            excel_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'inline; filename="{_build_jornada_filename(jornada, "xlsx")}"'},
+        )
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/historial/filtros-opciones")
+def obtener_filtros_opciones_rendiciones(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    """Catalogo de destinatarios y usuarios activos para filtros del historial de rendiciones."""
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        destinatarios = (
+            session.query(DestinatarioRendicion)
+            .order_by(DestinatarioRendicion.activo.desc(), DestinatarioRendicion.nombre.asc())
+            .all()
+        )
+        usuarios = (
+            session.query(Usuario)
+            .filter(Usuario.activo.is_(True))
+            .order_by(Usuario.nombre_completo.asc(), Usuario.email.asc(), Usuario.id.asc())
+            .all()
+        )
+        return {
+            "destinatarios": [{"id": d.id, "nombre": d.nombre, "activo": d.activo} for d in destinatarios],
+            "usuarios": [
+                {"id": u.id, "nombre": (u.nombre_completo or u.email or "").strip() or f"Usuario #{u.id}"}
+                for u in usuarios
+            ],
+        }
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/destinatarios-rendicion", response_model=List[DestinatarioRendicionOut])
+def listar_destinatarios_rendicion(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        return (
+            session.query(DestinatarioRendicion)
+            .order_by(DestinatarioRendicion.activo.desc(), DestinatarioRendicion.nombre.asc())
+            .all()
+        )
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/destinatarios-rendicion", response_model=DestinatarioRendicionOut)
+def crear_destinatario_rendicion(
+    data: DestinatarioRendicionCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        existe = (
+            session.query(DestinatarioRendicion)
+            .filter(func.lower(func.trim(DestinatarioRendicion.nombre)) == data.nombre.strip().lower())
+            .first()
+        )
+        if existe:
+            raise HTTPException(status_code=400, detail="Ya existe un destinatario con ese nombre.")
+        row = DestinatarioRendicion(nombre=data.nombre.strip(), activo=True)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.patch("/jornada/destinatarios-rendicion/{destinatario_id}", response_model=DestinatarioRendicionOut)
+def actualizar_destinatario_rendicion(
+    destinatario_id: int,
+    data: DestinatarioRendicionUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        row = session.query(DestinatarioRendicion).filter(DestinatarioRendicion.id == destinatario_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Destinatario no encontrado.")
+        if data.nombre is not None:
+            nombre = data.nombre.strip()
+            duplicado = (
+                session.query(DestinatarioRendicion)
+                .filter(
+                    and_(
+                        DestinatarioRendicion.id != destinatario_id,
+                        func.lower(func.trim(DestinatarioRendicion.nombre)) == nombre.lower(),
+                    ),
+                )
+                .first()
+            )
+            if duplicado:
+                raise HTTPException(status_code=400, detail="Ya existe otro destinatario con ese nombre.")
+            row.nombre = nombre
+        if data.activo is not None:
+            row.activo = data.activo
+        session.commit()
+        session.refresh(row)
+        return row
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/historial/rendiciones", response_model=RendicionHistorialListResponseOut)
+def listar_historial_rendiciones(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
+    jornada_fecha: Optional[date] = Query(None),
+    destinatario_id: Optional[int] = Query(None),
+    usuario_id: Optional[int] = Query(None),
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = (
+            session.query(RendicionJornadaFinanciera, JornadaFinanciera.fecha.label("jornada_fecha"))
+            .join(JornadaFinanciera, JornadaFinanciera.id == RendicionJornadaFinanciera.jornada_id)
+        )
+
+        if estado:
+            query = query.filter(RendicionJornadaFinanciera.estado == estado.strip())
+        if jornada_fecha:
+            query = query.filter(JornadaFinanciera.fecha == jornada_fecha)
+        if destinatario_id:
+            dest_row = session.query(DestinatarioRendicion).filter(DestinatarioRendicion.id == destinatario_id).first()
+            if dest_row:
+                nombre_cmp = (dest_row.nombre or "").strip().lower()
+                query = query.filter(
+                    or_(
+                        RendicionJornadaFinanciera.destinatario_rendicion_id == destinatario_id,
+                        and_(
+                            RendicionJornadaFinanciera.destinatario_rendicion_id.is_(None),
+                            func.lower(func.trim(RendicionJornadaFinanciera.rendido_a)) == nombre_cmp,
+                        ),
+                    )
+                )
+        if usuario_id:
+            query = query.filter(RendicionJornadaFinanciera.usuario_id == usuario_id)
+        if fecha_desde:
+            query = query.filter(RendicionJornadaFinanciera.fecha_hora_rendicion >= datetime.combine(fecha_desde, time.min))
+        if fecha_hasta:
+            query = query.filter(RendicionJornadaFinanciera.fecha_hora_rendicion <= datetime.combine(fecha_hasta, time.max))
+        if search:
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    RendicionJornadaFinanciera.rendido_a.ilike(term),
+                    RendicionJornadaFinanciera.usuario_nombre.ilike(term),
+                    RendicionJornadaFinanciera.estado.ilike(term),
+                    RendicionJornadaFinanciera.observacion.ilike(term),
+                    RendicionJornadaFinanciera.motivo_ajuste.ilike(term),
+                )
+            )
+
+        total = query.with_entities(func.count(RendicionJornadaFinanciera.id)).scalar() or 0
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        offset = (page - 1) * page_size
+        rows = (
+            query.order_by(RendicionJornadaFinanciera.fecha_hora_rendicion.desc(), RendicionJornadaFinanciera.id.desc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+
+        items = []
+        for rendicion, jornada_fecha_value in rows:
+            items.append({
+                "id": rendicion.id,
+                "jornada_id": rendicion.jornada_id,
+                "jornada_fecha": jornada_fecha_value,
+                "fecha_hora_rendicion": rendicion.fecha_hora_rendicion,
+                "usuario_id": rendicion.usuario_id,
+                "usuario_nombre": rendicion.usuario_nombre,
+                "destinatario_id": rendicion.destinatario_rendicion_id,
+                "rendido_a": rendicion.rendido_a,
+                "monto_sugerido": float(rendicion.monto_sugerido or 0.0),
+                "monto_rendido": float(rendicion.monto_rendido or 0.0),
+                "diferencia": float((rendicion.monto_rendido or 0.0) - (rendicion.monto_sugerido or 0.0)),
+                "observacion": rendicion.observacion,
+                "estado": rendicion.estado,
+                "editada": bool(rendicion.fecha_hora_ultima_edicion),
+                "fecha_hora_ultima_edicion": rendicion.fecha_hora_ultima_edicion,
+                "usuario_ultima_edicion_nombre": rendicion.usuario_ultima_edicion_nombre,
+                "motivo_ajuste": rendicion.motivo_ajuste,
+            })
+
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        }
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/alerta-post-corte-anterior", response_model=MovimientosPosterioresUltimoCorteOut)
+def obtener_alerta_post_corte_anterior(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        resultado = obtener_movimientos_posteriores_ultimo_corte(session)
+        if not resultado:
+            raise HTTPException(status_code=404, detail="No hay movimientos posteriores al ultimo corte.")
+        return resultado
+    finally:
+        session.close()
+
+
+# ── Rutas con {jornada_id} parametrico: DEBEN ir DESPUÉS de todas las rutas fijas de /jornada ──
+
+@caja_router.post("/jornada/{jornada_id}/rendiciones", response_model=RendicionJornadaOut)
+def registrar_rendicion_jornada_historica(
+    jornada_id: int,
+    data: RendicionJornadaCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("finanzas.jornada_rendir", "finanzas")),
+):
+    """Registra una rendición para una jornada específica por ID (permite rendir jornadas vencidas del historial)."""
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == jornada_id).first()
+        if not jornada:
+            raise HTTPException(status_code=404, detail="Jornada no encontrada.")
+        rendicion = crear_rendicion_jornada_actual(
+            session,
+            jornada,
+            current_user,
+            destinatario_id=data.destinatario_id,
+            monto_rendido=data.monto_rendido,
+            observacion=data.observacion,
+        )
+        session.commit()
+        return serializar_rendicion(session, rendicion)
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/{jornada_id}/pendiente-rendir", response_model=PendienteRendicionOut)
+def obtener_pendiente_rendicion_jornada_historica(
+    jornada_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    """Devuelve el monto pendiente de rendir para una jornada específica del historial."""
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == jornada_id).first()
+        if not jornada:
+            raise HTTPException(status_code=404, detail="Jornada no encontrada.")
+        return construir_pendiente_rendicion(session, jornada)
     finally:
         session.close()
 
@@ -144,10 +856,11 @@ def ajustar_caja(
     monto: float,
     concepto: str,
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_action("finanzas.transferencias", "finanzas")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
+        jornada = require_jornada_abierta(session)
         caja = session.query(ConfiguracionCaja).first()
         if not caja:
             caja = ConfiguracionCaja(id=1, saldo_actual=0.0)
@@ -162,6 +875,7 @@ def ajustar_caja(
             concepto=concepto,
             saldo_anterior=saldo_ant,
             saldo_nuevo=caja.saldo_actual,
+            jornada_id=jornada.id,
         )
         session.add(movimiento)
         session.commit()
@@ -267,10 +981,11 @@ def movimientos_banco(
 def registrar_transferencia_interna(
     data: TransferenciaInternaCreate,
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_action("finanzas.transferencias", "finanzas")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
+        jornada = require_jornada_abierta(session)
         if data.origen_tipo == data.destino_tipo == "CAJA":
             raise HTTPException(status_code=422, detail="Una transferencia de caja a caja no tiene efecto.")
         if data.origen_tipo == data.destino_tipo == "BANCO" and data.banco_origen_id == data.banco_destino_id:
@@ -310,6 +1025,7 @@ def registrar_transferencia_interna(
                 concepto=f"Transferencia interna a {(banco_destino.nombre_banco if banco_destino else 'BANCO')} - {concepto}",
                 saldo_anterior=saldo_anterior_caja,
                 saldo_nuevo=caja.saldo_actual,
+                jornada_id=jornada.id,
             )
             session.add(movimiento_caja)
             session.flush()
@@ -325,6 +1041,7 @@ def registrar_transferencia_interna(
                 saldo_anterior=saldo_anterior_origen,
                 saldo_nuevo=banco_origen.saldo_actual,
                 grupo_pago_id=transferencia_id,
+                jornada_id=jornada.id,
             )
             session.add(movimiento_banco_origen)
             session.flush()
@@ -341,6 +1058,7 @@ def registrar_transferencia_interna(
                 saldo_anterior=saldo_anterior_caja,
                 saldo_nuevo=caja.saldo_actual,
                 deposito_banco_id=movimiento_banco_referencia.id if movimiento_banco_referencia else None,
+                jornada_id=jornada.id,
             )
             session.add(movimiento_caja_destino)
         else:
@@ -355,6 +1073,7 @@ def registrar_transferencia_interna(
                 saldo_anterior=saldo_anterior_destino,
                 saldo_nuevo=banco_destino.saldo_actual,
                 grupo_pago_id=transferencia_id,
+                jornada_id=jornada.id,
             )
             session.add(movimiento_banco_destino)
             session.flush()

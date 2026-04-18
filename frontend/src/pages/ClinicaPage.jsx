@@ -839,41 +839,44 @@ function SectionHeader({ title, subtitle, actions }) {
 }
 
 function ClinicaShell({ currentKey, onNavigate, children }) {
+    const currentTab = CLINICA_TABS.find(tab => tab.key === currentKey) || CLINICA_TABS[0]
     return (
         <div className="page-body" style={{ minWidth: 0 }}>
             <div
                 className="card"
                 style={{
-                    padding: 28,
+                    padding: '22px 28px',
                     background: CLINICA_PALETTE.panel,
                     border: `1px solid ${CLINICA_PALETTE.accentBorder}`,
                     boxShadow: '0 20px 50px rgba(0,0,0,0.18)',
                 }}
             >
-                <div style={{ width: 56, height: 56, borderRadius: 18, display: 'grid', placeItems: 'center', background: CLINICA_PALETTE.accentSoft, border: `1px solid ${CLINICA_PALETTE.accentBorder}`, color: CLINICA_PALETTE.accent, marginBottom: 16 }}>
-                    <Stethoscope size={28} />
-                </div>
-                <h1 style={{ fontSize: '2rem', marginBottom: 10 }}>Modulo Clinico</h1>
-                <p style={{ color: 'var(--text-muted)', maxWidth: 760, marginBottom: 20 }}>
-                    Dashboard propio para la operacion clinica, con una paleta mas sanitaria y un flujo separado del administrativo.
-                </p>
-                <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
-                    {CLINICA_TABS.map(tab => {
-                        const Icon = tab.icon
-                        const active = tab.key === currentKey
-                        return (
-                            <button
-                                key={tab.key}
-                                type="button"
-                                className={active ? 'btn btn-primary' : 'btn btn-secondary'}
-                                onClick={() => onNavigate(tab.path)}
-                                style={active ? { background: CLINICA_PALETTE.accentSoft, color: '#b6fff9', border: `1px solid ${CLINICA_PALETTE.accentBorder}` } : {}}
-                            >
-                                <Icon size={16} />
-                                {tab.label}
-                            </button>
-                        )
-                    })}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+                        <div style={{ width: 52, height: 52, borderRadius: 16, display: 'grid', placeItems: 'center', background: CLINICA_PALETTE.accentSoft, border: `1px solid ${CLINICA_PALETTE.accentBorder}`, color: CLINICA_PALETTE.accent, flexShrink: 0 }}>
+                            <Stethoscope size={26} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                            <h1 style={{ fontSize: '1.75rem', marginBottom: 6 }}>Modulo Clinico</h1>
+                            <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
+                                Gestion clinica separada del administrativo, con foco en agenda, consultas e historial.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        style={{
+                            padding: '8px 12px',
+                            borderRadius: 999,
+                            background: CLINICA_PALETTE.accentSoft,
+                            border: `1px solid ${CLINICA_PALETTE.accentBorder}`,
+                            color: '#b6fff9',
+                            fontSize: '0.84rem',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        Seccion actual: {currentTab.label}
+                    </div>
                 </div>
             </div>
             {children}
@@ -5154,15 +5157,8 @@ function NuevaConsultaSection() {
 function HistorialClinicoGeneralSection() {
     const { user } = useAuth()
     const queryClient = useQueryClient()
-    const today = useMemo(() => new Date(), [])
-    const monthStart = useMemo(() => {
-        const base = new Date(today.getFullYear(), today.getMonth(), 1)
-        return base.toISOString().slice(0, 10)
-    }, [today])
-    const todayValue = useMemo(() => today.toISOString().slice(0, 10), [today])
-
-    const [fechaDesde, setFechaDesde] = useState(monthStart)
-    const [fechaHasta, setFechaHasta] = useState(todayValue)
+    const [fechaDesde, setFechaDesde] = useState('')
+    const [fechaHasta, setFechaHasta] = useState('')
     const [buscarInput, setBuscarInput] = useState('')
     const [selectedPacienteFilter, setSelectedPacienteFilter] = useState(null)
     const [doctorId, setDoctorId] = useState('')
@@ -5170,8 +5166,8 @@ function HistorialClinicoGeneralSection() {
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
     const [appliedFilters, setAppliedFilters] = useState({
-        fecha_desde: monthStart,
-        fecha_hasta: todayValue,
+        fecha_desde: '',
+        fecha_hasta: '',
         buscar: '',
         paciente_id: '',
         doctor_id: '',
@@ -5185,7 +5181,7 @@ function HistorialClinicoGeneralSection() {
     const [recentCreatedMedicamento, setRecentCreatedMedicamento] = useState(null)
     const [medicamentoSearch, setMedicamentoSearch] = useState('')
     const [actionError, setActionError] = useState('')
-    const [documentosMenuOpen, setDocumentosMenuOpen] = useState(false)
+    const [rowActionsMenu, setRowActionsMenu] = useState({ open: false, item: null, top: 0, left: 0 })
     const [consultaSavePhase, setConsultaSavePhase] = useState('idle')
 
     const pacientesFilterQuery = useQuery({
@@ -5255,15 +5251,15 @@ function HistorialClinicoGeneralSection() {
     }, [pageSize])
 
     useEffect(() => {
-        if (!documentosMenuOpen) return undefined
-        const close = () => setDocumentosMenuOpen(false)
+        if (!rowActionsMenu.open) return undefined
+        const close = () => setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
         window.addEventListener('click', close)
         window.addEventListener('resize', close)
         return () => {
             window.removeEventListener('click', close)
             window.removeEventListener('resize', close)
         }
-    }, [documentosMenuOpen])
+    }, [rowActionsMenu.open])
 
     const canView = hasActionAccess(user, 'clinica.consultas_ver', 'clinica')
     const canEdit = hasActionAccess(user, 'clinica.consultas_editar', 'clinica')
@@ -5359,17 +5355,19 @@ function HistorialClinicoGeneralSection() {
         },
     })
 
-    const openConsultaModal = async mode => {
-        if (!selectedEntry?.id || selectedEntry.tipo === 'RECETA_MEDICAMENTOS') return
+    const openConsultaModal = async (mode, entryOverride = null) => {
+        const targetEntry = entryOverride || selectedEntry
+        if (!targetEntry?.id || targetEntry.tipo === 'RECETA_MEDICAMENTOS') return
         try {
             setActionError('')
-            const tipoRuta = selectedEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'
-            const response = await api.get(`/clinica/consultas/${tipoRuta}/${selectedEntry.id}`)
+            setSelectedEntry(targetEntry)
+            const tipoRuta = targetEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'
+            const response = await api.get(`/clinica/consultas/${tipoRuta}/${targetEntry.id}`)
             setConsultaModal({
                 mode,
-                id: selectedEntry.id,
-                type: selectedEntry.tipo,
-                patientId: selectedEntry.paciente_id,
+                id: targetEntry.id,
+                type: targetEntry.tipo,
+                patientId: targetEntry.paciente_id,
                 initialData: response.data,
             })
         } catch (error) {
@@ -5377,16 +5375,18 @@ function HistorialClinicoGeneralSection() {
         }
     }
 
-    const openRecetaModal = async mode => {
-        if (!selectedEntry?.id || selectedEntry.tipo !== 'RECETA_MEDICAMENTOS') return
+    const openRecetaModal = async (mode, entryOverride = null) => {
+        const targetEntry = entryOverride || selectedEntry
+        if (!targetEntry?.id || targetEntry.tipo !== 'RECETA_MEDICAMENTOS') return
         try {
             setActionError('')
             setRecentCreatedMedicamento(null)
-            const response = await api.get(`/clinica/recetas-medicamentos/${selectedEntry.id}`)
+            setSelectedEntry(targetEntry)
+            const response = await api.get(`/clinica/recetas-medicamentos/${targetEntry.id}`)
             setRecetaModal({
                 mode,
-                id: selectedEntry.id,
-                patientId: selectedEntry.paciente_id,
+                id: targetEntry.id,
+                patientId: targetEntry.paciente_id,
                 initialData: response.data,
             })
         } catch (error) {
@@ -5394,13 +5394,15 @@ function HistorialClinicoGeneralSection() {
         }
     }
 
-    const openPdf = async () => {
-        if (!selectedEntry?.id) return
+    const openPdf = async (entryOverride = null) => {
+        const targetEntry = entryOverride || selectedEntry
+        if (!targetEntry?.id) return
         try {
             setActionError('')
-            const endpoint = selectedEntry.tipo === 'RECETA_MEDICAMENTOS'
-                ? `/clinica/recetas-medicamentos/${selectedEntry.id}/pdf`
-                : `/clinica/consultas/${selectedEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'}/${selectedEntry.id}/pdf`
+            setSelectedEntry(targetEntry)
+            const endpoint = targetEntry.tipo === 'RECETA_MEDICAMENTOS'
+                ? `/clinica/recetas-medicamentos/${targetEntry.id}/pdf`
+                : `/clinica/consultas/${targetEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'}/${targetEntry.id}/pdf`
             const response = await api.get(endpoint, { responseType: 'blob' })
             const blob = new Blob([response.data], { type: 'application/pdf' })
             const url = window.URL.createObjectURL(blob)
@@ -5411,121 +5413,179 @@ function HistorialClinicoGeneralSection() {
         }
     }
 
-    const latestLinkedReceta = Array.isArray(detalleQuery.data?.recetas_medicamentos_relacionadas)
-        ? detalleQuery.data.recetas_medicamentos_relacionadas[0] || null
-        : null
-    const hasRecetaMedicamentos = Boolean(latestLinkedReceta?.id)
-    const hasRecetaLentes = Boolean(
-        selectedEntry?.tipo === 'OFTALMOLOGIA' && (
-            detalleQuery.data?.av_cc_lejos_od ||
-            detalleQuery.data?.av_cc_lejos_oi ||
-            detalleQuery.data?.ref_od_esfera ||
-            detalleQuery.data?.ref_od_cilindro ||
-            detalleQuery.data?.ref_od_eje ||
-            detalleQuery.data?.ref_od_adicion ||
-            detalleQuery.data?.ref_oi_esfera ||
-            detalleQuery.data?.ref_oi_cilindro ||
-            detalleQuery.data?.ref_oi_eje ||
-            detalleQuery.data?.ref_oi_adicion
-        )
-    )
-
     const handleUnavailableDocument = message => {
         setActionError(message)
-        setDocumentosMenuOpen(false)
+        setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
     }
 
-    const openConsultaIndicacionesPdf = async () => {
-        if (!selectedEntry?.id || selectedEntry.tipo === 'RECETA_MEDICAMENTOS') return
+    const resolveConsultaDetail = async targetEntry => {
+        if (!targetEntry?.id || targetEntry.tipo === 'RECETA_MEDICAMENTOS') return null
+        if (selectedEntry?.id === targetEntry.id && selectedEntry?.tipo === targetEntry.tipo && detalleQuery.data) {
+            return detalleQuery.data
+        }
+        const tipoRuta = targetEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'
+        return (await api.get(`/clinica/consultas/${tipoRuta}/${targetEntry.id}`)).data
+    }
+
+    const openConsultaIndicacionesPdf = async (entryOverride = null) => {
+        const targetEntry = entryOverride || selectedEntry
+        if (!targetEntry?.id || targetEntry.tipo === 'RECETA_MEDICAMENTOS') return
         try {
             setActionError('')
-            const tipoRuta = selectedEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'
-            const response = await api.get(`/clinica/consultas/${tipoRuta}/${selectedEntry.id}/indicaciones-pdf`, { responseType: 'blob' })
+            setSelectedEntry(targetEntry)
+            const tipoRuta = targetEntry.tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'
+            const response = await api.get(`/clinica/consultas/${tipoRuta}/${targetEntry.id}/indicaciones-pdf`, { responseType: 'blob' })
             const blob = new Blob([response.data], { type: 'application/pdf' })
             const url = window.URL.createObjectURL(blob)
             window.open(url, '_blank', 'noopener,noreferrer')
             setTimeout(() => window.URL.revokeObjectURL(url), 1500)
-            setDocumentosMenuOpen(false)
+            setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
         } catch (error) {
             setActionError(formatError(error, 'No se pudo generar el PDF de indicaciones.'))
         }
     }
 
-    const openLinkedRecetaCompraPdf = async () => {
-        if (!latestLinkedReceta?.id) {
+    const openLinkedRecetaCompraPdf = async (entryOverride = null) => {
+        const targetEntry = entryOverride || selectedEntry
+        if (!targetEntry?.id || targetEntry.tipo === 'RECETA_MEDICAMENTOS') return
+        const detalle = await resolveConsultaDetail(targetEntry)
+        const linkedReceta = Array.isArray(detalle?.recetas_medicamentos_relacionadas)
+            ? detalle.recetas_medicamentos_relacionadas[0] || null
+            : null
+        if (!linkedReceta?.id) {
             handleUnavailableDocument('No hay receta de medicamentos vinculada a esta consulta.')
             return
         }
         try {
             setActionError('')
-            const response = await api.get(`/clinica/recetas-medicamentos/${latestLinkedReceta.id}/compra-pdf`, { responseType: 'blob' })
+            setSelectedEntry(targetEntry)
+            const response = await api.get(`/clinica/recetas-medicamentos/${linkedReceta.id}/compra-pdf`, { responseType: 'blob' })
             const blob = new Blob([response.data], { type: 'application/pdf' })
             const url = window.URL.createObjectURL(blob)
             window.open(url, '_blank', 'noopener,noreferrer')
             setTimeout(() => window.URL.revokeObjectURL(url), 1500)
-            setDocumentosMenuOpen(false)
+            setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
         } catch (error) {
             setActionError(formatError(error, 'No se pudo generar el PDF de la receta de medicamentos.'))
         }
     }
 
-    const openLinkedRecetaIndicacionesPdf = async () => {
-        if (!latestLinkedReceta?.id) {
+    const openLinkedRecetaIndicacionesPdf = async (entryOverride = null) => {
+        const targetEntry = entryOverride || selectedEntry
+        if (!targetEntry?.id) return
+        if (targetEntry.tipo === 'RECETA_MEDICAMENTOS') {
+            try {
+                setActionError('')
+                setSelectedEntry(targetEntry)
+                const response = await api.get(`/clinica/recetas-medicamentos/${targetEntry.id}/indicaciones-pdf`, { responseType: 'blob' })
+                const blob = new Blob([response.data], { type: 'application/pdf' })
+                const url = window.URL.createObjectURL(blob)
+                window.open(url, '_blank', 'noopener,noreferrer')
+                setTimeout(() => window.URL.revokeObjectURL(url), 1500)
+                setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
+            } catch (error) {
+                setActionError(formatError(error, 'No se pudo generar el PDF de indicaciones de medicamentos.'))
+            }
+            return
+        }
+        const detalle = await resolveConsultaDetail(targetEntry)
+        const linkedReceta = Array.isArray(detalle?.recetas_medicamentos_relacionadas)
+            ? detalle.recetas_medicamentos_relacionadas[0] || null
+            : null
+        if (!linkedReceta?.id) {
             handleUnavailableDocument('No hay receta de medicamentos vinculada a esta consulta.')
             return
         }
         try {
             setActionError('')
-            const response = await api.get(`/clinica/recetas-medicamentos/${latestLinkedReceta.id}/indicaciones-pdf`, { responseType: 'blob' })
+            setSelectedEntry(targetEntry)
+            const response = await api.get(`/clinica/recetas-medicamentos/${linkedReceta.id}/indicaciones-pdf`, { responseType: 'blob' })
             const blob = new Blob([response.data], { type: 'application/pdf' })
             const url = window.URL.createObjectURL(blob)
             window.open(url, '_blank', 'noopener,noreferrer')
             setTimeout(() => window.URL.revokeObjectURL(url), 1500)
-            setDocumentosMenuOpen(false)
+            setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
         } catch (error) {
             setActionError(formatError(error, 'No se pudo generar el PDF de indicaciones de medicamentos.'))
         }
     }
 
+    const openHistoryRowActions = (event, item) => {
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const menuWidth = 260
+        const viewportWidth = window.innerWidth
+        const viewportHeight = window.innerHeight
+        const estimatedHeight = item.tipo === 'RECETA_MEDICAMENTOS' ? 220 : 300
+
+        let left = rect.right - menuWidth
+        let top = rect.bottom + 6
+
+        if (left < 8) left = 8
+        if (left + menuWidth > viewportWidth - 8) left = viewportWidth - menuWidth - 8
+        if (top + estimatedHeight > viewportHeight - 8) top = rect.top - estimatedHeight - 6
+        if (top < 8) top = 8
+
+        setSelectedEntry(item)
+        setRowActionsMenu({ open: true, item, top, left })
+    }
+
+    const closeHistoryRowActions = () => {
+        setRowActionsMenu({ open: false, item: null, top: 0, left: 0 })
+    }
+
     const items = historialQuery.data?.items || []
+    const compactStats = [
+        { label: 'Total', value: fmtNumber(historialQuery.data?.total || 0) },
+        { label: 'Oftalmologia', value: fmtNumber(historialQuery.data?.total_oftalmologia || 0) },
+        { label: 'Contactologia', value: fmtNumber(historialQuery.data?.total_contactologia || 0) },
+        { label: 'Recetas', value: fmtNumber(historialQuery.data?.total_recetas || 0) },
+    ]
 
     return (
         <>
-            <div className="card" style={{ marginTop: 22, overflow: 'visible' }}>
+            <div
+                className="card"
+                style={{
+                    marginTop: 22,
+                    overflow: 'hidden',
+                    display: 'grid',
+                    gridTemplateRows: 'auto 1fr auto',
+                    minHeight: 'calc(100vh - 150px)',
+                }}
+            >
                 <div
                     style={{
-                        position: 'sticky',
-                        top: 0,
-                        zIndex: 4,
-                        background: 'var(--bg-card)',
-                        paddingBottom: 14,
-                        marginBottom: 18,
+                        paddingBottom: 12,
+                        marginBottom: 14,
                         borderBottom: '1px solid rgba(255,255,255,0.06)',
                     }}
                 >
                     <SectionHeader
                         title="Historial clinico general"
-                        subtitle="Consultas y recetas del modulo clinico con filtros por paciente, doctor, tipo y fechas."
+                        subtitle="Vista compacta para buscar rapido y trabajar con el preview sin perder espacio."
                         actions={<button type="button" className="btn btn-primary" onClick={applyFilters}><Search size={16} /> Aplicar filtros</button>}
                     />
 
-                    <div
-                        className="dashboard-stats"
-                        style={{
-                            marginBottom: 18,
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                            gap: 12,
-                            alignItems: 'stretch',
-                        }}
-                    >
-                        <StatCard label="Total" value={fmtNumber(historialQuery.data?.total || 0)} detail="registros filtrados" accent={CLINICA_PALETTE.accent} />
-                        <StatCard label="Oftalmologia" value={fmtNumber(historialQuery.data?.total_oftalmologia || 0)} detail="consultas" accent={CLINICA_PALETTE.accentAlt} />
-                        <StatCard label="Contactologia" value={fmtNumber(historialQuery.data?.total_contactologia || 0)} detail="consultas" accent="#60a5fa" />
-                        <StatCard label="Recetas" value={fmtNumber(historialQuery.data?.total_recetas || 0)} detail="medicamentos" accent="#f59e0b" />
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+                        {compactStats.map(item => (
+                            <div
+                                key={item.label}
+                                style={{
+                                    padding: '8px 12px',
+                                    borderRadius: 999,
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.08)',
+                                    fontSize: '0.82rem',
+                                    color: 'var(--text-secondary)',
+                                }}
+                            >
+                                <strong style={{ color: 'var(--text-primary)' }}>{item.value}</strong> {item.label}
+                            </div>
+                        ))}
                     </div>
 
-                    <div className="filters-bar" style={{ marginBottom: 18 }}>
+                    <div className="filters-bar" style={{ marginBottom: 0, alignItems: 'end' }}>
                         <input className="form-input" type="date" value={fechaDesde} onChange={event => setFechaDesde(event.target.value)} style={{ width: 170 }} />
                         <input className="form-input" type="date" value={fechaHasta} onChange={event => setFechaHasta(event.target.value)} style={{ width: 170 }} />
                         <div style={{ minWidth: 260, flex: 1 }}>
@@ -5569,133 +5629,6 @@ function HistorialClinicoGeneralSection() {
                         </select>
                     </div>
 
-                    <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
-                    {selectedEntry?.tipo !== 'RECETA_MEDICAMENTOS' && canView && <button type="button" className="btn btn-secondary" onClick={() => openConsultaModal('view')} disabled={!selectedEntry}><Eye size={16} /> Ver consulta</button>}
-                    {selectedEntry?.tipo === 'RECETA_MEDICAMENTOS' && canView && <button type="button" className="btn btn-secondary" onClick={() => openRecetaModal('view')} disabled={!selectedEntry}><Eye size={16} /> Ver receta</button>}
-                    {selectedEntry?.tipo !== 'RECETA_MEDICAMENTOS' && canEdit && <button type="button" className="btn btn-warning" onClick={() => openConsultaModal('edit')} disabled={!selectedEntry}><Pencil size={16} /> Editar</button>}
-                    {selectedEntry?.tipo === 'RECETA_MEDICAMENTOS' && canEdit && <button type="button" className="btn btn-warning" onClick={() => openRecetaModal('edit')} disabled={!selectedEntry}><Pencil size={16} /> Editar</button>}
-                    {canExport && (
-                        <div style={{ position: 'relative' }}>
-                            <button
-                                type="button"
-                                className="btn btn-secondary"
-                                onClick={event => {
-                                    event.stopPropagation()
-                                    setDocumentosMenuOpen(prev => !prev)
-                                }}
-                                disabled={!selectedEntry}
-                            >
-                                <FileText size={16} /> Documentos v
-                            </button>
-                            {documentosMenuOpen && selectedEntry && (
-                                <div
-                                    style={{
-                                        position: 'absolute',
-                                        top: 'calc(100% + 8px)',
-                                        left: 0,
-                                        minWidth: 280,
-                                        zIndex: 9999,
-                                        background: '#202633',
-                                        border: '1px solid rgba(255,255,255,0.08)',
-                                        borderRadius: 12,
-                                        boxShadow: '0 20px 45px rgba(0,0,0,0.35)',
-                                        padding: 8,
-                                        display: 'grid',
-                                        gap: 6,
-                                    }}
-                                    onClick={event => event.stopPropagation()}
-                                >
-                                    {selectedEntry.tipo === 'RECETA_MEDICAMENTOS' ? (
-                                        <>
-                                            <button type="button" className="dropdown-item" style={{ background: '#242b3a', color: 'var(--text-primary)', borderRadius: 10 }} onClick={openPdf}>
-                                                <FileText size={14} style={{ marginRight: 8 }} /> PDF de receta de medicamentos
-                                            </button>
-                                            <button type="button" className="dropdown-item" style={{ background: '#242b3a', color: 'var(--text-primary)', borderRadius: 10 }} onClick={async () => {
-                                                try {
-                                                    setActionError('')
-                                                    const response = await api.get(`/clinica/recetas-medicamentos/${selectedEntry.id}/indicaciones-pdf`, { responseType: 'blob' })
-                                                    const blob = new Blob([response.data], { type: 'application/pdf' })
-                                                    const url = window.URL.createObjectURL(blob)
-                                                    window.open(url, '_blank', 'noopener,noreferrer')
-                                                    setTimeout(() => window.URL.revokeObjectURL(url), 1500)
-                                                    setDocumentosMenuOpen(false)
-                                                } catch (error) {
-                                                    setActionError(formatError(error, 'No se pudo generar el PDF de indicaciones de medicamentos.'))
-                                                }
-                                            }}>
-                                                <FileText size={14} style={{ marginRight: 8 }} /> Indicaciones de medicamentos
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <button type="button" className="dropdown-item" style={{ background: '#242b3a', color: 'var(--text-primary)', borderRadius: 10 }} onClick={openPdf}>
-                                                <FileText size={14} style={{ marginRight: 8 }} /> PDF de consulta
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="dropdown-item"
-                                                style={{ background: hasRecetaLentes ? '#242b3a' : '#2b303d', color: hasRecetaLentes ? 'var(--text-primary)' : 'var(--text-muted)', borderRadius: 10 }}
-                                                onClick={() => {
-                                                    if (!hasRecetaLentes) {
-                                                        handleUnavailableDocument('No hay datos de refraccion cargados para generar receta de lentes.')
-                                                        return
-                                                    }
-                                                    openPdf()
-                                                }}
-                                            >
-                                                <FileText size={14} style={{ marginRight: 8 }} /> Receta de lentes PDF
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="dropdown-item"
-                                                style={{ background: hasRecetaMedicamentos ? '#242b3a' : '#2b303d', color: hasRecetaMedicamentos ? 'var(--text-primary)' : 'var(--text-muted)', borderRadius: 10 }}
-                                                onClick={openLinkedRecetaCompraPdf}
-                                            >
-                                                <FileText size={14} style={{ marginRight: 8 }} /> Receta de medicamentos PDF
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="dropdown-item"
-                                                style={{ background: hasRecetaMedicamentos ? '#242b3a' : '#2b303d', color: hasRecetaMedicamentos ? 'var(--text-primary)' : 'var(--text-muted)', borderRadius: 10 }}
-                                                onClick={openLinkedRecetaIndicacionesPdf}
-                                            >
-                                                <FileText size={14} style={{ marginRight: 8 }} /> Indicaciones de medicamentos
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                    {selectedEntry?.tipo !== 'RECETA_MEDICAMENTOS' && canEdit && (
-                        <button
-                            type="button"
-                            className="btn btn-danger"
-                            disabled={!selectedEntry || deleteConsultaMutation.isPending}
-                            onClick={() => {
-                                if (!selectedEntry) return
-                                if (!window.confirm('Se eliminara esta consulta. Desea continuar?')) return
-                                deleteConsultaMutation.mutate(selectedEntry)
-                            }}
-                        >
-                            <Trash2 size={16} /> Eliminar
-                        </button>
-                    )}
-                    {selectedEntry?.tipo === 'RECETA_MEDICAMENTOS' && canEdit && (
-                        <button
-                            type="button"
-                            className="btn btn-danger"
-                            disabled={!selectedEntry || deleteRecetaMutation.isPending}
-                            onClick={() => {
-                                if (!selectedEntry) return
-                                if (!window.confirm('Se eliminara esta receta. Desea continuar?')) return
-                                deleteRecetaMutation.mutate(selectedEntry.id)
-                            }}
-                        >
-                            <Trash2 size={16} /> Eliminar
-                        </button>
-                    )}
-                    </div>
                 </div>
 
                 {actionError ? (
@@ -5710,38 +5643,39 @@ function HistorialClinicoGeneralSection() {
                     <div className="alert alert-error">{formatError(historialQuery.error, 'No se pudo cargar el historial clinico general.')}</div>
                 ) : (
                     <>
-                        <div className="grid-2" style={{ alignItems: 'start' }}>
-                            <div className="card" style={{ overflow: 'hidden', minWidth: 0 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.45fr) minmax(320px, 0.95fr)', gap: 16, alignItems: 'stretch' }}>
+                            <div className="card" style={{ overflow: 'hidden', minWidth: 0, height: 'calc(100vh - 265px)', display: 'flex', flexDirection: 'column' }}>
                                 <div
                                     className="table-container"
                                     style={{
                                         width: '100%',
                                         maxWidth: '100%',
-                                        overflowX: 'auto',
-                                        maxHeight: 'calc(100vh - 250px)',
-                                        minHeight: 560,
+                                        overflowX: 'hidden',
+                                        height: '100%',
                                         overflowY: 'auto'
                                     }}
                                 >
-                                    <table style={{ minWidth: 980, tableLayout: 'fixed' }}>
+                                    <table style={{ width: '100%', tableLayout: 'fixed' }}>
                                         <thead>
                                             <tr>
-                                                <th style={{ width: 150 }}>Fecha</th>
-                                                <th style={{ width: 150 }}>Tipo</th>
-                                                <th style={{ width: 220 }}>Paciente</th>
-                                                <th style={{ width: 180 }}>Doctor</th>
-                                                <th style={{ width: 180 }}>Lugar</th>
-                                                <th style={{ width: 280 }}>Diagnostico / resumen</th>
+                                                <th style={{ width: 120 }}>Fecha</th>
+                                                <th style={{ width: 110 }}>Tipo</th>
+                                                <th style={{ width: 190 }}>Paciente</th>
+                                                <th>Atendido por</th>
+                                                <th style={{ width: 120, textAlign: 'right', position: 'sticky', right: 0, background: 'var(--bg-card)' }}>Acciones</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {items.length ? items.map(item => (
                                                 <tr
                                                     key={`${item.tipo}-${item.id}`}
-                                                    onClick={() => setSelectedEntry(item)}
+                                                    onClick={() => {
+                                                        setSelectedEntry(item)
+                                                        closeHistoryRowActions()
+                                                    }}
                                                     style={{ cursor: 'pointer', background: selectedEntry?.id === item.id && selectedEntry?.tipo === item.tipo ? CLINICA_PALETTE.accentSoft : 'transparent' }}
                                                 >
-                                                    <td>{fmtDateTime(item.fecha)}</td>
+                                                    <td style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.35 }}>{fmtDateTime(item.fecha)}</td>
                                                     <td>
                                                         <span className={`badge ${item.tipo === 'OFTALMOLOGIA' ? 'badge-blue' : item.tipo === 'CONTACTOLOGIA' ? 'badge-success' : 'badge-warning'}`}>
                                                             {item.tipo === 'RECETA_MEDICAMENTOS' ? 'RECETA' : item.tipo}
@@ -5751,17 +5685,117 @@ function HistorialClinicoGeneralSection() {
                                                         <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
                                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>{item.paciente_ci || '-'}</div>
                                                     </td>
-                                                    <td style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.doctor_nombre || '-'}</td>
-                                                    <td style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.lugar_nombre || '-'}</td>
-                                                    <td style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.diagnostico || item.resumen || item.motivo || item.observaciones || '-'}</td>
+                                                    <td style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.35 }}>
+                                                        <div style={{ fontWeight: 700 }}>{item.doctor_nombre || 'Sin doctor'}</div>
+                                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 6 }}>
+                                                            {item.lugar_nombre || 'Sin lugar'}
+                                                        </div>
+                                                    </td>
+                                                    <td style={{ textAlign: 'right', position: 'sticky', right: 0, background: selectedEntry?.id === item.id && selectedEntry?.tipo === item.tipo ? CLINICA_PALETTE.accentSoft : 'var(--bg-card)' }} onClick={event => event.stopPropagation()}>
+                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={event => openHistoryRowActions(event, item)}>
+                                                            Acciones v
+                                                        </button>
+                                                    </td>
                                                 </tr>
-                                            )) : <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No hay registros para los filtros seleccionados.</td></tr>}
+                                            )) : <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No hay registros para los filtros seleccionados.</td></tr>}
                                         </tbody>
                                     </table>
                                 </div>
                             </div>
+                            {rowActionsMenu.open && rowActionsMenu.item && (
+                                <>
+                                    <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={closeHistoryRowActions} />
+                                    <div
+                                        style={{
+                                            position: 'fixed',
+                                            top: rowActionsMenu.top,
+                                            left: rowActionsMenu.left,
+                                            width: 260,
+                                            background: '#1b2130',
+                                            border: '1px solid rgba(255,255,255,0.12)',
+                                            borderRadius: 12,
+                                            boxShadow: '0 20px 40px rgba(0,0,0,0.35)',
+                                            padding: 8,
+                                            zIndex: 100,
+                                            display: 'grid',
+                                            gap: 6,
+                                        }}
+                                        onClick={event => event.stopPropagation()}
+                                    >
+                                        {canView && (
+                                            <button type="button" className="dropdown-item" onClick={() => {
+                                                closeHistoryRowActions()
+                                                if (rowActionsMenu.item.tipo === 'RECETA_MEDICAMENTOS') {
+                                                    openRecetaModal('view', rowActionsMenu.item)
+                                                    return
+                                                }
+                                                openConsultaModal('view', rowActionsMenu.item)
+                                            }}>
+                                                <Eye size={14} style={{ marginRight: 8 }} /> {rowActionsMenu.item.tipo === 'RECETA_MEDICAMENTOS' ? 'Ver receta' : 'Ver consulta'}
+                                            </button>
+                                        )}
+                                        {canEdit && (
+                                            <button type="button" className="dropdown-item" onClick={() => {
+                                                closeHistoryRowActions()
+                                                if (rowActionsMenu.item.tipo === 'RECETA_MEDICAMENTOS') {
+                                                    openRecetaModal('edit', rowActionsMenu.item)
+                                                    return
+                                                }
+                                                openConsultaModal('edit', rowActionsMenu.item)
+                                            }}>
+                                                <Pencil size={14} style={{ marginRight: 8 }} /> Editar
+                                            </button>
+                                        )}
+                                        {canExport && (
+                                            <button type="button" className="dropdown-item" onClick={() => {
+                                                closeHistoryRowActions()
+                                                openPdf(rowActionsMenu.item)
+                                            }}>
+                                                <FileText size={14} style={{ marginRight: 8 }} /> {rowActionsMenu.item.tipo === 'RECETA_MEDICAMENTOS' ? 'PDF de receta de medicamentos' : 'PDF de consulta'}
+                                            </button>
+                                        )}
+                                        {canExport && rowActionsMenu.item.tipo === 'OFTALMOLOGIA' && (
+                                            <button type="button" className="dropdown-item" onClick={() => {
+                                                closeHistoryRowActions()
+                                                openPdf(rowActionsMenu.item)
+                                            }}>
+                                                <FileText size={14} style={{ marginRight: 8 }} /> Receta de lentes PDF
+                                            </button>
+                                        )}
+                                        {canExport && rowActionsMenu.item.tipo !== 'RECETA_MEDICAMENTOS' && (
+                                            <button type="button" className="dropdown-item" onClick={() => openLinkedRecetaCompraPdf(rowActionsMenu.item)}>
+                                                <FileText size={14} style={{ marginRight: 8 }} /> Receta de medicamentos PDF
+                                            </button>
+                                        )}
+                                        {canExport && (
+                                            <button type="button" className="dropdown-item" onClick={() => openLinkedRecetaIndicacionesPdf(rowActionsMenu.item)}>
+                                                <FileText size={14} style={{ marginRight: 8 }} /> Indicaciones de medicamentos
+                                            </button>
+                                        )}
+                                        {canEdit && (
+                                            <button
+                                                type="button"
+                                                className="dropdown-item"
+                                                style={{ color: '#ff8e8e' }}
+                                                onClick={() => {
+                                                    closeHistoryRowActions()
+                                                    if (rowActionsMenu.item.tipo === 'RECETA_MEDICAMENTOS') {
+                                                        if (!window.confirm('Se eliminara esta receta. Desea continuar?')) return
+                                                        deleteRecetaMutation.mutate(rowActionsMenu.item.id)
+                                                        return
+                                                    }
+                                                    if (!window.confirm('Se eliminara esta consulta. Desea continuar?')) return
+                                                    deleteConsultaMutation.mutate(rowActionsMenu.item)
+                                                }}
+                                            >
+                                                <Trash2 size={14} style={{ marginRight: 8 }} /> Eliminar
+                                            </button>
+                                        )}
+                                    </div>
+                                </>
+                            )}
 
-                            <div className="card" style={{ minWidth: 0 }}>
+                            <div className="card" style={{ minWidth: 0, height: 'calc(100vh - 265px)', display: 'flex', flexDirection: 'column' }}>
                                 {!selectedEntry ? (
                                     <div style={{ color: 'var(--text-muted)' }}>Seleccione un registro para ver su detalle.</div>
                                 ) : detalleQuery.isLoading ? (
@@ -5769,7 +5803,11 @@ function HistorialClinicoGeneralSection() {
                                 ) : detalleQuery.isError ? (
                                     <div className="alert alert-error">{formatError(detalleQuery.error, 'No se pudo cargar el detalle del registro clinico.')}</div>
                                 ) : selectedEntry.tipo === 'RECETA_MEDICAMENTOS' ? (
-                                    <div style={{ display: 'grid', gap: 12 }}>
+                                    <div style={{ display: 'grid', gap: 12, overflowY: 'auto', height: '100%', paddingRight: 4 }}>
+                                        <div>
+                                            <div style={{ fontWeight: 800 }}>Preview de la receta</div>
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Seleccion actual: {selectedEntry.paciente_nombre}</div>
+                                        </div>
                                         <div><strong>Paciente:</strong> {selectedEntry.paciente_nombre}</div>
                                         <div><strong>Fecha:</strong> {fmtDateTime(detalleQuery.data?.fecha_emision || selectedEntry.fecha)}</div>
                                         <div><strong>Doctor:</strong> {detalleQuery.data?.doctor_nombre || selectedEntry.doctor_nombre || '-'}</div>
@@ -5792,7 +5830,11 @@ function HistorialClinicoGeneralSection() {
                                     (() => {
                                         const detalle = detalleQuery.data || {}
                                         return (
-                                            <div style={{ display: 'grid', gap: 12 }}>
+                                            <div style={{ display: 'grid', gap: 12, overflowY: 'auto', height: '100%', paddingRight: 4 }}>
+                                                <div>
+                                                    <div style={{ fontWeight: 800 }}>Preview de la consulta</div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Seleccion actual: {selectedEntry.paciente_nombre}</div>
+                                                </div>
                                                 <div><strong>Paciente:</strong> {selectedEntry.paciente_nombre}</div>
                                                 <div><strong>Fecha:</strong> {fmtDateTime(detalle.fecha || selectedEntry.fecha)}</div>
                                                 <div><strong>Doctor:</strong> {detalle.doctor_nombre || selectedEntry.doctor_nombre || '-'}</div>

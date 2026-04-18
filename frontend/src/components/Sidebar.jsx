@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { hasModuleAccess, normalizeRole } from '../utils/roles'
@@ -95,7 +95,15 @@ const navGroups = [
         accent: '#f472b6',
         tint: 'rgba(244, 114, 182, 0.08)',
         items: [
-            { to: '/caja', icon: Landmark, label: 'Centro Financiero' },
+            {
+                to: '/caja',
+                icon: Landmark,
+                label: 'Centro Financiero',
+                subItems: [
+                    { to: '/caja', label: 'Caja y bancos' },
+                    { to: '/finanzas/jornada', label: 'Jornada y rendiciones' },
+                ]
+            },
             { to: '/gastos', icon: DollarSign, label: 'Gastos' },
             { to: '/cuentas-por-pagar', icon: Landmark, label: 'Cuentas por Pagar' },
         ]
@@ -131,6 +139,7 @@ const navGroups = [
                 label: 'Modulo Clinico',
                 subItems: [
                     { to: '/clinica/dashboard', label: 'Dashboard Clinico' },
+                    { to: '/clinica/agenda', label: 'Agenda' },
                     { to: '/clinica/pacientes', label: 'Pacientes' },
                     { to: '/clinica/doctores', label: 'Doctores' },
                     { to: '/clinica/consulta', label: 'Nueva Consulta' },
@@ -160,6 +169,24 @@ export default function Sidebar({ collapsed = false, onToggle }) {
         }))
         return initialState
     })
+
+    useEffect(() => {
+        setOpenMenus(prev => {
+            const next = { ...prev }
+            navGroups.forEach(group => {
+                group.items.forEach(item => {
+                    if (!item.subItems) return
+                    const shouldBeOpen = item.subItems.some(
+                        sub => location.pathname === sub.to || location.pathname.startsWith(`${sub.to}/`)
+                    )
+                    if (shouldBeOpen) {
+                        next[item.to] = true
+                    }
+                })
+            })
+            return next
+        })
+    }, [location.pathname])
 
     const toggleMenu = (e, path) => {
         e.preventDefault()
@@ -224,7 +251,10 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                     if (['/referidores', '/vendedores', '/canales-venta', '/categorias', '/atributos', '/marcas', '/productos', '/proveedores'].includes(item.to)) {
                         return hasModuleAccess(user, 'catalogos') ? item : null
                     }
-                    if (['/caja', '/gastos'].includes(item.to)) {
+                    if (item.to === '/caja') {
+                        return hasModuleAccess(user, 'finanzas') ? item : null
+                    }
+                    if (item.to === '/gastos') {
                         return hasModuleAccess(user, 'finanzas') ? item : null
                     }
                     if (item.to === '/cuentas-por-pagar') {

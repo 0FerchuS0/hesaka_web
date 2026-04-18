@@ -380,6 +380,17 @@ def _cleanup_orphan_rows(parsed, db_name: str) -> None:
     conn.autocommit = True
     try:
         with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                """
+            )
+            schema_columns: dict[str, set[str]] = {}
+            for table_name, column_name in cursor.fetchall():
+                schema_columns.setdefault(table_name, set()).add(column_name)
+
             changed = True
             while changed:
                 changed = False
@@ -388,6 +399,15 @@ def _cleanup_orphan_rows(parsed, db_name: str) -> None:
                         child_column = foreign_key.parent
                         parent_column = foreign_key.column
                         if child_column.table.name != table.name:
+                            continue
+                        child_columns = schema_columns.get(table.name)
+                        parent_columns = schema_columns.get(parent_column.table.name)
+                        if (
+                            not child_columns
+                            or not parent_columns
+                            or child_column.name not in child_columns
+                            or parent_column.name not in parent_columns
+                        ):
                             continue
 
                         delete_sql = f"""

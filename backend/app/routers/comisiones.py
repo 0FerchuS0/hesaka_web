@@ -9,6 +9,7 @@ from app.middleware.tenant import get_tenant_slug
 from app.models.models import Banco, Comision, ConfiguracionCaja, MovimientoBanco, MovimientoCaja, Venta
 from app.schemas.schemas import ComisionOut, ComisionPagoCreate
 from app.utils.auth import get_current_user, require_roles
+from app.utils.jornada import require_jornada_abierta
 
 router = APIRouter(prefix="/api/comisiones", tags=["Comisiones"])
 
@@ -54,6 +55,7 @@ def _obtener_o_crear_caja(session):
 
 
 def _revertir_movimientos_comision(session, comision: Comision):
+    require_jornada_abierta(session)
     movimiento_banco_id = comision.movimiento_banco_id
     movimiento_caja_id = comision.movimiento_caja_id
 
@@ -126,6 +128,7 @@ def obtener_comision(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
+        jornada = require_jornada_abierta(session)
         comision = _query_comision_detallada(session, comision_id)
         if not comision:
             raise HTTPException(status_code=404, detail="Comision no encontrada.")
@@ -178,6 +181,7 @@ def pagar_comision(
                 concepto=f"PAGO COMISION - {referidor} (Venta: {venta_codigo})",
                 saldo_anterior=saldo_anterior,
                 saldo_nuevo=caja.saldo_actual,
+                jornada_id=jornada.id,
             )
             session.add(movimiento)
             session.flush()
@@ -193,6 +197,7 @@ def pagar_comision(
                 concepto=f"PAGO COMISION - {referidor} - {metodo_pago} {data.numero_referencia or ''}".strip(),
                 saldo_anterior=saldo_anterior,
                 saldo_nuevo=banco.saldo_actual,
+                jornada_id=jornada.id,
             )
             session.add(movimiento)
             session.flush()

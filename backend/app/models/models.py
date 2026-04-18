@@ -374,6 +374,7 @@ class MovimientoBanco(TimestampMixin, Base):
     pago_compra_rel = relationship("PagoCompra", lazy='selectin')
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
     grupo_pago_id = Column(String(50), nullable=True)
+    jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=True)
 
 
 # ─── Compras ───────────────────────────────────────────────────────────────────
@@ -488,6 +489,83 @@ class GastoOperativo(TimestampMixin, Base):
     banco_rel = relationship("Banco", lazy='selectin')
 
 
+class JornadaFinanciera(TimestampMixin, Base):
+    __tablename__ = 'jornadas_financieras'
+    __table_args__ = (
+        Index('idx_jornada_financiera_fecha', 'fecha'),
+        Index('idx_jornada_financiera_estado', 'estado'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fecha = Column(Date, nullable=False, unique=True)
+    estado = Column(String(20), nullable=False, default='ABIERTA')
+    fecha_hora_apertura = Column(DateTime, default=datetime.now, nullable=False)
+    usuario_apertura_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
+    usuario_apertura_nombre = Column(String(100), nullable=True)
+    observacion_apertura = Column(Text, nullable=True)
+
+
+class DestinatarioRendicion(TimestampMixin, Base):
+    """Personas autorizadas a recibir rendiciones de caja (catálogo por tenant)."""
+    __tablename__ = 'destinatarios_rendicion'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nombre = Column(String(150), unique=True, nullable=False)
+    activo = Column(Boolean, nullable=False, default=True)
+
+
+class CorteJornadaFinanciera(TimestampMixin, Base):
+    __tablename__ = 'cortes_jornada_financiera'
+    __table_args__ = (
+        Index('idx_corte_jornada_fecha_hora', 'fecha_hora_corte'),
+        Index('idx_corte_jornada_jornada_id', 'jornada_id'),
+        Index('idx_corte_jornada_jornada_fecha', 'jornada_id', 'fecha_hora_corte'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=False)
+    fecha_hora_corte = Column(DateTime, default=datetime.now, nullable=False)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
+    usuario_nombre = Column(String(100), nullable=True)
+    ingresos = Column(Float, default=0.0, nullable=False)
+    egresos = Column(Float, default=0.0, nullable=False)
+    neto = Column(Float, default=0.0, nullable=False)
+    movimientos_caja = Column(Integer, default=0, nullable=False)
+    movimientos_banco = Column(Integer, default=0, nullable=False)
+    movimientos_total = Column(Integer, default=0, nullable=False)
+    saldo_actual_caja = Column(Float, default=0.0, nullable=False)
+    saldo_actual_bancos = Column(Float, default=0.0, nullable=False)
+    saldo_final_total = Column(Float, default=0.0, nullable=False)
+
+
+class RendicionJornadaFinanciera(TimestampMixin, Base):
+    __tablename__ = 'rendiciones_jornada_financiera'
+    __table_args__ = (
+        Index('idx_rendicion_jornada_fecha_hora', 'fecha_hora_rendicion'),
+        Index('idx_rendicion_jornada_jornada_id', 'jornada_id'),
+        Index('idx_rendicion_jornada_estado', 'estado'),
+        Index('idx_rendicion_jornada_jornada_fecha', 'jornada_id', 'fecha_hora_rendicion'),
+        Index('idx_rendicion_destinatario', 'destinatario_rendicion_id'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=False)
+    fecha_hora_rendicion = Column(DateTime, default=datetime.now, nullable=False)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
+    usuario_nombre = Column(String(100), nullable=True)
+    destinatario_rendicion_id = Column(Integer, ForeignKey('destinatarios_rendicion.id'), nullable=True)
+    rendido_a = Column(String(150), nullable=False)
+    monto_sugerido = Column(Float, default=0.0, nullable=False)
+    monto_rendido = Column(Float, default=0.0, nullable=False)
+    observacion = Column(Text, nullable=True)
+    estado = Column(String(20), default='VIGENTE', nullable=False)
+    rendicion_original_id = Column(Integer, ForeignKey('rendiciones_jornada_financiera.id'), nullable=True)
+    fecha_hora_original = Column(DateTime, nullable=True)
+    rendido_a_original = Column(String(150), nullable=True)
+    monto_rendido_original = Column(Float, nullable=True)
+    observacion_original = Column(Text, nullable=True)
+    fecha_hora_ultima_edicion = Column(DateTime, nullable=True)
+    usuario_ultima_edicion_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
+    usuario_ultima_edicion_nombre = Column(String(100), nullable=True)
+    motivo_ajuste = Column(Text, nullable=True)
+
+
 class MovimientoCaja(TimestampMixin, Base):
     __tablename__ = 'movimientos_caja'
     __table_args__ = (
@@ -505,6 +583,7 @@ class MovimientoCaja(TimestampMixin, Base):
     pago_compra_id = Column(Integer, ForeignKey('pagos_compras.id'), nullable=True)
     deposito_banco_id = Column(Integer, ForeignKey('movimientos_banco.id'), nullable=True)
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
+    jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=True)
 
 
 class ConfiguracionCaja(TimestampMixin, Base):

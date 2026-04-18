@@ -82,8 +82,11 @@ def generar_excel_reporte_finanzas(
         ("Ingresos Banco", resumen.ingresos_banco),
         ("Egresos Caja", resumen.egresos_caja),
         ("Egresos Banco", resumen.egresos_banco),
-        ("Saldo Actual Caja", resumen.saldo_actual_caja),
-        ("Saldo Actual Bancos", resumen.saldo_actual_bancos),
+        ("Ingreso del Dia", getattr(resumen, "total_cobrado_ventas_con_saldo", 0.0)),
+        ("Credito del Dia", getattr(resumen, "cuentas_por_cobrar_dia", 0.0)),
+        ("Venta Total del Dia", getattr(resumen, "venta_total_dia", 0.0)),
+        ("Cantidad de Ventas del Dia", getattr(resumen, "cantidad_ventas_dia", 0)),
+        ("Ventas con Saldo Pendiente", getattr(resumen, "cantidad_ventas_cobrar_dia", 0)),
         ("Saldo Final Total", resumen.saldo_final_total),
         ("Cantidad Movimientos", len(resumen.todos)),
     ]
@@ -103,7 +106,7 @@ def generar_excel_reporte_finanzas(
         else:
             ws[f"A{row_idx}"].font = font_bold
             ws[f"B{row_idx}"].alignment = align_right
-            if i in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11]:
+            if i in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 14]:
                 ws[f"B{row_idx}"].number_format = "#,##0"
             if i == 1:
                 ws[f"A{row_idx}"].fill = fill_income
@@ -122,12 +125,48 @@ def generar_excel_reporte_finanzas(
                 ws[f"B{row_idx}"].fill = resultado_fill
                 ws[f"A{row_idx}"].font = resultado_font
                 ws[f"B{row_idx}"].font = resultado_font
-            elif i in [9, 10, 11]:
+            elif i in [9, 10, 11, 12, 13]:
                 ws[f"A{row_idx}"].fill = fill_neutral
                 ws[f"B{row_idx}"].fill = fill_neutral
                 ws[f"A{row_idx}"].font = font_bold
                 ws[f"B{row_idx}"].font = font_bold
         row_idx += 1
+
+    desglose_medios = list(getattr(resumen, "desglose_medios", []) or [])
+    if desglose_medios:
+        row_idx += 2
+        ws.merge_cells(f"A{row_idx}:E{row_idx}")
+        ws[f"A{row_idx}"] = "DESGLOSE POR MEDIO"
+        ws[f"A{row_idx}"].font = Font(name="Arial", size=12, bold=True, color="0F766E")
+        row_idx += 1
+
+        headers_medios = ["Medio", "Ingresos", "Egresos", "Neto", "Movimientos"]
+        for idx, header in enumerate(headers_medios, 1):
+            cell = ws.cell(row=row_idx, column=idx)
+            cell.value = header
+            cell.font = font_header
+            cell.fill = PatternFill(start_color="0F766E", end_color="0F766E", fill_type="solid")
+            cell.border = border
+            cell.alignment = align_center
+        row_idx += 1
+
+        for item in desglose_medios:
+            values = [
+                item.get("medio") or "-",
+                item.get("ingresos") or 0,
+                item.get("egresos") or 0,
+                item.get("neto") or 0,
+                item.get("cantidad_movimientos") or 0,
+            ]
+            for idx, value in enumerate(values, 1):
+                cell = ws.cell(row=row_idx, column=idx)
+                cell.value = value
+                cell.border = border
+                cell.fill = fill_neutral
+                cell.alignment = align_right if idx in [2, 3, 4] else align_center if idx == 5 else align_left
+                if idx in [2, 3, 4]:
+                    cell.number_format = "#,##0"
+            row_idx += 1
 
     row_idx += 2
     ws.merge_cells(f"A{row_idx}:H{row_idx}")
@@ -135,7 +174,7 @@ def generar_excel_reporte_finanzas(
     ws[f"A{row_idx}"].font = Font(name="Arial", size=12, bold=True, color="3498DB")
     row_idx += 1
 
-    headers = ["Fecha", "Origen", "Banco", "Categoria", "Tipo", "Concepto", "Referencia", "Monto"]
+    headers = ["Fecha", "Origen", "Medio", "Banco", "Categoria", "Tipo", "Concepto", "Referencia", "Monto"]
     for idx, header in enumerate(headers, 1):
         cell = ws.cell(row=row_idx, column=idx)
         cell.value = header
@@ -150,6 +189,7 @@ def generar_excel_reporte_finanzas(
         row_data = [
             mov.fecha.strftime("%d/%m/%Y %H:%M"),
             mov.origen,
+            getattr(mov, "medio", "-") or "-",
             mov.banco_nombre or "-",
             mov.categoria or "-",
             mov.tipo,
@@ -166,15 +206,15 @@ def generar_excel_reporte_finanzas(
                 cell.number_format = "#,##0"
                 cell.alignment = align_right
                 cell.font = font_expense if es_egreso else font_income
-            elif idx in [1, 2, 3, 4, 5]:
+            elif idx in [1, 2, 3, 4, 5, 6]:
                 cell.alignment = align_center
-                if idx == 5:
+                if idx == 6:
                     cell.font = font_expense if es_egreso else font_income
             else:
                 cell.alignment = align_left
         row_idx += 1
 
-    widths = {"A": 18, "B": 12, "C": 18, "D": 18, "E": 14, "F": 34, "G": 18, "H": 14}
+    widths = {"A": 18, "B": 12, "C": 16, "D": 18, "E": 18, "F": 14, "G": 34, "H": 18, "I": 14}
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
 

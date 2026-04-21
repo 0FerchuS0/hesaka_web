@@ -404,21 +404,11 @@ def _normalizar_movimientos_banco(movimientos: list[MovimientoBanco], tz: tzinfo
     return normalizados
 
 
-def _instante_para_tope_corte_caja():
-    """Hora contable (fecha) puede ir al fin del dia; el corte usa el menor entre fecha y created_at (momento real)."""
-    f = MovimientoCaja.fecha
-    c = MovimientoCaja.created_at
-    f2 = func.coalesce(f, c)
-    c2 = func.coalesce(c, f)
-    return func.least(f2, c2)
-
-
-def _instante_para_tope_corte_banco():
-    f = MovimientoBanco.fecha
-    c = MovimientoBanco.created_at
-    f2 = func.coalesce(f, c)
-    c2 = func.coalesce(c, f)
-    return func.least(f2, c2)
+def _normalizar_fecha_hasta_corte(fecha_hasta: datetime, tz: tzinfo) -> datetime:
+    """Alinea tope de corte con instante_corte (naive hora de negocio)."""
+    if getattr(fecha_hasta, "tzinfo", None) is not None:
+        return fecha_hasta.astimezone(tz).replace(tzinfo=None)
+    return fecha_hasta
 
 
 def obtener_movimientos_normalizados_jornada(
@@ -437,9 +427,9 @@ def obtener_movimientos_normalizados_jornada(
     if fecha_desde:
         query_caja = query_caja.filter(MovimientoCaja.fecha >= fecha_desde)
         query_banco = query_banco.filter(MovimientoBanco.fecha >= fecha_desde)
-    if fecha_hasta:
-        query_caja = query_caja.filter(_instante_para_tope_corte_caja() <= fecha_hasta)
-        query_banco = query_banco.filter(_instante_para_tope_corte_banco() <= fecha_hasta)
+    # No filtrar fecha_hasta en SQL: created_at es UTC naive y fecha_hora_corte es hora local de negocio;
+    # en PostgreSQL la comparacion naive mezcla zonas y puede excluir todos los movimientos (PDF/resumen en cero).
+    # Misma regla que instante_corte en Python (_instante_movimiento_sql_least).
 
     query_caja = query_caja.options(
         selectinload(MovimientoCaja.pago_venta_rel),
@@ -456,6 +446,9 @@ def obtener_movimientos_normalizados_jornada(
         *_normalizar_movimientos_caja(query_caja.all(), tz),
         *_normalizar_movimientos_banco(query_banco.all(), tz),
     ]
+    if fecha_hasta:
+        tope = _normalizar_fecha_hasta_corte(fecha_hasta, tz)
+        movimientos = [m for m in movimientos if m.instante_corte <= tope]
     return sorted(movimientos, key=lambda item: item.fecha, reverse=True)
 
 
@@ -727,6 +720,7 @@ def serializar_corte(session, corte: CorteJornadaFinanciera):
     jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == corte.jornada_id).first()
     ultimo = obtener_ultimo_corte_jornada(session, corte.jornada_id)
     resumen = construir_resumen_corte(session, corte)
+    tot = _totales_desde_movimientos_normalizados(resumen.todos)
     return {
         "id": corte.id,
         "jornada_id": corte.jornada_id,
@@ -734,12 +728,12 @@ def serializar_corte(session, corte: CorteJornadaFinanciera):
         "fecha_hora_corte": corte.fecha_hora_corte,
         "usuario_id": corte.usuario_id,
         "usuario_nombre": corte.usuario_nombre,
-        "ingresos": float(corte.ingresos or 0.0),
-        "egresos": float(corte.egresos or 0.0),
-        "neto": float(corte.neto or 0.0),
-        "movimientos_caja": int(corte.movimientos_caja or 0),
-        "movimientos_banco": int(corte.movimientos_banco or 0),
-        "movimientos_total": int(corte.movimientos_total or 0),
+        "ingresos": tot["ingresos"],
+        "egresos": tot["egresos"],
+        "neto": tot["neto"],
+        "movimientos_caja": tot["movimientos_caja"],
+        "movimientos_banco": tot["movimientos_banco"],
+        "movimientos_total": tot["movimientos_total"],
         "saldo_actual_caja": float(corte.saldo_actual_caja or 0.0),
         "saldo_actual_bancos": float(corte.saldo_actual_bancos or 0.0),
         "saldo_final_total": float(corte.saldo_final_total or 0.0),
@@ -759,6 +753,7 @@ def serializar_cortes_jornada_lista(session, jornada: JornadaFinanciera, cortes:
     for corte in cortes:
         sub = [m for m in all_movs if m.instante_corte <= corte.fecha_hora_corte]
         desglose = construir_desglose_por_medio(sub)
+        tot = _totales_desde_movimientos_normalizados(sub)
         out.append(
             {
                 "id": corte.id,
@@ -767,12 +762,12 @@ def serializar_cortes_jornada_lista(session, jornada: JornadaFinanciera, cortes:
                 "fecha_hora_corte": corte.fecha_hora_corte,
                 "usuario_id": corte.usuario_id,
                 "usuario_nombre": corte.usuario_nombre,
-                "ingresos": float(corte.ingresos or 0.0),
-                "egresos": float(corte.egresos or 0.0),
-                "neto": float(corte.neto or 0.0),
-                "movimientos_caja": int(corte.movimientos_caja or 0),
-                "movimientos_banco": int(corte.movimientos_banco or 0),
-                "movimientos_total": int(corte.movimientos_total or 0),
+                "ingresos": tot["ingresos"],
+                "egresos": tot["egresos"],
+                "neto": tot["neto"],
+                "movimientos_caja": tot["movimientos_caja"],
+                "movimientos_banco": tot["movimientos_banco"],
+                "movimientos_total": tot["movimientos_total"],
                 "saldo_actual_caja": float(corte.saldo_actual_caja or 0.0),
                 "saldo_actual_bancos": float(corte.saldo_actual_bancos or 0.0),
                 "saldo_final_total": float(corte.saldo_final_total or 0.0),

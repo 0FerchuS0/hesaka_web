@@ -108,6 +108,7 @@ def _serializar_estado_jornada(session) -> JornadaEstadoOut:
     if ultimo_corte and jornada:
         sub_uc = [m for m in all_movs if m.instante_corte <= ultimo_corte.fecha_hora_corte]
         desglose_uc = construir_desglose_por_medio(sub_uc)
+        tot_uc = construir_resumen_jornada_desde_cache(sub_uc)
         ultimo_corte_out = {
             "id": ultimo_corte.id,
             "jornada_id": ultimo_corte.jornada_id,
@@ -115,12 +116,12 @@ def _serializar_estado_jornada(session) -> JornadaEstadoOut:
             "fecha_hora_corte": ultimo_corte.fecha_hora_corte,
             "usuario_id": ultimo_corte.usuario_id,
             "usuario_nombre": ultimo_corte.usuario_nombre,
-            "ingresos": float(ultimo_corte.ingresos or 0.0),
-            "egresos": float(ultimo_corte.egresos or 0.0),
-            "neto": float(ultimo_corte.neto or 0.0),
-            "movimientos_caja": int(ultimo_corte.movimientos_caja or 0),
-            "movimientos_banco": int(ultimo_corte.movimientos_banco or 0),
-            "movimientos_total": int(ultimo_corte.movimientos_total or 0),
+            "ingresos": float(tot_uc["ingresos"]),
+            "egresos": float(tot_uc["egresos"]),
+            "neto": float(tot_uc["neto"]),
+            "movimientos_caja": int(tot_uc["movimientos_caja"]),
+            "movimientos_banco": int(tot_uc["movimientos_banco"]),
+            "movimientos_total": int(tot_uc["movimientos_total"]),
             "saldo_actual_caja": float(ultimo_corte.saldo_actual_caja or 0.0),
             "saldo_actual_bancos": float(ultimo_corte.saldo_actual_bancos or 0.0),
             "saldo_final_total": float(ultimo_corte.saldo_final_total or 0.0),

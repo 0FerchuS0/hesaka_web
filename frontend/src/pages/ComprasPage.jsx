@@ -8,7 +8,7 @@ import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api, useAuth } from '../context/AuthContext'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
-import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
@@ -721,6 +721,11 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
 
     const handleSubmit = event => {
         event.preventDefault()
+        const nroDoc = String(nroFactura || '').trim()
+        if (!nroDoc) {
+            window.alert('Debe cargar el número de documento de la compra (número de factura u orden de servicio).')
+            return
+        }
         const itemsValidos = items
             .filter(item => item.descripcion && (parseInt(item.cantidad, 10) || 0) > 0)
             .map(item => ({
@@ -737,7 +742,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
         mutation.mutate({
             proveedor_id: proveedor ? parseInt(proveedor, 10) : null,
             tipo_documento: tipoDocumento,
-            nro_factura: nroFactura || null,
+            nro_factura: nroDoc,
             total,
             condicion_pago: condicionPago,
             fecha_vencimiento: condicionPago === 'CREDITO' && fechaVencimiento ? `${fechaVencimiento}T00:00:00` : null,
@@ -762,7 +767,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                     <div className="form-group"><label className="form-label">Proveedor</label><RemoteProveedorSelect value={proveedor} proveedorNombre={proveedorNombre} onChange={(nextId, nextNombre) => { setProveedor(nextId); setProveedorNombre(nextNombre) }} /></div>
                     <div className="form-group"><label className="form-label">Tipo de Compra</label><select className="form-select" value={tipoCompra} onChange={event => setTipoCompra(event.target.value)}><option value="ORIGINAL">ORIGINAL</option><option value="GARANTIA">GARANTIA</option><option value="REEMPLAZO">REEMPLAZO</option><option value="STOCK/SERVICIO">STOCK/SERVICIO</option></select></div>
                     <div className="form-group"><label className="form-label">Tipo de Documento</label><select className="form-select" value={tipoDocumento} onChange={event => setTipoDocumento(event.target.value)}><option value="FACTURA">FACTURA</option><option value="ORDEN_SERVICIO">ORDEN_SERVICIO</option></select></div>
-                    <div className="form-group"><label className="form-label">{tipoDocumento === 'FACTURA' ? 'Nro. Factura' : 'Nro. Orden de Servicio'}</label><input className="form-input" value={nroFactura} onChange={event => setNroFactura(event.target.value)} /></div>
+                    <div className="form-group"><label className="form-label">{tipoDocumento === 'FACTURA' ? 'Nro. Factura' : 'Nro. Orden de Servicio'} <span style={{ color: '#f87171' }}>*</span></label><input className="form-input" value={nroFactura} onChange={event => setNroFactura(event.target.value)} required placeholder="Obligatorio" /></div>
                     <div className="form-group"><label className="form-label">Condicion de Pago</label><select className="form-select" value={condicionPago} onChange={event => setCondicionPago(event.target.value)}><option value="CONTADO">CONTADO</option><option value="CREDITO">CREDITO</option></select></div>
                     <div className="form-group"><label className="form-label">Estado de Entrega</label><select className="form-select" value={estadoEntrega} onChange={event => setEstadoEntrega(event.target.value)}><option value="RECIBIDO">RECIBIDO</option><option value="EN_LABORATORIO">EN_LABORATORIO</option><option value="ENTREGADO">ENTREGADO</option><option value="PENDIENTE_ENVIO">PENDIENTE_ENVIO</option></select></div>
                 </div>
@@ -847,6 +852,7 @@ function PagoCompraModal({ compra, onClose }) {
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
+            invalidateJornadaLiveData(queryClient)
             onClose()
         },
     })
@@ -859,6 +865,7 @@ function PagoCompraModal({ compra, onClose }) {
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
+            invalidateJornadaLiveData(queryClient)
         },
     })
 
@@ -1211,6 +1218,7 @@ export default function ComprasPage() {
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
+            invalidateJornadaLiveData(queryClient)
         },
         onSettled: () => {
             setDeletingId(null)

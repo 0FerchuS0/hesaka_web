@@ -8,7 +8,7 @@ import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, 
 import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
-import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -655,6 +655,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
         void qc.invalidateQueries({ queryKey: ['ventas-optimizado'], refetchType: 'active' })
         void qc.invalidateQueries({ queryKey: ['ventas'], refetchType: 'active' })
         void qc.invalidateQueries({ queryKey: ['saldo-caja'], refetchType: 'active' })
+        invalidateJornadaLiveData(qc)
     }
 
     const cobrar = useMutation({
@@ -1217,6 +1218,7 @@ export default function VentasPage() {
                 qc.invalidateQueries(['ventas-optimizado']),
                 qc.invalidateQueries(['saldo-caja'])
             ])
+            invalidateJornadaLiveData(qc)
         }
         ,
         onSettled: () => setAnularBusyId(null)

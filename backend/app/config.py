@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     # Ambiente
     ENVIRONMENT: str = "development"
+    BUSINESS_TIMEZONE: str = "America/Asuncion"
 
     # Archivos subidos
     MEDIA_ROOT: str | None = None

@@ -5,6 +5,7 @@ import { AlertCircle, Building2, CreditCard, Eye, Landmark, Pencil, ReceiptText,
 import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api, useAuth } from '../context/AuthContext'
+import { invalidateJornadaLiveData } from '../hooks/useFinancialJornada'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
 
@@ -238,6 +239,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
+            invalidateJornadaLiveData(queryClient)
             onClose()
         },
     })
@@ -569,6 +571,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
+            invalidateJornadaLiveData(queryClient)
             onClose()
         },
     })
@@ -969,6 +972,7 @@ export default function CuentasPorPagarPage() {
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
+            invalidateJornadaLiveData(queryClient)
         },
         onSettled: () => {
             setHistorialRevertingGroupId(null)

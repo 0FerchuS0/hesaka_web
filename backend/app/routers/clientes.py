@@ -2,6 +2,7 @@
 from datetime import date, datetime
 from math import ceil
 from typing import List, Optional
+from zoneinfo import ZoneInfo, available_timezones
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -61,6 +62,7 @@ from app.schemas.schemas import (
 )
 from app.utils.backup_restore import create_backup, list_backups, restore_backup, restore_uploaded_backup
 from app.utils.auth import get_current_user, require_admin
+from app.config import settings
 from app.utils.configuracion_general import (
     configuracion_general_completa,
     obtener_canal_principal,
@@ -213,6 +215,7 @@ def _serializar_configuracion_general(session, config: ConfiguracionEmpresa) -> 
         telefono=config.telefono,
         email=config.email,
         logo_path=config.logo_path,
+        business_timezone=(config.business_timezone or settings.BUSINESS_TIMEZONE or "America/Asuncion"),
         canal_principal_nombre=canal_principal.nombre if canal_principal else None,
         configuracion_completa=configuracion_general_completa(config),
     )
@@ -277,6 +280,33 @@ def obtener_estado_configuracion_general(
         session.close()
 
 
+@config_router.get("/timezones", response_model=List[dict])
+def listar_zonas_horarias_configuracion_general(
+    current_user=Depends(get_current_user),
+):
+    ahora_utc = datetime.now(ZoneInfo("UTC"))
+    items = []
+    for tz_name in sorted(available_timezones()):
+        tz = ZoneInfo(tz_name)
+        offset = ahora_utc.astimezone(tz).utcoffset()
+        total_min = int((offset.total_seconds() if offset else 0) // 60)
+        sign = "+" if total_min >= 0 else "-"
+        abs_min = abs(total_min)
+        hh = abs_min // 60
+        mm = abs_min % 60
+        offset_label = f"UTC{sign}{hh:02d}:{mm:02d}"
+        items.append(
+            {
+                "id": tz_name,
+                "label": f"{tz_name} ({offset_label})",
+                "offset_minutes": total_min,
+                "offset_label": offset_label,
+            }
+        )
+    items.sort(key=lambda item: (item["offset_minutes"], item["id"]))
+    return items
+
+
 @config_router.put("/", response_model=ConfiguracionGeneralOut)
 def actualizar_configuracion_general(
     data: ConfiguracionGeneralUpdate,
@@ -294,6 +324,7 @@ def actualizar_configuracion_general(
         config.telefono = data.telefono
         config.email = data.email
         config.logo_path = data.logo_path
+        config.business_timezone = data.business_timezone or (settings.BUSINESS_TIMEZONE or "America/Asuncion")
 
         sincronizar_canal_principal(session, config, nombre_anterior)
         session.commit()

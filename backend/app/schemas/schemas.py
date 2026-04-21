@@ -6,6 +6,7 @@ Separados de los modelos SQLAlchemy para mejor control.
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import date, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 # ──────────────────────────────────────────────
@@ -67,6 +68,7 @@ class ConfiguracionGeneralUpdate(BaseModel):
     telefono: Optional[str] = None
     email: Optional[EmailStr] = None
     logo_path: Optional[str] = None
+    business_timezone: Optional[str] = "America/Asuncion"
 
     @field_validator("nombre")
     @classmethod
@@ -81,6 +83,16 @@ class ConfiguracionGeneralUpdate(BaseModel):
     def limpiar_texto_configuracion(cls, value: Optional[str]) -> Optional[str]:
         return value.strip() if value else None
 
+    @field_validator("business_timezone")
+    @classmethod
+    def validar_timezone(cls, value: Optional[str]) -> str:
+        tz = (value or "").strip() or "America/Asuncion"
+        try:
+            ZoneInfo(tz)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Zona horaria inválida. Usa formato IANA, por ejemplo America/Asuncion.") from exc
+        return tz
+
 
 class ConfiguracionGeneralOut(BaseModel):
     id: int
@@ -90,6 +102,7 @@ class ConfiguracionGeneralOut(BaseModel):
     telefono: Optional[str] = None
     email: Optional[EmailStr] = None
     logo_path: Optional[str] = None
+    business_timezone: str = "America/Asuncion"
     canal_principal_nombre: Optional[str] = None
     configuracion_completa: bool = False
 
@@ -882,7 +895,7 @@ class VentasPdfMultipleRequest(BaseModel):
 class CompraCreate(BaseModel):
     proveedor_id: Optional[int] = None
     tipo_documento: str  # FACTURA, ORDEN_SERVICIO
-    nro_factura: Optional[str] = None
+    nro_factura: str
     total: float
     condicion_pago: str = "CONTADO"
     fecha_vencimiento: Optional[datetime] = None
@@ -891,6 +904,14 @@ class CompraCreate(BaseModel):
     tipo_compra: str = "ORIGINAL"
     ventas_ids: List[int] = []
     items: List[CompraDetalleCreate]
+
+    @field_validator("nro_factura")
+    @classmethod
+    def nro_factura_obligatorio(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("Debe indicar el número de documento de la compra.")
+        return s
 
 class CompraOut(BaseModel):
     id: int

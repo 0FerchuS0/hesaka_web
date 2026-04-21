@@ -369,9 +369,9 @@ class MovimientoBanco(TimestampMixin, Base):
     saldo_anterior = Column(Float, nullable=False)
     saldo_nuevo = Column(Float, nullable=False)
     pago_venta_id = Column(Integer, ForeignKey('pagos.id'), nullable=True)
-    pago_venta_rel = relationship("Pago", lazy='selectin')
+    pago_venta_rel = relationship("Pago", lazy='selectin', foreign_keys=[pago_venta_id])
     pago_compra_id = Column(Integer, ForeignKey('pagos_compras.id'), nullable=True)
-    pago_compra_rel = relationship("PagoCompra", lazy='selectin')
+    pago_compra_rel = relationship("PagoCompra", lazy='selectin', foreign_keys=[pago_compra_id])
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
     grupo_pago_id = Column(String(50), nullable=True)
     jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=True)
@@ -580,9 +580,12 @@ class MovimientoCaja(TimestampMixin, Base):
     saldo_anterior = Column(Float, nullable=False)
     saldo_nuevo = Column(Float, nullable=False)
     pago_venta_id = Column(Integer, ForeignKey('pagos.id'), nullable=True)
+    pago_venta_rel = relationship("Pago", lazy='selectin', foreign_keys=[pago_venta_id])
     pago_compra_id = Column(Integer, ForeignKey('pagos_compras.id'), nullable=True)
+    pago_compra_rel = relationship("PagoCompra", lazy='selectin', foreign_keys=[pago_compra_id])
     deposito_banco_id = Column(Integer, ForeignKey('movimientos_banco.id'), nullable=True)
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
+    gasto_operativo_rel = relationship("GastoOperativo", lazy='selectin', foreign_keys=[gasto_operativo_id])
     jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=True)
 
 
@@ -601,6 +604,7 @@ class ConfiguracionEmpresa(TimestampMixin, Base):
     telefono = Column(String(50))
     email = Column(String(100))
     logo_path = Column(String(255))
+    business_timezone = Column(String(64), default="America/Asuncion")
     porcentaje_comision_tarjeta = Column(Float, default=3.3)
 
 

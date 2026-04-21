@@ -102,6 +102,17 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         with engine.begin() as connection:
             if "permisos_json" not in usuario_columns:
                 connection.execute(text("ALTER TABLE usuarios ADD COLUMN permisos_json TEXT"))
+    if "configuracion_empresa" in table_names:
+        config_columns = {column["name"] for column in inspector.get_columns("configuracion_empresa")}
+        with engine.begin() as connection:
+            if "business_timezone" not in config_columns:
+                connection.execute(text("ALTER TABLE configuracion_empresa ADD COLUMN business_timezone VARCHAR(64)"))
+            connection.execute(text(
+                """
+                UPDATE configuracion_empresa
+                SET business_timezone = COALESCE(NULLIF(TRIM(business_timezone), ''), 'America/Asuncion')
+                """
+            ))
     if "productos" not in table_names:
         _tenant_schema_checked.add(tenant_slug)
         return

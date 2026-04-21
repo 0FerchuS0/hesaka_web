@@ -1,4 +1,4 @@
-import { useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AlertTriangle, CalendarClock, ClipboardList, Eye, FileSpreadsheet, FileText, HandCoins, Pencil, Wallet } from 'lucide-react'
 
@@ -6,12 +6,13 @@ import Modal from '../components/Modal'
 import EditarRendicionModalLimpio from '../components/EditarRendicionModal'
 import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api, useAuth } from '../context/AuthContext'
-import { hasActionAccess, normalizeRole } from '../utils/roles'
+import { hasActionAccess } from '../utils/roles'
 import {
     useActualizarDestinatarioRendicion,
     useCortesJornadaActual,
     useCrearCorteJornada,
     useCrearDestinatarioRendicion,
+    useEliminarDestinatarioRendicion,
     useCrearRendicionJornada,
     useCrearRendicionJornadaHistorial,
     useDestinatariosRendicionCatalog,
@@ -27,6 +28,43 @@ import {
 } from '../hooks/useFinancialJornada'
 import { requestAndDownloadFile, requestAndOpenPdf } from '../utils/fileDownloads'
 
+/** Marca ms desde t0Ref hasta la primera respuesta OK de una query (para ver cuellos de botella en la carga inicial). */
+function useMarkJornadaBenchRow(show, t0Ref, key, isSuccess, dataUpdatedAt, setMs) {
+    useEffect(() => {
+        if (!show || !t0Ref.current) return
+        if (!isSuccess || !dataUpdatedAt) return
+        setMs(prev => {
+            if (prev[key] != null) return prev
+            return { ...prev, [key]: Math.round(performance.now() - t0Ref.current) }
+        })
+    }, [show, key, isSuccess, dataUpdatedAt, setMs])
+}
+
+const JORNADA_BENCH_STORAGE = 'hesaka_jornada_bench'
+
+function readJornadaBenchFlagFromEnv() {
+    if (typeof window === 'undefined') {
+        return import.meta.env.DEV
+    }
+    if (import.meta.env.DEV) {
+        return true
+    }
+    try {
+        if (new URLSearchParams(window.location.search).get('jornadaBench') === '1') {
+            return true
+        }
+        if (window.localStorage.getItem(JORNADA_BENCH_STORAGE) === '1') {
+            return true
+        }
+        if (window.sessionStorage.getItem(JORNADA_BENCH_STORAGE) === '1') {
+            return true
+        }
+    } catch {
+        /* modo privado u origen file:// */
+    }
+    return false
+}
+
 function fmtGs(value) {
     return `Gs. ${new Intl.NumberFormat('es-PY').format(value ?? 0)}`
 }
@@ -38,8 +76,20 @@ function toDateTimeLocalValue(value) {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/** Fecha/hora en 24 h (evita confusion 1 vs 11 con formato 12 h del navegador). */
 function fmtDateTime(value) {
-    return value ? new Date(value).toLocaleString('es-PY') : '—'
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '—'
+    return new Intl.DateTimeFormat('es-PY', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).format(date)
 }
 
 function toDateInputValue(value) {
@@ -47,6 +97,20 @@ function toDateInputValue(value) {
     const date = new Date(value)
     const pad = number => String(number).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function formatApiError(error, fallback) {
+    const status = error?.response?.status
+    const payload = error?.response?.data
+    const detail =
+        (typeof payload === 'string' && payload.trim()) ||
+        payload?.detail ||
+        payload?.message ||
+        ''
+    if (status && detail) return `Error ${status}: ${detail}`
+    if (status) return `Error ${status}: ${fallback}`
+    if (detail) return detail
+    return fallback
 }
 
 function getInicioMesActual() {
@@ -84,6 +148,7 @@ const HISTORIAL_ROW_MENU_WIDTH = 220
 /** Por encima del layout/sidebar; por debajo del modal (200) para no tapar modales abiertos */
 const TABLE_ACTION_MENU_Z_BACKDROP = 140
 const TABLE_ACTION_MENU_Z_MENU = 150
+const ENABLE_JORNADA_BENCH = false
 
 function getDropdownPortalTarget() {
     if (typeof document === 'undefined') return null
@@ -562,7 +627,7 @@ function RendirModalInner({ pendiente, crearRendicion, onClose, titulo = 'Regist
                     </select>
                     {!loadingDest && destinatariosActivos.length === 0 ? (
                         <div style={{ fontSize: '0.78rem', color: 'var(--warning)', marginTop: 8 }}>
-                            No hay destinatarios activos. Un administrador debe cargarlos en «Destinatarios de rendición».
+                            No hay destinatarios activos. Un administrador debe cargarlos en «Catálogos / Destinatarios rendición».
                         </div>
                     ) : null}
                 </div>
@@ -789,6 +854,7 @@ function DestinatariosRendicionAdminModal({ onClose }) {
     const { data: lista = [], isLoading } = useDestinatariosRendicionCatalog()
     const crear = useCrearDestinatarioRendicion()
     const actualizar = useActualizarDestinatarioRendicion()
+    const eliminar = useEliminarDestinatarioRendicion()
     const [nuevoNombre, setNuevoNombre] = useState('')
     const [editandoId, setEditandoId] = useState(null)
     const [textoEdicion, setTextoEdicion] = useState('')
@@ -825,6 +891,7 @@ function DestinatariosRendicionAdminModal({ onClose }) {
         <Modal title="Destinatarios de rendición" onClose={onClose} maxWidth="720px">
             <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.45 }}>
                 Personas autorizadas a recibir efectivo rendido desde caja. Solo los destinatarios activos aparecen al registrar una rendición nueva.
+                Aquí puedes hacer ABM: alta, renombrar, activar/desactivar y eliminar (si no tiene rendiciones asociadas).
             </p>
             <form onSubmit={handleCrear} className="flex gap-10" style={{ flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
                 <div className="form-group" style={{ flex: '1 1 240px', marginBottom: 0 }}>
@@ -918,10 +985,21 @@ function DestinatariosRendicionAdminModal({ onClose }) {
                                                     <button
                                                         type="button"
                                                         className="btn btn-secondary btn-sm"
-                                                        disabled={actualizar.isPending}
+                                                        disabled={actualizar.isPending || eliminar.isPending}
                                                         onClick={() => actualizar.mutate({ id: row.id, payload: { activo: !row.activo } })}
                                                     >
                                                         {row.activo ? 'Desactivar' : 'Reactivar'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-secondary btn-sm"
+                                                        disabled={eliminar.isPending}
+                                                        onClick={() => {
+                                                            if (!window.confirm(`¿Eliminar destinatario "${row.nombre}"?`)) return
+                                                            eliminar.mutate(row.id)
+                                                        }}
+                                                    >
+                                                        Eliminar
                                                     </button>
                                                 </>
                                             )}
@@ -939,6 +1017,11 @@ function DestinatariosRendicionAdminModal({ onClose }) {
             {actualizar.isError ? (
                 <div style={{ color: '#f87171', fontSize: '0.82rem', marginTop: 12 }}>
                     {actualizar.error?.response?.data?.detail || 'No se pudo actualizar.'}
+                </div>
+            ) : null}
+            {eliminar.isError ? (
+                <div style={{ color: '#f87171', fontSize: '0.82rem', marginTop: 12 }}>
+                    {eliminar.error?.response?.data?.detail || 'No se pudo eliminar.'}
                 </div>
             ) : null}
             <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 20 }}>
@@ -966,17 +1049,84 @@ export default function JornadaRendicionesPage() {
     const [historialTab, setHistorialTab] = useState('jornadas')
     const [jornadaHistorialSeleccionada, setJornadaHistorialSeleccionada] = useState(null)
     const [jornadaVerRendiciones, setJornadaVerRendiciones] = useState(null)
-    const [showDestinatariosAdmin, setShowDestinatariosAdmin] = useState(false)
-    const { data, isLoading, isError, error } = useFinancialJornadaStatus()
-    const { data: cortes = [], isLoading: isLoadingCortes } = useCortesJornadaActual()
-    const { data: rendiciones = [], isLoading: isLoadingRendiciones } = useRendicionesJornadaActual()
-    const { data: pendiente } = usePendienteRendicion()
+
+    const jornadaLoadT0 = useRef(null)
+    const [jornadaLoadMs, setJornadaLoadMs] = useState({})
+    const [showJornadaLoadBench, setShowJornadaLoadBench] = useState(
+        ENABLE_JORNADA_BENCH ? readJornadaBenchFlagFromEnv : false,
+    )
+    useLayoutEffect(() => {
+        if (!ENABLE_JORNADA_BENCH) return
+        jornadaLoadT0.current = performance.now()
+        if (typeof window === 'undefined') return
+        if (new URLSearchParams(window.location.search).get('jornadaBench') === '1') {
+            try {
+                window.sessionStorage.setItem(JORNADA_BENCH_STORAGE, '1')
+                window.localStorage.setItem(JORNADA_BENCH_STORAGE, '1')
+            } catch {
+                /* ignore */
+            }
+            setShowJornadaLoadBench(true)
+        }
+    }, [])
+
+    const estadoActualQuery = useFinancialJornadaStatus()
+    const cortesQuery = useCortesJornadaActual()
+    const rendicionesQuery = useRendicionesJornadaActual()
+    const pendienteQuery = usePendienteRendicion()
+    const historialJornadasQuery = useHistorialJornadas(20, { enabled: historialTab === 'jornadas' })
+
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/estado-actual',
+        estadoActualQuery.isSuccess,
+        estadoActualQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/cortes',
+        cortesQuery.isSuccess,
+        cortesQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/rendiciones',
+        rendicionesQuery.isSuccess,
+        rendicionesQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/pendiente-rendir',
+        pendienteQuery.isSuccess,
+        pendienteQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/historial/jornadas?limit=20',
+        historialJornadasQuery.isSuccess,
+        historialJornadasQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
+
+    const { data, isLoading, isError, error } = estadoActualQuery
+    const { data: cortes = [], isLoading: isLoadingCortes } = cortesQuery
+    const { data: rendiciones = [], isLoading: isLoadingRendiciones } = rendicionesQuery
+    const { data: pendiente } = pendienteQuery
     const {
         data: historialJornadas = [],
         isLoading: isLoadingHistorialJornadas,
         isError: isErrorHistorialJornadas,
         error: errorHistorialJornadas,
-    } = useHistorialJornadas(30)
+    } = historialJornadasQuery
     const busquedaRendicionesDiferida = useDeferredValue(busquedaRendiciones)
     const historialRendicionesParams = useMemo(() => ({
         page: paginaRendiciones,
@@ -1004,11 +1154,10 @@ export default function JornadaRendicionesPage() {
         isLoading: isLoadingHistorialRendiciones,
         isError: isErrorHistorialRendiciones,
         error: errorHistorialRendiciones,
-    } = useHistorialRendiciones(historialRendicionesParams)
-    const { data: filtrosOpciones } = useOpcionesFiltrosRendiciones()
+    } = useHistorialRendiciones(historialRendicionesParams, { enabled: historialTab === 'rendiciones' })
+    const { data: filtrosOpciones } = useOpcionesFiltrosRendiciones({ enabled: historialTab === 'rendiciones' })
     const opcionesDestinatarios = filtrosOpciones?.destinatarios || []
     const opcionesUsuarioFiltro = filtrosOpciones?.usuarios || []
-    const esAdmin = normalizeRole(user?.rol) === 'ADMIN'
     const historialRendiciones = historialRendicionesData?.items || []
     const totalHistorialRendiciones = historialRendicionesData?.total || 0
     const totalPagesHistorialRendiciones = historialRendicionesData?.total_pages || 1
@@ -1027,6 +1176,15 @@ export default function JornadaRendicionesPage() {
     const puedeCortar = hasActionAccess(user, 'finanzas.jornada_corte', 'finanzas')
     const puedeRendir = hasActionAccess(user, 'finanzas.jornada_rendir', 'finanzas')
     const puedeEditarRendicion = hasActionAccess(user, 'finanzas.jornada_rendicion_editar', 'finanzas')
+
+    const jornadaBenchRows = useMemo(() => {
+        if (!showJornadaLoadBench) return []
+        return Object.entries(jornadaLoadMs).sort((a, b) => (a[1] ?? 0) - (b[1] ?? 0))
+    }, [showJornadaLoadBench, jornadaLoadMs])
+    const jornadaBenchMaxMs = useMemo(() => {
+        const vals = Object.values(jornadaLoadMs).filter(v => typeof v === 'number')
+        return vals.length ? Math.max(...vals) : null
+    }, [jornadaLoadMs])
 
     const resumen = data?.resumen || {
         ingresos: 0,
@@ -1100,7 +1258,7 @@ export default function JornadaRendicionesPage() {
                 <div className="card">
                     <div className="empty-state" style={{ padding: '60px 20px' }}>
                         <CalendarClock size={40} />
-                        <p>{error?.response?.data?.detail || 'No se pudo cargar la jornada financiera.'}</p>
+                        <p>{formatApiError(error, 'No se pudo cargar la jornada financiera.')}</p>
                     </div>
                 </div>
             </div>
@@ -1249,6 +1407,9 @@ export default function JornadaRendicionesPage() {
                             <ClipboardList size={18} style={{ color: '#60a5fa' }} />
                             <div style={{ fontWeight: 700 }}>Cortes de hoy</div>
                         </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', lineHeight: 1.45, marginBottom: 12 }}>
+                            Horas en formato 24 h. Cada PDF/Excel del corte incluye movimientos de caja y banco con fecha y hora hasta el instante indicado; las operaciones cargadas después no entran en ese informe (podes generar un corte nuevo al final del dia).
+                        </div>
                         {isLoadingCortes ? (
                             <div className="flex-center" style={{ padding: 20 }}>
                                 <div className="spinner" style={{ width: 24, height: 24 }} />
@@ -1364,15 +1525,6 @@ export default function JornadaRendicionesPage() {
                         >
                             Rendiciones
                         </button>
-                        {esAdmin ? (
-                            <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => setShowDestinatariosAdmin(true)}
-                            >
-                                Destinatarios
-                            </button>
-                        ) : null}
                     </div>
                 </div>
 
@@ -1731,8 +1883,133 @@ export default function JornadaRendicionesPage() {
                     onClose={() => setJornadaHistorialSeleccionada(null)}
                 />
             )}
-            {showDestinatariosAdmin ? (
-                <DestinatariosRendicionAdminModal onClose={() => setShowDestinatariosAdmin(false)} />
+            {ENABLE_JORNADA_BENCH && !showJornadaLoadBench ? (
+                <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    style={{
+                        position: 'fixed',
+                        bottom: 12,
+                        right: 12,
+                        zIndex: 2147483646,
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+                    }}
+                    title="Mostrar diagnóstico de tiempos de carga (queda guardado en este navegador)"
+                    onClick={() => {
+                        try {
+                            window.localStorage.setItem(JORNADA_BENCH_STORAGE, '1')
+                            window.sessionStorage.setItem(JORNADA_BENCH_STORAGE, '1')
+                        } catch {
+                            /* ignore */
+                        }
+                        jornadaLoadT0.current = performance.now()
+                        setJornadaLoadMs({})
+                        setShowJornadaLoadBench(true)
+                    }}
+                >
+                    Tiempos carga
+                </button>
+            ) : null}
+
+            {ENABLE_JORNADA_BENCH && showJornadaLoadBench ? (
+                <div
+                    style={{
+                        position: 'fixed',
+                        bottom: 12,
+                        right: 12,
+                        zIndex: 2147483646,
+                        width: 'min(440px, calc(100vw - 24px))',
+                        maxHeight: 'min(70vh, 520px)',
+                        overflow: 'auto',
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 12,
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+                        padding: '12px 14px',
+                        fontSize: '0.78rem',
+                        lineHeight: 1.4,
+                    }}
+                >
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Diagnóstico: primera carga (Jornada)</div>
+                    <div style={{ color: 'var(--text-secondary)', marginBottom: 10 }}>
+                        T0 = montaje de esta pantalla. Cada fila: milisegundos hasta la <strong>primera</strong> respuesta OK de ese GET
+                        (los cinco salen en paralelo). Si React Query tenía caché, puede figurar un número muy bajo.
+                        La pantalla completa espera sobre todo a <code style={{ fontSize: '0.72rem' }}>estado-actual</code>.
+                        Si abriste el panel después de cargar, pulsá <strong>F5</strong> para medir bien esta entrada al menú.
+                    </div>
+                    {jornadaBenchMaxMs != null ? (
+                        <div style={{ marginBottom: 8, fontWeight: 700, color: 'var(--warning)' }}>
+                            Más lenta (entre las medidas): {jornadaBenchMaxMs} ms
+                            {jornadaLoadMs['GET /caja/jornada/estado-actual'] != null ? (
+                                <>
+                                    {' · '}
+                                    Bloquea el spinner inicial: {jornadaLoadMs['GET /caja/jornada/estado-actual']} ms
+                                </>
+                            ) : null}
+                        </div>
+                    ) : null}
+                    <div className="table-wrapper" style={{ overflow: 'auto', maxHeight: 220, marginBottom: 10 }}>
+                        <table className="table" style={{ fontSize: '0.74rem' }}>
+                            <thead>
+                                <tr>
+                                    <th>Paso (GET)</th>
+                                    <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>ms desde T0</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {jornadaBenchRows.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={2} style={{ color: 'var(--text-muted)' }}>Esperando respuestas…</td>
+                                    </tr>
+                                ) : (
+                                    jornadaBenchRows.map(([label, ms]) => (
+                                        <tr key={label}>
+                                            <td style={{ wordBreak: 'break-word' }}>{label}</td>
+                                            <td style={{ textAlign: 'right', fontWeight: 800 }}>{ms}</td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                                const payload = {
+                                    t0: 'montaje JornadaRendicionesPage',
+                                    primera_respuesta_ok_ms: jornadaLoadMs,
+                                    mas_lenta_ms: jornadaBenchMaxMs,
+                                    bloquea_spinner_inicial_ms: jornadaLoadMs['GET /caja/jornada/estado-actual'] ?? null,
+                                    nota: 'GET en paralelo; ms = hasta primera respuesta OK por endpoint (incluye caché).',
+                                }
+                                void navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+                            }}
+                        >
+                            Copiar JSON
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                                try {
+                                    window.sessionStorage.removeItem(JORNADA_BENCH_STORAGE)
+                                    window.localStorage.removeItem(JORNADA_BENCH_STORAGE)
+                                } catch {
+                                    /* ignore */
+                                }
+                                setShowJornadaLoadBench(false)
+                            }}
+                        >
+                            Ocultar panel
+                        </button>
+                    </div>
+                    <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+                        Activo con: botón «Tiempos carga», URL <code>?jornadaBench=1</code>, o modo desarrollo.
+                        El flag queda en <code>localStorage</code> hasta que uses «Ocultar panel».
+                    </div>
+                </div>
             ) : null}
         </div>
     )

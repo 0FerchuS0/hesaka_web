@@ -4,7 +4,7 @@ import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { ArrowDownCircle, ArrowUpCircle, CreditCard, DollarSign, Eye, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
@@ -39,6 +39,7 @@ function TransferenciaInternaModal({ onClose }) {
             qc.invalidateQueries({ queryKey: ['saldo-caja'] })
             qc.invalidateQueries({ queryKey: ['movimientos-caja'] })
             qc.invalidateQueries({ queryKey: ['reportes-finanzas'] })
+            invalidateJornadaLiveData(qc)
             onClose()
         },
     })
@@ -665,6 +666,7 @@ export default function CajaPage() {
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['saldo-caja'] })
             qc.invalidateQueries({ queryKey: ['movimientos-caja'] })
+            invalidateJornadaLiveData(qc)
             setModalAjuste(false)
             setMonto('')
             setConcepto('')

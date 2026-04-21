@@ -5,7 +5,7 @@ import { CalendarDays, Edit2, Plus, Receipt, Tags, Trash2, Wallet } from 'lucide
 import Modal from '../components/Modal'
 import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api } from '../context/AuthContext'
-import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 
 function fmt(value) {
@@ -132,6 +132,7 @@ export default function GastosPage() {
                 queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] }),
                 queryClient.invalidateQueries({ queryKey: ['bancos'] }),
             ])
+            invalidateJornadaLiveData(queryClient)
             setModalGasto(null)
             resetFormGasto()
         },
@@ -146,6 +147,7 @@ export default function GastosPage() {
                 queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] }),
                 queryClient.invalidateQueries({ queryKey: ['bancos'] }),
             ])
+            invalidateJornadaLiveData(queryClient)
             setModalGasto(null)
             resetFormGasto()
         },
@@ -161,6 +163,7 @@ export default function GastosPage() {
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
+            invalidateJornadaLiveData(queryClient)
         },
     })
 

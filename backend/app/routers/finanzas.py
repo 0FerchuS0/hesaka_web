@@ -56,11 +56,14 @@ from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
 from app.utils.filename_utils import format_date_for_filename
 from app.utils.jornada import (
     abrir_jornada_actual,
+    cargar_movimientos_jornada_normalizados,
     construir_alerta_movimientos_posteriores,
     construir_cuentas_por_cobrar_dia,
+    construir_desglose_medios_rendicion,
+    construir_desglose_por_medio,
     construir_resumen_corte,
-    construir_resumen_jornada_historica,
-    construir_resumen_jornada,
+    construir_filas_historial_jornadas,
+    construir_resumen_jornada_desde_cache,
     construir_resumen_jornada_reporte,
     construir_resumen_rendicion,
     construir_pendiente_rendicion,
@@ -71,8 +74,10 @@ from app.utils.jornada import (
     obtener_ultima_rendicion_vigente,
     obtener_ultimo_corte_jornada,
     obtener_jornada_actual,
+    hoy_jornada,
     require_jornada_abierta,
     serializar_corte,
+    serializar_cortes_jornada_lista,
     serializar_rendicion_historial,
     serializar_rendicion,
 )
@@ -86,21 +91,71 @@ gasto_router = APIRouter(prefix="/api/gastos", tags=["Gastos"])
 
 def _serializar_estado_jornada(session) -> JornadaEstadoOut:
     jornada = obtener_jornada_actual(session)
+    all_movs = cargar_movimientos_jornada_normalizados(session, jornada) if jornada else []
     ultimo_corte = obtener_ultimo_corte_jornada(session, jornada.id) if jornada else None
     ultima_rendicion = obtener_ultima_rendicion_vigente(session, jornada.id) if jornada else None
+
+    resumen = construir_resumen_jornada_desde_cache(all_movs) if jornada else {
+        "ingresos": 0.0,
+        "egresos": 0.0,
+        "neto": 0.0,
+        "movimientos_caja": 0,
+        "movimientos_banco": 0,
+        "movimientos_total": 0,
+    }
+
+    ultimo_corte_out = None
+    if ultimo_corte and jornada:
+        sub_uc = [m for m in all_movs if m.instante_corte <= ultimo_corte.fecha_hora_corte]
+        desglose_uc = construir_desglose_por_medio(sub_uc)
+        ultimo_corte_out = {
+            "id": ultimo_corte.id,
+            "jornada_id": ultimo_corte.jornada_id,
+            "fecha": jornada.fecha,
+            "fecha_hora_corte": ultimo_corte.fecha_hora_corte,
+            "usuario_id": ultimo_corte.usuario_id,
+            "usuario_nombre": ultimo_corte.usuario_nombre,
+            "ingresos": float(ultimo_corte.ingresos or 0.0),
+            "egresos": float(ultimo_corte.egresos or 0.0),
+            "neto": float(ultimo_corte.neto or 0.0),
+            "movimientos_caja": int(ultimo_corte.movimientos_caja or 0),
+            "movimientos_banco": int(ultimo_corte.movimientos_banco or 0),
+            "movimientos_total": int(ultimo_corte.movimientos_total or 0),
+            "saldo_actual_caja": float(ultimo_corte.saldo_actual_caja or 0.0),
+            "saldo_actual_bancos": float(ultimo_corte.saldo_actual_bancos or 0.0),
+            "saldo_final_total": float(ultimo_corte.saldo_final_total or 0.0),
+            "desglose_medios": desglose_uc,
+            "es_ultimo": True,
+        }
+
+    desglose_ultima = (
+        construir_desglose_medios_rendicion(session, ultima_rendicion, all_movs)
+        if ultima_rendicion and jornada
+        else None
+    )
+    ultima_rendicion_out = (
+        serializar_rendicion(session, ultima_rendicion, desglose_medios=desglose_ultima)
+        if ultima_rendicion
+        else None
+    )
+
     return JornadaEstadoOut(
         jornada_id=jornada.id if jornada else None,
-        fecha=datetime.now().date(),
+        fecha=hoy_jornada(session),
         estado=jornada.estado if jornada else "SIN_ABRIR",
         abierta=bool(jornada and jornada.estado == "ABIERTA"),
         fecha_hora_apertura=jornada.fecha_hora_apertura if jornada else None,
         usuario_apertura_id=jornada.usuario_apertura_id if jornada else None,
         usuario_apertura_nombre=jornada.usuario_apertura_nombre if jornada else None,
         observacion_apertura=jornada.observacion_apertura if jornada else None,
-        resumen=construir_resumen_jornada(session, jornada),
-        ultimo_corte=serializar_corte(session, ultimo_corte) if ultimo_corte else None,
-        ultima_rendicion=serializar_rendicion(session, ultima_rendicion) if ultima_rendicion else None,
-        pendiente_rendicion=construir_pendiente_rendicion(session, jornada),
+        resumen=resumen,
+        ultimo_corte=ultimo_corte_out,
+        ultima_rendicion=ultima_rendicion_out,
+        pendiente_rendicion=construir_pendiente_rendicion(
+            session,
+            jornada,
+            movimientos_dia_cache=all_movs if jornada else None,
+        ),
         cuentas_por_cobrar_dia=construir_cuentas_por_cobrar_dia(session, jornada),
         alerta_movimientos_posteriores=construir_alerta_movimientos_posteriores(session),
     )
@@ -232,6 +287,10 @@ def obtener_estado_jornada_actual(
     session = get_session_for_tenant(tenant_slug)
     try:
         return _serializar_estado_jornada(session)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
     finally:
         session.close()
 
@@ -268,9 +327,10 @@ def listar_cortes_jornada_actual(
             session.query(CorteJornadaFinanciera)
             .filter(CorteJornadaFinanciera.jornada_id == jornada.id)
             .order_by(CorteJornadaFinanciera.fecha_hora_corte.desc(), CorteJornadaFinanciera.id.desc())
+            .limit(40)
             .all()
         )
-        return [serializar_corte(session, corte) for corte in cortes]
+        return serializar_cortes_jornada_lista(session, jornada, cortes)
     finally:
         session.close()
 
@@ -349,7 +409,8 @@ def obtener_pendiente_rendicion_actual(
     session = get_session_for_tenant(tenant_slug)
     try:
         jornada = obtener_jornada_actual(session)
-        return construir_pendiente_rendicion(session, jornada)
+        cache = cargar_movimientos_jornada_normalizados(session, jornada) if jornada else None
+        return construir_pendiente_rendicion(session, jornada, movimientos_dia_cache=cache)
     finally:
         session.close()
 
@@ -511,7 +572,7 @@ def listar_historial_jornadas(
             .limit(limit)
             .all()
         )
-        return [construir_resumen_jornada_historica(session, jornada) for jornada in jornadas]
+        return construir_filas_historial_jornadas(session, jornadas)
     finally:
         session.close()
 
@@ -667,6 +728,40 @@ def actualizar_destinatario_rendicion(
         session.commit()
         session.refresh(row)
         return row
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@caja_router.delete("/jornada/destinatarios-rendicion/{destinatario_id}")
+def eliminar_destinatario_rendicion(
+    destinatario_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        row = session.query(DestinatarioRendicion).filter(DestinatarioRendicion.id == destinatario_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Destinatario no encontrado.")
+
+        usos = (
+            session.query(func.count(RendicionJornadaFinanciera.id))
+            .filter(RendicionJornadaFinanciera.destinatario_rendicion_id == destinatario_id)
+            .scalar()
+            or 0
+        )
+        if usos > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede eliminar porque ya tiene rendiciones asociadas. Puedes desactivarlo.",
+            )
+
+        session.delete(row)
+        session.commit()
+        return {"ok": True, "message": "Destinatario eliminado correctamente."}
     except HTTPException:
         session.rollback()
         raise
@@ -832,7 +927,8 @@ def obtener_pendiente_rendicion_jornada_historica(
         jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == jornada_id).first()
         if not jornada:
             raise HTTPException(status_code=404, detail="Jornada no encontrada.")
-        return construir_pendiente_rendicion(session, jornada)
+        cache = cargar_movimientos_jornada_normalizados(session, jornada)
+        return construir_pendiente_rendicion(session, jornada, movimientos_dia_cache=cache)
     finally:
         session.close()
 

@@ -5,6 +5,15 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
+def _es_movimiento_egreso_para_excel(tipo: str | None) -> bool:
+    t = (tipo or "").strip().upper()
+    if t in {"INGRESO", "AJUSTE (+)"}:
+        return False
+    if t in {"EGRESO", "GASTO", "AJUSTE (-)"}:
+        return True
+    return "EGRESO" in t or "GASTO" in t or "(-)" in (tipo or "")
+
+
 def generar_excel_reporte_finanzas(
     resumen,
     config,
@@ -185,7 +194,7 @@ def generar_excel_reporte_finanzas(
     row_idx += 1
 
     for mov in resumen.todos:
-        es_egreso = "EGRESO" in (mov.tipo or "").upper() or "(-)" in (mov.tipo or "")
+        es_egreso = _es_movimiento_egreso_para_excel(mov.tipo)
         row_data = [
             mov.fecha.strftime("%d/%m/%Y %H:%M"),
             mov.origen,

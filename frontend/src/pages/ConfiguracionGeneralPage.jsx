@@ -8,6 +8,39 @@ function sanitizeError(error, fallback) {
     return error?.response?.data?.detail || fallback
 }
 
+function formatOffsetGmt(offsetRaw = 'GMT+00:00') {
+    const cleaned = String(offsetRaw).toUpperCase().replace('UTC', 'GMT').replace(/\s+/g, '')
+    const match = cleaned.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/)
+    if (!match) return 'GMT+00:00'
+    const [, sign, hhRaw, mmRaw] = match
+    const hh = String(Number(hhRaw || '0')).padStart(2, '0')
+    const mm = String(Number(mmRaw || '0')).padStart(2, '0')
+    return `GMT${sign}${hh}:${mm}`
+}
+
+function offsetToMinutes(offsetLabel = 'GMT+00:00') {
+    const match = String(offsetLabel).match(/^GMT([+-])(\d{2}):(\d{2})$/)
+    if (!match) return 0
+    const sign = match[1] === '-' ? -1 : 1
+    return sign * (Number(match[2]) * 60 + Number(match[3]))
+}
+
+function nombreZonaEnEspanol(timeZone) {
+    try {
+        const parts = new Intl.DateTimeFormat('es-ES', {
+            timeZone,
+            timeZoneName: 'long',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).formatToParts(new Date())
+        const name = parts.find(part => part.type === 'timeZoneName')?.value
+        return name || timeZone
+    } catch {
+        return timeZone
+    }
+}
+
 export default function ConfiguracionGeneralPage() {
     const queryClient = useQueryClient()
     const { user } = useAuth()
@@ -20,7 +53,9 @@ export default function ConfiguracionGeneralPage() {
         telefono: '',
         email: '',
         logo_path: '',
+        business_timezone: 'America/Asuncion',
     })
+    const [nowTick, setNowTick] = useState(() => Date.now())
 
     const role = String(user?.rol || '').toUpperCase()
     const canEdit = role === 'ADMIN'
@@ -30,6 +65,66 @@ export default function ConfiguracionGeneralPage() {
         queryFn: () => api.get('/configuracion-general/').then(response => response.data),
         retry: false,
     })
+    const { data: timezoneList = [] } = useQuery({
+        queryKey: ['configuracion-general-timezones'],
+        queryFn: () => api.get('/configuracion-general/timezones').then(response => response.data || []),
+        retry: false,
+    })
+    const timezoneOptions = useMemo(() => {
+        const fromBrowser = typeof Intl?.supportedValuesOf === 'function'
+            ? Intl.supportedValuesOf('timeZone')
+            : []
+        const fromBackend = Array.isArray(timezoneList)
+            ? timezoneList
+                .map(item => (typeof item === 'string' ? item : item?.id))
+                .filter(Boolean)
+            : []
+        const all = Array.from(new Set([...fromBrowser, ...fromBackend, 'America/Asuncion']))
+
+        const options = all.map(tz => {
+            let gmt = 'GMT+00:00'
+            try {
+                const parts = new Intl.DateTimeFormat('en', {
+                    timeZone: tz,
+                    timeZoneName: 'longOffset',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                }).formatToParts(new Date())
+                gmt = formatOffsetGmt(parts.find(part => part.type === 'timeZoneName')?.value || 'GMT+00:00')
+            } catch {
+                gmt = 'GMT+00:00'
+            }
+            const ciudad = String(tz).split('/').pop()?.replace(/_/g, ' ') || tz
+            const nombreEs = nombreZonaEnEspanol(tz)
+            return {
+                id: tz,
+                gmt,
+                offsetMinutes: offsetToMinutes(gmt),
+                label: `(${gmt}) ${nombreEs} - ${ciudad}`,
+            }
+        })
+
+        options.sort((a, b) => (a.offsetMinutes - b.offsetMinutes) || a.id.localeCompare(b.id))
+        return options
+    }, [timezoneList])
+    const horaNegocioPreview = useMemo(() => {
+        try {
+            return new Intl.DateTimeFormat('es-PY', {
+                timeZone: form.business_timezone || 'America/Asuncion',
+                weekday: 'long',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+            }).format(nowTick)
+        } catch {
+            return 'Zona horaria invalida'
+        }
+    }, [form.business_timezone, nowTick])
 
     useEffect(() => {
         if (!data) return
@@ -40,8 +135,13 @@ export default function ConfiguracionGeneralPage() {
             telefono: data.telefono || '',
             email: data.email || '',
             logo_path: data.logo_path || '',
+            business_timezone: data.business_timezone || 'America/Asuncion',
         })
     }, [data])
+    useEffect(() => {
+        const timer = window.setInterval(() => setNowTick(Date.now()), 1000)
+        return () => window.clearInterval(timer)
+    }, [])
 
     const backendBaseUrl = useMemo(() => {
         const base = api.defaults.baseURL || ''
@@ -101,6 +201,7 @@ export default function ConfiguracionGeneralPage() {
             telefono: form.telefono.trim() || null,
             email: form.email.trim() || null,
             logo_path: form.logo_path.trim() || null,
+            business_timezone: form.business_timezone.trim() || 'America/Asuncion',
         })
     }
 
@@ -198,6 +299,44 @@ export default function ConfiguracionGeneralPage() {
                                 </div>
                             </div>
                             <div className="form-group">
+                                <label className="form-label">Zona horaria de negocio *</label>
+                                <select
+                                    className="form-input"
+                                    value={form.business_timezone}
+                                    onChange={event => setField('business_timezone', event.target.value)}
+                                    disabled={!canEdit || guardar.isPending}
+                                >
+                                    {!timezoneOptions.some(tz => tz.id === form.business_timezone) ? (
+                                        <option value={form.business_timezone}>{form.business_timezone}</option>
+                                    ) : null}
+                                    {timezoneOptions.map(tz => (
+                                        <option key={tz.id} value={tz.id}>
+                                            {tz.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                                    Define cuándo cambia el día operativo (cierre de jornada a las 00:00 de esta zona). El listado muestra todas las zonas con su corrección UTC respecto a Greenwich.
+                                </div>
+                                <div
+                                    style={{
+                                        marginTop: 8,
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 10,
+                                        padding: '8px 10px',
+                                        background: 'rgba(255,255,255,0.02)',
+                                        fontSize: '0.82rem',
+                                    }}
+                                >
+                                    <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>
+                                        Vista previa de hora con la zona seleccionada:
+                                    </div>
+                                    <div style={{ fontWeight: 700, color: 'var(--primary-light)' }}>
+                                        {horaNegocioPreview}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="form-group">
                                 <label className="form-label">Direccion</label>
                                 <textarea className="form-input" rows={3} value={form.direccion} onChange={event => setField('direccion', event.target.value)} disabled={!canEdit || guardar.isPending} placeholder="Direccion comercial o fiscal" style={{ resize: 'vertical' }} />
                             </div>
@@ -265,6 +404,10 @@ export default function ConfiguracionGeneralPage() {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                                     <span style={{ color: 'var(--text-muted)' }}>Canal principal</span>
                                     <strong>{data.canal_principal_nombre || 'Pendiente'}</strong>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Zona horaria</span>
+                                    <strong>{data.business_timezone || 'America/Asuncion'}</strong>
                                 </div>
                             </div>
                         </div>

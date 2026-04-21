@@ -1,11 +1,14 @@
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone, tzinfo
 from types import SimpleNamespace
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import case, func, text
+from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.models.models import (
     Banco,
     ConfiguracionCaja,
@@ -18,6 +21,46 @@ from app.models.models import (
     Usuario,
     Venta,
 )
+
+
+def _resolver_tz_negocio(tz_name: str | None) -> tzinfo:
+    tz_name = (tz_name or settings.BUSINESS_TIMEZONE or "America/Asuncion").strip()
+    try:
+        return ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        try:
+            fallback_name = (settings.BUSINESS_TIMEZONE or "America/Asuncion").strip()
+            if fallback_name and fallback_name != tz_name:
+                return ZoneInfo(fallback_name)
+        except ZoneInfoNotFoundError:
+            pass
+        # Fallback final seguro incluso cuando no existe base IANA (tzdata ausente).
+        return timezone.utc
+
+
+def _leer_timezone_tenant_desde_db(session) -> str | None:
+    if session is None:
+        return None
+    try:
+        row = session.execute(text("SELECT business_timezone FROM configuracion_empresa ORDER BY id ASC LIMIT 1")).first()
+        if not row:
+            return None
+        tz = (row[0] or "").strip()
+        return tz or None
+    except Exception:
+        # Evita romper jornada si la columna aun no existe en un tenant legado.
+        return None
+
+
+def _zona_horaria_negocio(session=None) -> tzinfo:
+    tz_name = _leer_timezone_tenant_desde_db(session)
+    return _resolver_tz_negocio(tz_name)
+
+
+def ahora_negocio(session=None) -> datetime:
+    """Fecha/hora actual en zona de negocio (naive para compatibilidad con columnas DateTime sin tz)."""
+    tz = _zona_horaria_negocio(session)
+    return datetime.now(tz).replace(tzinfo=None)
 
 
 def resolver_destinatario_rendicion_activo(session, destinatario_id: int) -> DestinatarioRendicion:
@@ -35,6 +78,7 @@ def resolver_destinatario_rendicion_activo(session, destinatario_id: int) -> Des
 @dataclass
 class MovimientoJornadaNormalizado:
     fecha: datetime
+    instante_corte: datetime
     origen: str
     categoria: str
     medio: str
@@ -48,18 +92,39 @@ class MovimientoJornadaNormalizado:
     incluye_en_totales: bool = True
 
 
-def hoy_jornada() -> date:
-    return datetime.now().date()
+def hoy_jornada(session=None) -> date:
+    return ahora_negocio(session).date()
 
 
-def _normalizar_datetime_local(value: datetime) -> datetime:
+def _normalizar_datetime_local(value: datetime, tz: tzinfo) -> datetime:
+    # Timestamps con tz se convierten a zona de negocio para comparaciones consistentes.
     if value.tzinfo is None:
         return value
-    return value.astimezone().replace(tzinfo=None)
+    return value.astimezone(tz).replace(tzinfo=None)
+
+
+def _instante_movimiento_sql_least(m, tz: tzinfo) -> datetime:
+    """Replica least(coalesce(fecha,created_at), coalesce(created_at,fecha)) usado en filtros SQL de cortes."""
+    f = getattr(m, "fecha", None)
+    c = getattr(m, "created_at", None)
+    # created_at proviene de utcnow() en TimestampMixin; si está naive, se interpreta como UTC.
+    if c is not None and getattr(c, "tzinfo", None) is None:
+        c = c.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
+    f2 = f if f is not None else c
+    c2 = c if c is not None else f
+    if f2 is None and c2 is None:
+        return datetime.min
+    if f2 is None:
+        return _normalizar_datetime_local(c2, tz)
+    if c2 is None:
+        return _normalizar_datetime_local(f2, tz)
+    a = _normalizar_datetime_local(f2, tz)
+    b = _normalizar_datetime_local(c2, tz)
+    return a if a <= b else b
 
 
 def vencer_jornadas_antiguas(session) -> None:
-    today = hoy_jornada()
+    today = hoy_jornada(session)
     (
         session.query(JornadaFinanciera)
         .filter(JornadaFinanciera.estado == "ABIERTA", JornadaFinanciera.fecha < today)
@@ -70,7 +135,7 @@ def vencer_jornadas_antiguas(session) -> None:
 
 def obtener_jornada_actual(session, *, incluir_vencida: bool = True):
     vencer_jornadas_antiguas(session)
-    query = session.query(JornadaFinanciera).filter(JornadaFinanciera.fecha == hoy_jornada())
+    query = session.query(JornadaFinanciera).filter(JornadaFinanciera.fecha == hoy_jornada(session))
     if not incluir_vencida:
         query = query.filter(JornadaFinanciera.estado == "ABIERTA")
     return query.first()
@@ -80,7 +145,7 @@ def obtener_ultima_jornada_anterior(session) -> JornadaFinanciera | None:
     vencer_jornadas_antiguas(session)
     return (
         session.query(JornadaFinanciera)
-        .filter(JornadaFinanciera.fecha < hoy_jornada())
+        .filter(JornadaFinanciera.fecha < hoy_jornada(session))
         .order_by(JornadaFinanciera.fecha.desc())
         .first()
     )
@@ -98,12 +163,12 @@ def require_jornada_abierta(session):
 
 def abrir_jornada_actual(session, current_user: Usuario, observacion: str | None = None):
     vencer_jornadas_antiguas(session)
-    jornada_existente = session.query(JornadaFinanciera).filter(JornadaFinanciera.fecha == hoy_jornada()).first()
+    jornada_existente = session.query(JornadaFinanciera).filter(JornadaFinanciera.fecha == hoy_jornada(session)).first()
     if jornada_existente and jornada_existente.estado == "ABIERTA":
         return jornada_existente
     if jornada_existente:
         jornada_existente.estado = "ABIERTA"
-        jornada_existente.fecha_hora_apertura = datetime.now()
+        jornada_existente.fecha_hora_apertura = ahora_negocio(session)
         jornada_existente.usuario_apertura_id = current_user.id
         jornada_existente.usuario_apertura_nombre = current_user.nombre_completo
         jornada_existente.observacion_apertura = observacion.strip() if observacion else None
@@ -111,9 +176,9 @@ def abrir_jornada_actual(session, current_user: Usuario, observacion: str | None
         return jornada_existente
 
     jornada = JornadaFinanciera(
-        fecha=hoy_jornada(),
+        fecha=hoy_jornada(session),
         estado="ABIERTA",
-        fecha_hora_apertura=datetime.now(),
+        fecha_hora_apertura=ahora_negocio(session),
         usuario_apertura_id=current_user.id,
         usuario_apertura_nombre=current_user.nombre_completo,
         observacion_apertura=observacion.strip() if observacion else None,
@@ -227,7 +292,7 @@ def construir_desglose_por_medio(movimientos: list[MovimientoJornadaNormalizado]
     return sorted(acumulado.values(), key=lambda item: (orden.get(item["medio"], 90), item["medio"]))
 
 
-def _normalizar_movimientos_caja(movimientos: list[MovimientoCaja]) -> list[MovimientoJornadaNormalizado]:
+def _normalizar_movimientos_caja(movimientos: list[MovimientoCaja], tz: tzinfo) -> list[MovimientoJornadaNormalizado]:
     normalizados: list[MovimientoJornadaNormalizado] = []
     for movimiento in movimientos:
         categoria = _clasificar_movimiento("CAJA", movimiento)
@@ -252,6 +317,7 @@ def _normalizar_movimientos_caja(movimientos: list[MovimientoCaja]) -> list[Movi
         normalizados.append(
             MovimientoJornadaNormalizado(
                 fecha=movimiento.fecha,
+                instante_corte=_instante_movimiento_sql_least(movimiento, tz),
                 origen="CAJA",
                 categoria=categoria,
                 medio=_normalizar_medio("CAJA", movimiento, categoria),
@@ -268,16 +334,60 @@ def _normalizar_movimientos_caja(movimientos: list[MovimientoCaja]) -> list[Movi
     return normalizados
 
 
-def _normalizar_movimientos_banco(movimientos: list[MovimientoBanco]) -> list[MovimientoJornadaNormalizado]:
+def _mapear_tipo_monto_banco(movimiento: MovimientoBanco) -> tuple[str, float]:
+    """Unifica tipos de banco (legacy o variantes) para totales, desglose y PDF."""
+    raw = (movimiento.tipo or "").strip().upper()
+    monto_crudo = float(movimiento.monto or 0.0)
+    abs_m = abs(monto_crudo)
+
+    if raw == "AJUSTE":
+        if monto_crudo >= 0:
+            return "AJUSTE (+)", abs_m
+        return "AJUSTE (-)", abs_m
+
+    if raw in {"EGRESO", "GASTO", "DEBITO", "DEB", "SALIDA", "EGRESOS"}:
+        return "EGRESO", abs_m
+    if raw in {"INGRESO", "CREDITO", "CRE", "ENTRADA", "INGRESOS"}:
+        return "INGRESO", abs_m
+
+    if raw in {"", "MOVIMIENTO", "OTRO"}:
+        try:
+            sa = float(movimiento.saldo_anterior)
+            sn = float(movimiento.saldo_nuevo)
+            if sn < sa - 1e-9:
+                return "EGRESO", abs_m
+            if sn > sa + 1e-9:
+                return "INGRESO", abs_m
+        except (TypeError, ValueError):
+            pass
+        if getattr(movimiento, "gasto_operativo_id", None) or getattr(movimiento, "pago_compra_id", None):
+            return "EGRESO", abs_m
+        if getattr(movimiento, "pago_venta_id", None):
+            return "INGRESO", abs_m
+
+    if "EGRES" in raw and "INGRES" not in raw:
+        return "EGRESO", abs_m
+    if "INGRES" in raw or "CRED" in raw:
+        return "INGRESO", abs_m
+
+    return (
+        "EGRESO"
+        if (getattr(movimiento, "gasto_operativo_id", None) or getattr(movimiento, "pago_compra_id", None))
+        else "INGRESO",
+        abs_m,
+    )
+
+
+def _normalizar_movimientos_banco(movimientos: list[MovimientoBanco], tz: tzinfo) -> list[MovimientoJornadaNormalizado]:
     normalizados: list[MovimientoJornadaNormalizado] = []
     for movimiento in movimientos:
         categoria = _clasificar_movimiento("BANCO", movimiento)
         incluye_en_totales = categoria != "TRANSFERENCIA_INTERNA"
-        tipo = movimiento.tipo or "MOVIMIENTO"
-        monto = abs(movimiento.monto or 0.0)
+        tipo, monto = _mapear_tipo_monto_banco(movimiento)
         normalizados.append(
             MovimientoJornadaNormalizado(
                 fecha=movimiento.fecha,
+                instante_corte=_instante_movimiento_sql_least(movimiento, tz),
                 origen="BANCO",
                 categoria=categoria,
                 medio=_normalizar_medio("BANCO", movimiento, categoria),
@@ -294,6 +404,23 @@ def _normalizar_movimientos_banco(movimientos: list[MovimientoBanco]) -> list[Mo
     return normalizados
 
 
+def _instante_para_tope_corte_caja():
+    """Hora contable (fecha) puede ir al fin del dia; el corte usa el menor entre fecha y created_at (momento real)."""
+    f = MovimientoCaja.fecha
+    c = MovimientoCaja.created_at
+    f2 = func.coalesce(f, c)
+    c2 = func.coalesce(c, f)
+    return func.least(f2, c2)
+
+
+def _instante_para_tope_corte_banco():
+    f = MovimientoBanco.fecha
+    c = MovimientoBanco.created_at
+    f2 = func.coalesce(f, c)
+    c2 = func.coalesce(c, f)
+    return func.least(f2, c2)
+
+
 def obtener_movimientos_normalizados_jornada(
     session,
     jornada: JornadaFinanciera | None,
@@ -303,6 +430,7 @@ def obtener_movimientos_normalizados_jornada(
 ) -> list[MovimientoJornadaNormalizado]:
     if not jornada:
         return []
+    tz = _zona_horaria_negocio(session)
 
     query_caja = session.query(MovimientoCaja).filter(MovimientoCaja.jornada_id == jornada.id)
     query_banco = session.query(MovimientoBanco).filter(MovimientoBanco.jornada_id == jornada.id)
@@ -310,17 +438,69 @@ def obtener_movimientos_normalizados_jornada(
         query_caja = query_caja.filter(MovimientoCaja.fecha >= fecha_desde)
         query_banco = query_banco.filter(MovimientoBanco.fecha >= fecha_desde)
     if fecha_hasta:
-        query_caja = query_caja.filter(MovimientoCaja.fecha <= fecha_hasta)
-        query_banco = query_banco.filter(MovimientoBanco.fecha <= fecha_hasta)
+        query_caja = query_caja.filter(_instante_para_tope_corte_caja() <= fecha_hasta)
+        query_banco = query_banco.filter(_instante_para_tope_corte_banco() <= fecha_hasta)
+
+    query_caja = query_caja.options(
+        selectinload(MovimientoCaja.pago_venta_rel),
+        selectinload(MovimientoCaja.pago_compra_rel),
+        selectinload(MovimientoCaja.gasto_operativo_rel),
+    )
+    query_banco = query_banco.options(
+        selectinload(MovimientoBanco.pago_venta_rel),
+        selectinload(MovimientoBanco.pago_compra_rel),
+        selectinload(MovimientoBanco.banco_rel),
+    )
 
     movimientos = [
-        *_normalizar_movimientos_caja(query_caja.all()),
-        *_normalizar_movimientos_banco(query_banco.all()),
+        *_normalizar_movimientos_caja(query_caja.all(), tz),
+        *_normalizar_movimientos_banco(query_banco.all(), tz),
     ]
     return sorted(movimientos, key=lambda item: item.fecha, reverse=True)
 
 
-def construir_resumen_jornada(session, jornada: JornadaFinanciera | None) -> dict:
+def cargar_movimientos_jornada_normalizados(session, jornada: JornadaFinanciera | None) -> list[MovimientoJornadaNormalizado]:
+    """Todos los movimientos normalizados de la jornada (una pasada DB con eager loads)."""
+    return obtener_movimientos_normalizados_jornada(session, jornada)
+
+
+def construir_resumen_jornada_desde_cache(movimientos: list[MovimientoJornadaNormalizado]) -> dict:
+    """Totales del día a partir de movimientos ya normalizados (evita otra query)."""
+    return _totales_desde_movimientos_normalizados(movimientos)
+
+
+def _totales_desde_movimientos_normalizados(movimientos: list[MovimientoJornadaNormalizado]) -> dict:
+    ingresos = 0.0
+    egresos = 0.0
+    movimientos_caja = 0
+    movimientos_banco = 0
+    for movimiento in movimientos:
+        if movimiento.origen == "CAJA":
+            movimientos_caja += 1
+        elif movimiento.origen == "BANCO":
+            movimientos_banco += 1
+        if not movimiento.incluye_en_totales:
+            continue
+        if movimiento.tipo in {"INGRESO", "AJUSTE (+)"}:
+            ingresos += movimiento.monto
+        elif movimiento.tipo in {"EGRESO", "GASTO", "AJUSTE (-)"}:
+            egresos += movimiento.monto
+    return {
+        "ingresos": float(ingresos),
+        "egresos": float(egresos),
+        "neto": float(ingresos - egresos),
+        "movimientos_caja": int(movimientos_caja),
+        "movimientos_banco": int(movimientos_banco),
+        "movimientos_total": int(movimientos_caja) + int(movimientos_banco),
+    }
+
+
+def construir_resumen_jornada(
+    session,
+    jornada: JornadaFinanciera | None,
+    *,
+    fecha_hasta: datetime | None = None,
+) -> dict:
     if not jornada:
         return {
             "ingresos": 0.0,
@@ -331,34 +511,104 @@ def construir_resumen_jornada(session, jornada: JornadaFinanciera | None) -> dic
             "movimientos_total": 0,
         }
 
-    movimientos = obtener_movimientos_normalizados_jornada(session, jornada)
-    ingresos = 0.0
-    egresos = 0.0
-    movimientos_caja = 0
-    movimientos_banco = 0
+    movimientos = obtener_movimientos_normalizados_jornada(session, jornada, fecha_hasta=fecha_hasta)
+    return _totales_desde_movimientos_normalizados(movimientos)
 
-    for movimiento in movimientos:
-        if movimiento.origen == "CAJA":
-            movimientos_caja += 1
-        elif movimiento.origen == "BANCO":
-            movimientos_banco += 1
 
-        if not movimiento.incluye_en_totales:
-            continue
-
-        if movimiento.tipo in {"INGRESO", "AJUSTE (+)"}:
-            ingresos += movimiento.monto
-        elif movimiento.tipo in {"EGRESO", "GASTO", "AJUSTE (-)"}:
-            egresos += movimiento.monto
-
+def _metricas_ventas_para_fecha(session, fecha_dia: date, *, fecha_hasta: datetime | None = None) -> dict:
+    fecha_desde = datetime.combine(fecha_dia, time.min)
+    limite_hasta = fecha_hasta or datetime.combine(fecha_dia, time.max)
+    ventas_dia = (
+        session.query(Venta)
+        .filter(
+            Venta.fecha >= fecha_desde,
+            Venta.fecha <= limite_hasta,
+            Venta.estado.notin_(["ANULADO", "ANULADA"]),
+        )
+        .all()
+    )
+    ventas_con_saldo = [venta for venta in ventas_dia if (venta.saldo or 0) > 0]
+    total_pendiente = float(sum(venta.saldo or 0.0 for venta in ventas_con_saldo))
+    total_ventas_con_saldo = float(sum(venta.total or 0.0 for venta in ventas_con_saldo))
+    total_cobrado_ventas_con_saldo = float(
+        sum(max(0.0, float((venta.total or 0.0) - (venta.saldo or 0.0))) for venta in ventas_con_saldo)
+    )
+    venta_total_dia = float(sum(venta.total or 0.0 for venta in ventas_dia))
     return {
-        "ingresos": float(ingresos),
-        "egresos": float(egresos),
-        "neto": float(ingresos - egresos),
-        "movimientos_caja": int(movimientos_caja),
-        "movimientos_banco": int(movimientos_banco),
-        "movimientos_total": int(movimientos_caja) + int(movimientos_banco),
+        "total_pendiente": total_pendiente,
+        "cantidad_ventas_con_saldo": len(ventas_con_saldo),
+        "total_ventas_con_saldo": total_ventas_con_saldo,
+        "total_cobrado_ventas_con_saldo": total_cobrado_ventas_con_saldo,
+        "venta_total_dia": venta_total_dia,
+        "cantidad_ventas_dia": len(ventas_dia),
     }
+
+
+def _metricas_ventas_para_fechas(session, fechas: list[date]) -> dict[date, dict]:
+    """Calcula métricas por día en una sola query para varias fechas de historial."""
+    if not fechas:
+        return {}
+
+    fecha_min = min(fechas)
+    fecha_max = max(fechas)
+    desde = datetime.combine(fecha_min, time.min)
+    hasta = datetime.combine(fecha_max, time.max)
+
+    saldo_col = func.coalesce(Venta.saldo, 0.0)
+    total_col = func.coalesce(Venta.total, 0.0)
+    saldo_positivo = saldo_col > 0
+    dia_col = func.date(Venta.fecha)
+
+    rows = (
+        session.query(
+            dia_col.label("dia"),
+            func.sum(case((saldo_positivo, saldo_col), else_=0.0)).label("total_pendiente"),
+            func.sum(case((saldo_positivo, 1), else_=0)).label("cantidad_ventas_con_saldo"),
+            func.sum(case((saldo_positivo, total_col), else_=0.0)).label("total_ventas_con_saldo"),
+            func.sum(case((saldo_positivo, func.greatest(0.0, total_col - saldo_col)), else_=0.0)).label(
+                "total_cobrado_ventas_con_saldo"
+            ),
+            func.sum(total_col).label("venta_total_dia"),
+            func.count(Venta.id).label("cantidad_ventas_dia"),
+        )
+        .filter(
+            Venta.fecha >= desde,
+            Venta.fecha <= hasta,
+            Venta.estado.notin_(["ANULADO", "ANULADA"]),
+        )
+        .group_by(dia_col)
+        .all()
+    )
+
+    out: dict[date, dict] = {}
+    for row in rows:
+        dia = row.dia
+        if isinstance(dia, datetime):
+            dia = dia.date()
+        elif isinstance(dia, str):
+            dia = date.fromisoformat(dia)
+        out[dia] = {
+            "total_pendiente": float(row.total_pendiente or 0.0),
+            "cantidad_ventas_con_saldo": int(row.cantidad_ventas_con_saldo or 0),
+            "total_ventas_con_saldo": float(row.total_ventas_con_saldo or 0.0),
+            "total_cobrado_ventas_con_saldo": float(row.total_cobrado_ventas_con_saldo or 0.0),
+            "venta_total_dia": float(row.venta_total_dia or 0.0),
+            "cantidad_ventas_dia": int(row.cantidad_ventas_dia or 0),
+        }
+
+    for fd in fechas:
+        out.setdefault(
+            fd,
+            {
+                "total_pendiente": 0.0,
+                "cantidad_ventas_con_saldo": 0,
+                "total_ventas_con_saldo": 0.0,
+                "total_cobrado_ventas_con_saldo": 0.0,
+                "venta_total_dia": 0.0,
+                "cantidad_ventas_dia": 0,
+            },
+        )
+    return out
 
 
 def construir_metricas_ventas_dia(session, jornada: JornadaFinanciera | None, *, fecha_hasta: datetime | None = None):
@@ -371,35 +621,7 @@ def construir_metricas_ventas_dia(session, jornada: JornadaFinanciera | None, *,
             "venta_total_dia": 0.0,
             "cantidad_ventas_dia": 0,
         }
-
-    fecha_desde = datetime.combine(jornada.fecha, time.min)
-    limite_hasta = fecha_hasta or datetime.combine(jornada.fecha, time.max)
-    ventas_dia = (
-        session.query(Venta)
-        .filter(
-            Venta.fecha >= fecha_desde,
-            Venta.fecha <= limite_hasta,
-            Venta.estado.notin_(["ANULADO", "ANULADA"]),
-        )
-        .all()
-    )
-    ventas_con_saldo = [venta for venta in ventas_dia if (venta.saldo or 0) > 0]
-
-    total_pendiente = float(sum(venta.saldo or 0.0 for venta in ventas_con_saldo))
-    total_ventas_con_saldo = float(sum(venta.total or 0.0 for venta in ventas_con_saldo))
-    total_cobrado_ventas_con_saldo = float(
-        sum(max(0.0, float((venta.total or 0.0) - (venta.saldo or 0.0))) for venta in ventas_con_saldo)
-    )
-    venta_total_dia = float(sum(venta.total or 0.0 for venta in ventas_dia))
-
-    return {
-        "total_pendiente": total_pendiente,
-        "cantidad_ventas_con_saldo": len(ventas_con_saldo),
-        "total_ventas_con_saldo": total_ventas_con_saldo,
-        "total_cobrado_ventas_con_saldo": total_cobrado_ventas_con_saldo,
-        "venta_total_dia": venta_total_dia,
-        "cantidad_ventas_dia": len(ventas_dia),
-    }
+    return _metricas_ventas_para_fecha(session, jornada.fecha, fecha_hasta=fecha_hasta)
 
 
 def _saldo_actual_caja(session) -> float:
@@ -439,8 +661,9 @@ def obtener_ultima_rendicion_vigente(session, jornada_id: int | None):
 
 
 def crear_corte_jornada_actual(session, jornada: JornadaFinanciera, current_user: Usuario):
-    fecha_corte = datetime.now()
-    resumen = construir_resumen_jornada(session, jornada)
+    fecha_corte = ahora_negocio(session)
+    # Misma ventana que el PDF del corte: movimientos con fecha <= hora del corte
+    resumen = construir_resumen_jornada(session, jornada, fecha_hasta=fecha_corte)
     corte = CorteJornadaFinanciera(
         jornada_id=jornada.id,
         fecha_hora_corte=fecha_corte,
@@ -507,7 +730,7 @@ def serializar_corte(session, corte: CorteJornadaFinanciera):
     return {
         "id": corte.id,
         "jornada_id": corte.jornada_id,
-        "fecha": jornada.fecha if jornada else hoy_jornada(),
+        "fecha": jornada.fecha if jornada else hoy_jornada(session),
         "fecha_hora_corte": corte.fecha_hora_corte,
         "usuario_id": corte.usuario_id,
         "usuario_nombre": corte.usuario_nombre,
@@ -525,7 +748,47 @@ def serializar_corte(session, corte: CorteJornadaFinanciera):
     }
 
 
-def construir_pendiente_rendicion(session, jornada: JornadaFinanciera | None):
+def serializar_cortes_jornada_lista(session, jornada: JornadaFinanciera, cortes: list[CorteJornadaFinanciera]) -> list[dict]:
+    """Lista de cortes para la UI: una sola carga de movimientos y sin N× construir_resumen_corte."""
+    if not cortes:
+        return []
+    ultimo_id = cortes[0].id
+    all_movs = cargar_movimientos_jornada_normalizados(session, jornada)
+    fecha_jornada = jornada.fecha
+    out: list[dict] = []
+    for corte in cortes:
+        sub = [m for m in all_movs if m.instante_corte <= corte.fecha_hora_corte]
+        desglose = construir_desglose_por_medio(sub)
+        out.append(
+            {
+                "id": corte.id,
+                "jornada_id": corte.jornada_id,
+                "fecha": fecha_jornada,
+                "fecha_hora_corte": corte.fecha_hora_corte,
+                "usuario_id": corte.usuario_id,
+                "usuario_nombre": corte.usuario_nombre,
+                "ingresos": float(corte.ingresos or 0.0),
+                "egresos": float(corte.egresos or 0.0),
+                "neto": float(corte.neto or 0.0),
+                "movimientos_caja": int(corte.movimientos_caja or 0),
+                "movimientos_banco": int(corte.movimientos_banco or 0),
+                "movimientos_total": int(corte.movimientos_total or 0),
+                "saldo_actual_caja": float(corte.saldo_actual_caja or 0.0),
+                "saldo_actual_bancos": float(corte.saldo_actual_bancos or 0.0),
+                "saldo_final_total": float(corte.saldo_final_total or 0.0),
+                "desglose_medios": desglose,
+                "es_ultimo": corte.id == ultimo_id,
+            }
+        )
+    return out
+
+
+def construir_pendiente_rendicion(
+    session,
+    jornada: JornadaFinanciera | None,
+    *,
+    movimientos_dia_cache: list[MovimientoJornadaNormalizado] | None = None,
+):
     if not jornada:
         return {
             "monto_sugerido": 0.0,
@@ -537,9 +800,14 @@ def construir_pendiente_rendicion(session, jornada: JornadaFinanciera | None):
 
     ultima_rendicion = obtener_ultima_rendicion_vigente(session, jornada.id)
     fecha_desde = ultima_rendicion.fecha_hora_rendicion if ultima_rendicion else None
-    movimientos = obtener_movimientos_normalizados_jornada(session, jornada, fecha_desde=fecha_desde)
-    if fecha_desde:
-        movimientos = [mov for mov in movimientos if mov.fecha > fecha_desde]
+    if movimientos_dia_cache is not None:
+        movimientos = list(movimientos_dia_cache)
+        if fecha_desde:
+            movimientos = [mov for mov in movimientos if mov.fecha > fecha_desde]
+    else:
+        movimientos = obtener_movimientos_normalizados_jornada(session, jornada, fecha_desde=fecha_desde)
+        if fecha_desde:
+            movimientos = [mov for mov in movimientos if mov.fecha > fecha_desde]
 
     ingresos = float(sum(mov.monto for mov in movimientos if mov.incluye_en_totales and mov.tipo in {"INGRESO", "AJUSTE (+)"}))
     egresos = float(sum(mov.monto for mov in movimientos if mov.incluye_en_totales and mov.tipo in {"EGRESO", "GASTO", "AJUSTE (-)"}))
@@ -598,7 +866,7 @@ def crear_rendicion_jornada_actual(
 
     rendicion = RendicionJornadaFinanciera(
         jornada_id=jornada.id,
-        fecha_hora_rendicion=datetime.now(),
+        fecha_hora_rendicion=ahora_negocio(session),
         usuario_id=current_user.id,
         usuario_nombre=current_user.nombre_completo,
         destinatario_rendicion_id=dest.id,
@@ -665,8 +933,8 @@ def actualizar_rendicion_jornada(
     if not jornada:
         raise HTTPException(status_code=404, detail="La jornada de esta rendicion ya no existe.")
 
-    fecha_nueva = _normalizar_datetime_local(fecha_hora_rendicion)
-    if fecha_nueva > datetime.now():
+    fecha_nueva = _normalizar_datetime_local(fecha_hora_rendicion, _zona_horaria_negocio(session))
+    if fecha_nueva > ahora_negocio(session):
         raise HTTPException(status_code=422, detail="La fecha de rendicion no puede quedar en el futuro.")
     if jornada.fecha_hora_apertura and fecha_nueva < jornada.fecha_hora_apertura:
         raise HTTPException(status_code=422, detail="La fecha de rendicion no puede ser anterior a la apertura de la jornada.")
@@ -718,7 +986,7 @@ def actualizar_rendicion_jornada(
     rendicion.rendido_a = rendido_a_limpio
     rendicion.monto_rendido = float(monto_rendido)
     rendicion.observacion = observacion_limpia
-    rendicion.fecha_hora_ultima_edicion = datetime.now()
+    rendicion.fecha_hora_ultima_edicion = ahora_negocio(session)
     rendicion.usuario_ultima_edicion_id = current_user.id
     rendicion.usuario_ultima_edicion_nombre = current_user.nombre_completo
     rendicion.motivo_ajuste = motivo_limpio
@@ -735,14 +1003,43 @@ def actualizar_rendicion_jornada(
     return rendicion
 
 
-def serializar_rendicion(session, rendicion: RendicionJornadaFinanciera):
+def construir_desglose_medios_rendicion(
+    session,
+    rendicion: RendicionJornadaFinanciera,
+    todos_movs: list[MovimientoJornadaNormalizado],
+) -> list[dict]:
+    rendicion_anterior = (
+        session.query(RendicionJornadaFinanciera)
+        .filter(
+            RendicionJornadaFinanciera.jornada_id == rendicion.jornada_id,
+            RendicionJornadaFinanciera.estado == "VIGENTE",
+            RendicionJornadaFinanciera.fecha_hora_rendicion < rendicion.fecha_hora_rendicion,
+        )
+        .order_by(RendicionJornadaFinanciera.fecha_hora_rendicion.desc(), RendicionJornadaFinanciera.id.desc())
+        .first()
+    )
+    fecha_desde = rendicion_anterior.fecha_hora_rendicion if rendicion_anterior else None
+    movimientos = list(todos_movs)
+    if fecha_desde:
+        movimientos = [mov for mov in movimientos if mov.fecha > fecha_desde]
+    movimientos = [
+        mov
+        for mov in movimientos
+        if mov.instante_corte <= rendicion.fecha_hora_rendicion and mov.fecha <= rendicion.fecha_hora_rendicion
+    ]
+    return construir_desglose_por_medio(movimientos)
+
+
+def serializar_rendicion(session, rendicion: RendicionJornadaFinanciera, *, desglose_medios: list[dict] | None = None):
     jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == rendicion.jornada_id).first()
     ultima = obtener_ultima_rendicion_vigente(session, rendicion.jornada_id)
-    resumen = construir_resumen_rendicion(session, rendicion)
+    if desglose_medios is None:
+        resumen = construir_resumen_rendicion(session, rendicion)
+        desglose_medios = resumen.desglose_medios
     return {
         "id": rendicion.id,
         "jornada_id": rendicion.jornada_id,
-        "fecha": jornada.fecha if jornada else hoy_jornada(),
+        "fecha": jornada.fecha if jornada else hoy_jornada(session),
         "fecha_hora_rendicion": rendicion.fecha_hora_rendicion,
         "usuario_id": rendicion.usuario_id,
         "usuario_nombre": rendicion.usuario_nombre,
@@ -753,7 +1050,7 @@ def serializar_rendicion(session, rendicion: RendicionJornadaFinanciera):
         "diferencia": float((rendicion.monto_rendido or 0.0) - (rendicion.monto_sugerido or 0.0)),
         "observacion": rendicion.observacion,
         "estado": rendicion.estado,
-        "desglose_medios": resumen.desglose_medios,
+        "desglose_medios": desglose_medios,
         "es_ultima_vigente": bool(ultima and ultima.id == rendicion.id),
         "editada": bool(rendicion.fecha_hora_ultima_edicion),
         "fecha_hora_original": rendicion.fecha_hora_original,
@@ -766,48 +1063,126 @@ def serializar_rendicion(session, rendicion: RendicionJornadaFinanciera):
     }
 
 
-def construir_resumen_jornada_historica(session, jornada: JornadaFinanciera):
-    resumen = construir_resumen_jornada(session, jornada)
-    rendiciones_vigentes = (
+def construir_filas_historial_jornadas(session, jornadas: list[JornadaFinanciera]) -> list[dict]:
+    """Una pasada de consultas para N jornadas (evita N× movimientos + ventas)."""
+    if not jornadas:
+        return []
+    tz = _zona_horaria_negocio(session)
+    ids = [j.id for j in jornadas]
+
+    caja_rows = (
+        session.query(MovimientoCaja)
+        .filter(MovimientoCaja.jornada_id.in_(ids))
+        .options(
+            selectinload(MovimientoCaja.pago_venta_rel),
+            selectinload(MovimientoCaja.pago_compra_rel),
+            selectinload(MovimientoCaja.gasto_operativo_rel),
+        )
+        .all()
+    )
+    banco_rows = (
+        session.query(MovimientoBanco)
+        .filter(MovimientoBanco.jornada_id.in_(ids))
+        .options(
+            selectinload(MovimientoBanco.pago_venta_rel),
+            selectinload(MovimientoBanco.pago_compra_rel),
+            selectinload(MovimientoBanco.banco_rel),
+        )
+        .all()
+    )
+
+    caja_por_j: dict[int, list] = {}
+    for m in caja_rows:
+        if m.jornada_id is not None:
+            caja_por_j.setdefault(m.jornada_id, []).append(m)
+    banco_por_j: dict[int, list] = {}
+    for m in banco_rows:
+        if m.jornada_id is not None:
+            banco_por_j.setdefault(m.jornada_id, []).append(m)
+
+    rend_rows = (
         session.query(RendicionJornadaFinanciera)
         .filter(
-            RendicionJornadaFinanciera.jornada_id == jornada.id,
+            RendicionJornadaFinanciera.jornada_id.in_(ids),
             RendicionJornadaFinanciera.estado == "VIGENTE",
         )
         .all()
     )
-    total_rendido = float(sum(item.monto_rendido or 0.0 for item in rendiciones_vigentes))
-    pendiente = construir_pendiente_rendicion(session, jornada)
-    cuentas_cobrar = construir_cuentas_por_cobrar_dia(session, jornada)
-    cantidad_cortes = (
-        session.query(func.count(CorteJornadaFinanciera.id))
-        .filter(CorteJornadaFinanciera.jornada_id == jornada.id)
-        .scalar()
-        or 0
+    rend_por_j: dict[int, list] = {}
+    for r in rend_rows:
+        rend_por_j.setdefault(r.jornada_id, []).append(r)
+
+    cortes_rows = (
+        session.query(CorteJornadaFinanciera.jornada_id, func.count(CorteJornadaFinanciera.id))
+        .filter(CorteJornadaFinanciera.jornada_id.in_(ids))
+        .group_by(CorteJornadaFinanciera.jornada_id)
+        .all()
     )
-    return {
-        "jornada_id": jornada.id,
-        "fecha": jornada.fecha,
-        "estado": jornada.estado,
-        "fecha_hora_apertura": jornada.fecha_hora_apertura,
-        "usuario_apertura_nombre": jornada.usuario_apertura_nombre,
-        "ingresos": resumen["ingresos"],
-        "egresos": resumen["egresos"],
-        "neto": resumen["neto"],
-        "total_rendido": total_rendido,
-        "pendiente_rendicion": float(pendiente["monto_sugerido"]),
-        "cantidad_movimientos_pendientes": int(pendiente["cantidad_movimientos"]),
-        "cantidad_cortes": int(cantidad_cortes),
-        "cantidad_rendiciones": len(rendiciones_vigentes),
-        "cuentas_por_cobrar_dia": float(cuentas_cobrar["total_pendiente"]),
-        "cantidad_ventas_cobrar_dia": int(cuentas_cobrar["cantidad_ventas"]),
-    }
+    cortes_counts = {int(jid): int(cnt) for jid, cnt in cortes_rows}
+
+    fechas_unicas = list({j.fecha for j in jornadas})
+    metricas_cache = _metricas_ventas_para_fechas(session, fechas_unicas)
+
+    out: list[dict] = []
+    for j in jornadas:
+        mc = caja_por_j.get(j.id, [])
+        mb = banco_por_j.get(j.id, [])
+        movs_n = _normalizar_movimientos_caja(mc, tz) + _normalizar_movimientos_banco(mb, tz)
+        movs_n.sort(key=lambda item: item.fecha, reverse=True)
+        resumen = _totales_desde_movimientos_normalizados(movs_n)
+
+        rv = rend_por_j.get(j.id, [])
+        total_rendido = float(sum(item.monto_rendido or 0.0 for item in rv))
+
+        ultima = max(rv, key=lambda r: (r.fecha_hora_rendicion or datetime.min, r.id)) if rv else None
+        fecha_desde = ultima.fecha_hora_rendicion if ultima else None
+        mov_p = list(movs_n)
+        if fecha_desde:
+            mov_p = [m for m in mov_p if m.fecha > fecha_desde]
+        ing_p = float(sum(mov.monto for mov in mov_p if mov.incluye_en_totales and mov.tipo in {"INGRESO", "AJUSTE (+)"}))
+        eg_p = float(sum(mov.monto for mov in mov_p if mov.incluye_en_totales and mov.tipo in {"EGRESO", "GASTO", "AJUSTE (-)"}))
+        pendiente_monto = ing_p - eg_p
+
+        cuentas = metricas_cache.get(j.fecha) or {
+            "total_pendiente": 0.0,
+            "cantidad_ventas_con_saldo": 0,
+            "total_ventas_con_saldo": 0.0,
+            "total_cobrado_ventas_con_saldo": 0.0,
+            "venta_total_dia": 0.0,
+            "cantidad_ventas_dia": 0,
+        }
+        cant_cortes = int(cortes_counts.get(j.id, 0))
+
+        out.append(
+            {
+                "jornada_id": j.id,
+                "fecha": j.fecha,
+                "estado": j.estado,
+                "fecha_hora_apertura": j.fecha_hora_apertura,
+                "usuario_apertura_nombre": j.usuario_apertura_nombre,
+                "ingresos": resumen["ingresos"],
+                "egresos": resumen["egresos"],
+                "neto": resumen["neto"],
+                "total_rendido": total_rendido,
+                "pendiente_rendicion": float(pendiente_monto),
+                "cantidad_movimientos_pendientes": len(mov_p),
+                "cantidad_cortes": cant_cortes,
+                "cantidad_rendiciones": len(rv),
+                "cuentas_por_cobrar_dia": float(cuentas["total_pendiente"]),
+                "cantidad_ventas_cobrar_dia": int(cuentas["cantidad_ventas_con_saldo"]),
+            }
+        )
+    return out
+
+
+def construir_resumen_jornada_historica(session, jornada: JornadaFinanciera):
+    return construir_filas_historial_jornadas(session, [jornada])[0]
 
 
 def serializar_rendicion_historial(session, rendicion: RendicionJornadaFinanciera):
     data = serializar_rendicion(session, rendicion)
     jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == rendicion.jornada_id).first()
-    data["jornada_fecha"] = jornada.fecha if jornada else hoy_jornada()
+    data["jornada_fecha"] = jornada.fecha if jornada else hoy_jornada(session)
     return data
 
 

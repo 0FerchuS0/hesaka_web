@@ -2,6 +2,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.models import CanalVenta, ConfiguracionEmpresa
 
 
@@ -15,8 +16,12 @@ def obtener_o_crear_configuracion_empresa(session: Session) -> ConfiguracionEmpr
             telefono=None,
             email=None,
             logo_path=None,
+            business_timezone=(settings.BUSINESS_TIMEZONE or "America/Asuncion"),
         )
         session.add(config)
+        session.flush()
+    elif not (config.business_timezone or "").strip():
+        config.business_timezone = (settings.BUSINESS_TIMEZONE or "America/Asuncion")
         session.flush()
     return config
 

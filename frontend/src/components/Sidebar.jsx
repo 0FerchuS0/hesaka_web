@@ -88,6 +88,7 @@ const navGroups = [
             { to: '/marcas', icon: Tag, label: 'Marcas' },
             { to: '/productos', icon: Package, label: 'Productos' },
             { to: '/proveedores', icon: Building2, label: 'Proveedores' },
+            { to: '/catalogos/destinatarios-rendicion', icon: UserRoundPlus, label: 'Destinatarios rendicion' },
         ]
     },
     {
@@ -248,7 +249,7 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                         })
                         return { ...item, subItems }
                     }
-                    if (['/referidores', '/vendedores', '/canales-venta', '/categorias', '/atributos', '/marcas', '/productos', '/proveedores'].includes(item.to)) {
+                    if (['/referidores', '/vendedores', '/canales-venta', '/categorias', '/atributos', '/marcas', '/productos', '/proveedores', '/catalogos/destinatarios-rendicion'].includes(item.to)) {
                         return hasModuleAccess(user, 'catalogos') ? item : null
                     }
                     if (item.to === '/caja') {

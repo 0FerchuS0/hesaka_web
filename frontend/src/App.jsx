@@ -20,6 +20,7 @@ const AtributosPage = lazy(() => import('./pages/AtributosPage'))
 const MarcasPage = lazy(() => import('./pages/MarcasPage'))
 const ProductosPage = lazy(() => import('./pages/ProductosPage'))
 const ProveedoresPage = lazy(() => import('./pages/ProveedoresPage'))
+const DestinatariosRendicionPage = lazy(() => import('./pages/DestinatariosRendicionPage'))
 const PresupuestosPage = lazy(() => import('./pages/PresupuestosPage'))
 const VentasPage = lazy(() => import('./pages/VentasPage'))
 const ComprasPage = lazy(() => import('./pages/ComprasPage'))
@@ -133,6 +134,29 @@ function AppLayout() {
         window.localStorage.setItem('hesaka-sidebar-collapsed', String(sidebarCollapsed))
     }, [sidebarCollapsed])
 
+    useEffect(() => {
+        const onBeforeUnload = event => {
+            event.preventDefault()
+            // Requerido por navegadores modernos para mostrar alerta nativa.
+            event.returnValue = ''
+        }
+        const onKeyDown = event => {
+            const key = String(event.key || '').toLowerCase()
+            const isRefreshShortcut = key === 'f5' || ((event.ctrlKey || event.metaKey) && key === 'r')
+            if (!isRefreshShortcut) return
+            const ok = window.confirm('Hay una acción de actualización de página. Si continúas, puedes perder información no guardada. ¿Deseas actualizar?')
+            if (ok) return
+            event.preventDefault()
+            event.stopPropagation()
+        }
+        window.addEventListener('beforeunload', onBeforeUnload)
+        window.addEventListener('keydown', onKeyDown, { capture: true })
+        return () => {
+            window.removeEventListener('beforeunload', onBeforeUnload)
+            window.removeEventListener('keydown', onKeyDown, { capture: true })
+        }
+    }, [])
+
     const role = normalizeRole(user?.rol)
     const configIncomplete = estadoConfig && !estadoConfig.configuracion_completa
     const inConfigRoute = location.pathname.startsWith('/configuracion-general')
@@ -192,6 +216,7 @@ function AppLayout() {
                         <Route path="/marcas" element={<RoleRoute allowedRoles="catalogos"><MarcasPage /></RoleRoute>} />
                         <Route path="/productos" element={<RoleRoute allowedRoles="catalogos"><ProductosPage /></RoleRoute>} />
                         <Route path="/proveedores" element={<RoleRoute allowedRoles="catalogos"><ProveedoresPage /></RoleRoute>} />
+                        <Route path="/catalogos/destinatarios-rendicion" element={<RoleRoute allowedRoles="catalogos"><DestinatariosRendicionPage /></RoleRoute>} />
                         <Route path="/presupuestos" element={<RoleRoute allowedRoles="presupuestos"><PresupuestosPage /></RoleRoute>} />
                         <Route path="/ventas" element={<RoleRoute allowedRoles="ventas"><VentasPage /></RoleRoute>} />
                         <Route path="/ventas/ajustes" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><ReporteAjustesVentasPage /></RouteErrorBoundary></RoleRoute>} />

@@ -2,6 +2,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../context/AuthContext'
 
+const JORNADA_LIVE_QUERY_KEYS = [
+    ['jornada-financiera-actual'],
+    ['jornada-financiera-cortes'],
+    ['jornada-pendiente-rendicion'],
+    ['jornada-rendiciones'],
+    ['jornada-alerta-post-corte-anterior'],
+    ['jornada-historial-jornadas'],
+    ['jornada-historial-rendiciones'],
+]
+
+export function invalidateJornadaLiveData(queryClient) {
+    JORNADA_LIVE_QUERY_KEYS.forEach(queryKey => {
+        queryClient.invalidateQueries({ queryKey })
+    })
+}
+
 function buildHistorialRendicionesQuery(params = {}) {
     const searchParams = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {
@@ -17,6 +33,8 @@ export function useFinancialJornadaStatus() {
         queryFn: () => api.get('/caja/jornada/estado-actual').then(response => response.data),
         retry: false,
         staleTime: 30000,
+        // Siempre revalidar al entrar al modulo para reflejar movimientos hechos en otras pantallas
+        refetchOnMount: 'always',
     })
 }
 
@@ -43,6 +61,7 @@ export function useCortesJornadaActual() {
         queryFn: () => api.get('/caja/jornada/cortes').then(response => response.data),
         retry: false,
         staleTime: 30000,
+        refetchOnMount: 'always',
     })
 }
 
@@ -66,6 +85,7 @@ export function useMovimientosPosterioresUltimoCorte() {
         queryFn: () => api.get('/caja/jornada/alerta-post-corte-anterior').then(response => response.data),
         retry: false,
         staleTime: 30000,
+        refetchOnMount: 'always',
     })
 }
 
@@ -75,6 +95,7 @@ export function usePendienteRendicion() {
         queryFn: () => api.get('/caja/jornada/pendiente-rendir').then(response => response.data),
         retry: false,
         staleTime: 30000,
+        refetchOnMount: 'always',
     })
 }
 
@@ -84,6 +105,7 @@ export function useRendicionesJornadaActual() {
         queryFn: () => api.get('/caja/jornada/rendiciones').then(response => response.data),
         retry: false,
         staleTime: 30000,
+        refetchOnMount: 'always',
     })
 }
 
@@ -142,12 +164,13 @@ export function useEditarRendicionJornada() {
     })
 }
 
-export function useHistorialJornadas(limit = 15) {
+export function useHistorialJornadas(limit = 15, options = {}) {
     return useQuery({
         queryKey: ['jornada-historial-jornadas', limit],
         queryFn: () => api.get(`/caja/jornada/historial/jornadas?limit=${limit}`).then(response => response.data),
+        enabled: options.enabled ?? true,
         retry: false,
-        staleTime: 30000,
+        staleTime: 60000,
         refetchOnMount: 'always',
     })
 }
@@ -159,7 +182,8 @@ export function useHistorialRendiciones(params = {}, options = {}) {
         queryFn: () => api.get(`/caja/jornada/historial/rendiciones?${query}`).then(response => response.data),
         enabled: options.enabled ?? true,
         retry: false,
-        staleTime: 15000,
+        staleTime: 60000,
+        refetchOnMount: 'always',
     })
 }
 
@@ -173,10 +197,11 @@ export function useRendicionDetalle(rendicionId) {
     })
 }
 
-export function useOpcionesFiltrosRendiciones() {
+export function useOpcionesFiltrosRendiciones(options = {}) {
     return useQuery({
         queryKey: ['jornada-rendiciones-filtros-opciones'],
         queryFn: () => api.get('/caja/jornada/historial/filtros-opciones').then(response => response.data),
+        enabled: options.enabled ?? true,
         retry: false,
         staleTime: 60000,
     })
@@ -209,6 +234,19 @@ export function useActualizarDestinatarioRendicion() {
 
     return useMutation({
         mutationFn: ({ id, payload }) => api.patch(`/caja/jornada/destinatarios-rendicion/${id}`, payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jornada-destinatarios-rendicion'] })
+            queryClient.invalidateQueries({ queryKey: ['jornada-rendiciones-filtros-opciones'] })
+            queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones'] })
+        },
+    })
+}
+
+export function useEliminarDestinatarioRendicion() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: id => api.delete(`/caja/jornada/destinatarios-rendicion/${id}`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['jornada-destinatarios-rendicion'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-rendiciones-filtros-opciones'] })

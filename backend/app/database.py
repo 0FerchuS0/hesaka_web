@@ -135,6 +135,12 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
 
+    if "clientes" in table_names:
+        cliente_columns = {column["name"] for column in inspector.get_columns("clientes")}
+        with engine.begin() as connection:
+            if "fecha_nacimiento" not in cliente_columns:
+                connection.execute(text("ALTER TABLE clientes ADD COLUMN fecha_nacimiento DATE"))
+
     if "presupuestos" in table_names:
         presupuesto_columns = {column["name"] for column in inspector.get_columns("presupuestos")}
         with engine.begin() as connection:
@@ -367,6 +373,8 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         with engine.begin() as connection:
             if "paciente_nombre_libre" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN paciente_nombre_libre VARCHAR(200)"))
+            if "paciente_telefono_libre" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN paciente_telefono_libre VARCHAR(50)"))
             if "es_control" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN es_control BOOLEAN DEFAULT FALSE"))
             if "recordado_15" not in turno_columns:

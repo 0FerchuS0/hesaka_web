@@ -154,6 +154,7 @@ class Cliente(TimestampMixin, Base):
     telefono = Column(String(20))
     email = Column(String(100))
     direccion = Column(Text)
+    fecha_nacimiento = Column(Date)
     fecha_registro = Column(DateTime, default=datetime.now)
     notas = Column(Text)
     referidor_id = Column(Integer, ForeignKey('referidores.id'), nullable=True)

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 
 const JORNADA_LIVE_QUERY_KEYS = [
+    ['jornada-panel-inicial'],
     ['jornada-financiera-actual'],
     ['jornada-financiera-cortes'],
     ['jornada-pendiente-rendicion'],
@@ -38,12 +39,25 @@ export function useFinancialJornadaStatus() {
     })
 }
 
+/** Pantalla Jornada: estado + cortes con una sola carga de movimientos en el servidor. */
+export function useJornadaPanelInicial(options = {}) {
+    return useQuery({
+        queryKey: ['jornada-panel-inicial'],
+        queryFn: () => api.get('/caja/jornada/panel-inicial').then(response => response.data),
+        enabled: options.enabled ?? true,
+        retry: false,
+        staleTime: 30000,
+        refetchOnMount: 'always',
+    })
+}
+
 export function useAbrirJornada() {
     const queryClient = useQueryClient()
 
     return useMutation({
         mutationFn: payload => api.post('/caja/jornada/abrir', payload),
         onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jornada-panel-inicial'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
             queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
@@ -71,6 +85,7 @@ export function useCrearCorteJornada() {
     return useMutation({
         mutationFn: () => api.post('/caja/jornada/cortes'),
         onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jornada-panel-inicial'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-financiera-cortes'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-jornadas'] })
@@ -115,6 +130,7 @@ export function useCrearRendicionJornada() {
     return useMutation({
         mutationFn: payload => api.post('/caja/jornada/rendiciones', payload),
         onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jornada-panel-inicial'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-rendiciones'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-pendiente-rendicion'] })
@@ -130,6 +146,7 @@ export function useCrearRendicionJornadaHistorial(jornadaId) {
     return useMutation({
         mutationFn: payload => api.post(`/caja/jornada/${jornadaId}/rendiciones`, payload),
         onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jornada-panel-inicial'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-rendiciones'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-pendiente-rendicion'] })
@@ -155,6 +172,7 @@ export function useEditarRendicionJornada() {
     return useMutation({
         mutationFn: ({ rendicionId, payload }) => api.patch(`/caja/jornada/rendiciones/${rendicionId}`, payload),
         onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jornada-panel-inicial'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-rendiciones'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-pendiente-rendicion'] })
@@ -164,10 +182,11 @@ export function useEditarRendicionJornada() {
     })
 }
 
-export function useHistorialJornadas(limit = 15, options = {}) {
+export function useHistorialJornadas(limit = 15, params = {}, options = {}) {
+    const query = buildHistorialRendicionesQuery({ limit, ...params })
     return useQuery({
-        queryKey: ['jornada-historial-jornadas', limit],
-        queryFn: () => api.get(`/caja/jornada/historial/jornadas?limit=${limit}`).then(response => response.data),
+        queryKey: ['jornada-historial-jornadas', query],
+        queryFn: () => api.get(`/caja/jornada/historial/jornadas?${query}`).then(response => response.data),
         enabled: options.enabled ?? true,
         retry: false,
         staleTime: 60000,

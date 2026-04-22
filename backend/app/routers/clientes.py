@@ -44,6 +44,7 @@ from app.schemas.schemas import (
     CanalVentaListResponseOut,
     CanalVentaOut,
     ClienteCreate,
+    ClienteCumpleanosOut,
     ClienteListItemOut,
     ClienteListResponseOut,
     ClienteOut,
@@ -178,6 +179,15 @@ def _construir_query_clientes(session, buscar: Optional[str], referidor_id: Opti
             | Cliente.telefono.ilike(term)
         )
     return query
+
+
+def _calcular_edad(fecha_nacimiento: date | None, fecha_referencia: date | None = None) -> int | None:
+    if not fecha_nacimiento:
+        return None
+    referencia = fecha_referencia or date.today()
+    return referencia.year - fecha_nacimiento.year - (
+        (referencia.month, referencia.day) < (fecha_nacimiento.month, fecha_nacimiento.day)
+    )
 
 
 def _construir_query_proveedores(session, buscar: Optional[str]):
@@ -832,6 +842,7 @@ def listar_clientes_optimizado(
                 telefono=cliente.telefono,
                 email=cliente.email,
                 direccion=cliente.direccion,
+                fecha_nacimiento=cliente.fecha_nacimiento,
                 fecha_registro=cliente.fecha_registro,
                 notas=cliente.notas,
                 referidor_id=cliente.referidor_id,
@@ -901,6 +912,119 @@ def exportar_clientes_excel(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": 'inline; filename="reporte_clientes.xlsx"'},
         )
+    finally:
+        session.close()
+
+
+@router.get("/cumpleanos", response_model=List[ClienteCumpleanosOut])
+def listar_cumpleanos_clientes(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    fecha: date | None = Query(default=None),
+):
+    fecha_objetivo = fecha or date.today()
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        resultados: list[ClienteCumpleanosOut] = []
+        cliente_ids_cubiertos: set[int] = set()
+
+        pacientes = (
+            session.query(ClinicaPaciente)
+            .filter(ClinicaPaciente.fecha_nacimiento.isnot(None))
+            .all()
+        )
+        cumpleaneros_pacientes = [
+            paciente for paciente in pacientes
+            if paciente.fecha_nacimiento
+            and paciente.fecha_nacimiento.month == fecha_objetivo.month
+            and paciente.fecha_nacimiento.day == fecha_objetivo.day
+        ]
+        for paciente in cumpleaneros_pacientes:
+            resultados.append(ClienteCumpleanosOut(
+                id=paciente.id,
+                nombre=paciente.nombre_completo,
+                ci=paciente.ci_pasaporte,
+                telefono=paciente.telefono or (paciente.cliente_rel.telefono if paciente.cliente_rel else None),
+                email=paciente.cliente_rel.email if paciente.cliente_rel else None,
+                fecha_nacimiento=paciente.fecha_nacimiento,
+                edad=_calcular_edad(paciente.fecha_nacimiento, fecha_objetivo),
+                referidor_nombre=paciente.referidor_rel.nombre if paciente.referidor_rel else None,
+            ))
+            if paciente.cliente_id:
+                cliente_ids_cubiertos.add(paciente.cliente_id)
+
+        clientes = (
+            session.query(Cliente)
+            .filter(Cliente.fecha_nacimiento.isnot(None))
+            .all()
+        )
+        cumpleaneros_clientes = [
+            cliente for cliente in clientes
+            if cliente.id not in cliente_ids_cubiertos
+            and cliente.fecha_nacimiento
+            and cliente.fecha_nacimiento.month == fecha_objetivo.month
+            and cliente.fecha_nacimiento.day == fecha_objetivo.day
+        ]
+
+        for cliente in cumpleaneros_clientes:
+            # Se usa id negativo para evitar colision de keys con ids de pacientes en frontend.
+            resultados.append(ClienteCumpleanosOut(
+                id=-cliente.id,
+                nombre=cliente.nombre,
+                ci=cliente.ci,
+                telefono=cliente.telefono,
+                email=cliente.email,
+                fecha_nacimiento=cliente.fecha_nacimiento,
+                edad=_calcular_edad(cliente.fecha_nacimiento, fecha_objetivo),
+                referidor_nombre=cliente.referidor_rel.nombre if cliente.referidor_rel else None,
+            ))
+
+        resultados.sort(key=lambda item: (item.nombre or "").lower())
+        return resultados
+    finally:
+        session.close()
+
+
+@router.post("/cumpleanos/sincronizar-desde-pacientes")
+def sincronizar_cumpleanos_clientes_desde_pacientes(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        pacientes = (
+            session.query(ClinicaPaciente)
+            .filter(
+                ClinicaPaciente.cliente_id.isnot(None),
+                ClinicaPaciente.fecha_nacimiento.isnot(None),
+            )
+            .all()
+        )
+
+        actualizados = 0
+        sin_cambios = 0
+        cliente_no_encontrado = 0
+
+        for paciente in pacientes:
+            cliente = session.query(Cliente).filter(Cliente.id == paciente.cliente_id).first()
+            if not cliente:
+                cliente_no_encontrado += 1
+                continue
+            if cliente.fecha_nacimiento:
+                sin_cambios += 1
+                continue
+            cliente.fecha_nacimiento = paciente.fecha_nacimiento
+            actualizados += 1
+
+        session.commit()
+        return {
+            "ok": True,
+            "mensaje": "Sincronizacion de cumpleanos completada.",
+            "pacientes_revisados": len(pacientes),
+            "clientes_actualizados": actualizados,
+            "clientes_sin_cambios": sin_cambios,
+            "cliente_no_encontrado": cliente_no_encontrado,
+        }
     finally:
         session.close()
 

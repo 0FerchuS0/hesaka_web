@@ -9,19 +9,17 @@ import { api, useAuth } from '../context/AuthContext'
 import { hasActionAccess } from '../utils/roles'
 import {
     useActualizarDestinatarioRendicion,
-    useCortesJornadaActual,
     useCrearCorteJornada,
     useCrearDestinatarioRendicion,
     useEliminarDestinatarioRendicion,
     useCrearRendicionJornada,
     useCrearRendicionJornadaHistorial,
     useDestinatariosRendicionCatalog,
-    useFinancialJornadaStatus,
+    useJornadaPanelInicial,
     useHistorialJornadas,
     useHistorialRendiciones,
     useMovimientosPosterioresUltimoCorte,
     useOpcionesFiltrosRendiciones,
-    usePendienteRendicion,
     usePendienteRendicionHistorial,
     useRendicionDetalle,
     useRendicionesJornadaActual,
@@ -148,7 +146,8 @@ const HISTORIAL_ROW_MENU_WIDTH = 220
 /** Por encima del layout/sidebar; por debajo del modal (200) para no tapar modales abiertos */
 const TABLE_ACTION_MENU_Z_BACKDROP = 140
 const TABLE_ACTION_MENU_Z_MENU = 150
-const ENABLE_JORNADA_BENCH = false
+/** Panel fijo "Tiempos carga" + métricas por GET; en prod usar ?jornadaBench=1 o localStorage hesaka_jornada_bench=1 */
+const ENABLE_JORNADA_BENCH = true
 
 function getDropdownPortalTarget() {
     if (typeof document === 'undefined') return null
@@ -448,6 +447,175 @@ function DesgloseMedios({ items = [], title = 'Desglose por medio', emptyText = 
     )
 }
 
+function DetalleVentasJornada({ detalle }) {
+    const items = detalle?.items || []
+    if (!items.length) {
+        return (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                Todavia no hay ventas registradas en esta jornada.
+            </div>
+        )
+    }
+
+    return (
+        <div className="table-wrapper" style={{ overflow: 'auto' }}>
+            <table className="table">
+                <thead>
+                    <tr>
+                        <th style={{ whiteSpace: 'nowrap' }}>Fecha/Hora</th>
+                        <th>Venta</th>
+                        <th>Cliente</th>
+                        <th style={{ textAlign: 'right' }}>Total</th>
+                        <th style={{ textAlign: 'right' }}>Efectivo</th>
+                        <th style={{ textAlign: 'right' }}>Transferencia</th>
+                        <th style={{ textAlign: 'right' }}>Tarjeta</th>
+                        <th style={{ textAlign: 'right' }}>Otros</th>
+                        <th style={{ textAlign: 'right' }}>Pendiente</th>
+                        <th style={{ textAlign: 'center' }}>Pagos</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items.map(venta => (
+                        <tr key={venta.venta_id}>
+                            <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>{fmtDateTime(venta.fecha)}</td>
+                            <td style={{ fontWeight: 700 }}>{venta.venta_codigo || `#${venta.venta_id}`}</td>
+                            <td>{venta.cliente_nombre || '-'}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtGs(venta.total)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--success)', fontWeight: 700 }}>{fmtGs(venta.efectivo)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--primary-light)', fontWeight: 700 }}>{fmtGs(venta.transferencia)}</td>
+                            <td style={{ textAlign: 'right', color: '#60a5fa', fontWeight: 700 }}>{fmtGs(venta.tarjeta)}</td>
+                            <td style={{ textAlign: 'right' }}>{fmtGs(venta.otros)}</td>
+                            <td style={{ textAlign: 'right', color: (venta.pendiente || 0) > 0 ? 'var(--warning)' : 'var(--success)', fontWeight: 700 }}>
+                                {fmtGs(venta.pendiente)}
+                            </td>
+                            <td style={{ textAlign: 'center' }}>{venta.cantidad_pagos || 0}</td>
+                            <td>{venta.estado || '-'}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+function DetalleMovimientosJornada({ movimientos = [], filtro = 'TODOS' }) {
+    const movimientosFiltrados = movimientos.filter(movimiento => {
+        if (filtro === 'TODOS') return true
+        if (filtro === 'EFECTIVO') return movimiento.medio === 'EFECTIVO'
+        if (filtro === 'TARJETA') return movimiento.medio === 'TARJETA'
+        if (filtro === 'TRANSFERENCIA') return ['TRANSFERENCIA', 'BANCO', 'DEPOSITO'].includes(movimiento.medio)
+        if (filtro === 'EGRESOS') return ['EGRESO', 'GASTO', 'AJUSTE (-)'].includes(movimiento.tipo)
+        if (filtro === 'OTROS') return !['EFECTIVO', 'TARJETA', 'TRANSFERENCIA', 'BANCO', 'DEPOSITO'].includes(movimiento.medio || '')
+        return true
+    })
+
+    if (!movimientos.length) {
+        return (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                Todavia no hay movimientos individuales en esta jornada.
+            </div>
+        )
+    }
+    if (!movimientosFiltrados.length) {
+        return (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                No hay movimientos para este filtro.
+            </div>
+        )
+    }
+
+    return (
+        <div className="table-wrapper" style={{ overflow: 'auto', maxHeight: 420 }}>
+            <table className="table">
+                <thead>
+                    <tr>
+                        <th style={{ whiteSpace: 'nowrap' }}>Fecha/Hora</th>
+                        <th>Tipo</th>
+                        <th>Medio</th>
+                        <th>Venta</th>
+                        <th>Concepto</th>
+                        <th>Origen</th>
+                        <th style={{ textAlign: 'right' }}>Monto</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {movimientosFiltrados.map((movimiento, index) => {
+                        const montoColor = movimiento.tipo === 'EGRESO' || movimiento.tipo === 'GASTO' || movimiento.tipo === 'AJUSTE (-)'
+                            ? 'var(--danger)'
+                            : 'var(--success)'
+                        return (
+                            <tr key={`${movimiento.origen}-${movimiento.movimiento_id || index}`}>
+                                <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>{fmtDateTime(movimiento.fecha)}</td>
+                                <td>{movimiento.tipo}</td>
+                                <td>{movimiento.medio || '-'}</td>
+                                <td>
+                                    {movimiento.venta_codigo ? (
+                                        <div style={{ display: 'grid', gap: 3 }}>
+                                            <strong>{movimiento.venta_codigo}</strong>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>{movimiento.cliente_nombre || '-'}</span>
+                                        </div>
+                                    ) : (
+                                        '-'
+                                    )}
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                    <div style={{ display: 'grid', gap: 4 }}>
+                                        <span>{movimiento.concepto || '-'}</span>
+                                        {!movimiento.incluye_en_totales ? (
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.74rem' }}>No suma al neto</span>
+                                        ) : null}
+                                    </div>
+                                </td>
+                                <td>{movimiento.banco_nombre || movimiento.origen}</td>
+                                <td style={{ textAlign: 'right', color: montoColor, fontWeight: 700 }}>{fmtGs(movimiento.monto)}</td>
+                            </tr>
+                        )
+                    })}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+function DetallePendientesVentasJornada({ ventas = [] }) {
+    const pendientes = ventas.filter(venta => Number(venta.pendiente || 0) > 0.009)
+    if (!pendientes.length) {
+        return (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                No hay ventas pendientes en esta jornada.
+            </div>
+        )
+    }
+
+    return (
+        <div className="table-wrapper" style={{ overflow: 'auto', maxHeight: 420 }}>
+            <table className="table">
+                <thead>
+                    <tr>
+                        <th>Venta</th>
+                        <th>Cliente</th>
+                        <th style={{ textAlign: 'right' }}>Total</th>
+                        <th style={{ textAlign: 'right' }}>Cobrado</th>
+                        <th style={{ textAlign: 'right' }}>Pendiente</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {pendientes.map(venta => (
+                        <tr key={`pendiente-${venta.venta_id}`}>
+                            <td style={{ fontWeight: 700 }}>{venta.venta_codigo || `#${venta.venta_id}`}</td>
+                            <td>{venta.cliente_nombre || '-'}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtGs(venta.total)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--success)', fontWeight: 700 }}>{fmtGs(venta.cobrado)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--warning)', fontWeight: 700 }}>{fmtGs(venta.pendiente)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
 function ExportActions({ kind, id }) {
     const [busy, setBusy] = useState('')
 
@@ -560,7 +728,15 @@ function MovimientosPosterioresModal({ onClose }) {
     )
 }
 
-function RendirModalInner({ pendiente, crearRendicion, onClose, titulo = 'Registrar rendición' }) {
+function RendirModalInner({
+    pendiente,
+    crearRendicion,
+    onClose,
+    titulo = 'Registrar rendición',
+    movimientosFallback = [],
+    ventasPendientesFallback = [],
+    fechaDesdeFallback = null,
+}) {
     const montoInicial = String(pendiente?.monto_sugerido ?? 0)
     const { data: destinatariosRaw = [], isLoading: loadingDest } = useDestinatariosRendicionCatalog()
     const destinatariosActivos = useMemo(
@@ -570,11 +746,42 @@ function RendirModalInner({ pendiente, crearRendicion, onClose, titulo = 'Regist
     const [destinatarioId, setDestinatarioId] = useState('')
     const [montoRendido, setMontoRendido] = useState(montoInicial)
     const [observacion, setObservacion] = useState('')
+    const [detalleFiltro, setDetalleFiltro] = useState('TODOS')
 
     // Sincroniza el monto cuando el pendiente llega de forma async
     const montoSugerido = Number(pendiente?.monto_sugerido || 0)
     const montoActual = Number(montoRendido || 0)
     const requiereObservacion = Math.abs(montoActual - montoSugerido) > 0.009
+    const movimientosApi = pendiente?.movimientos || []
+    const fechaDesde = pendiente?.fecha_desde || fechaDesdeFallback
+    const movimientosFallbackPendientes = useMemo(() => {
+        if (movimientosApi.length) return []
+        return (movimientosFallback || []).filter(movimiento => {
+            if (!movimiento?.incluye_en_totales) return false
+            if (!fechaDesde) return true
+            return new Date(movimiento.fecha).getTime() > new Date(fechaDesde).getTime()
+        })
+    }, [fechaDesde, movimientosApi.length, movimientosFallback])
+    const movimientosPendientes = movimientosApi.length ? movimientosApi : movimientosFallbackPendientes
+    const ventasPendientes = (pendiente?.ventas_pendientes || []).length
+        ? pendiente.ventas_pendientes
+        : ventasPendientesFallback
+    const detalleFiltros = useMemo(() => {
+        const base = [
+            { key: 'TODOS', label: 'Todos', count: movimientosPendientes.length },
+            { key: 'EFECTIVO', label: 'Caja', count: 0 },
+            { key: 'TRANSFERENCIA', label: 'Transferencia', count: 0 },
+            { key: 'TARJETA', label: 'Tarjeta', count: 0 },
+            { key: 'EGRESOS', label: 'Egresos', count: 0 },
+        ]
+        movimientosPendientes.forEach(movimiento => {
+            if (movimiento.medio === 'EFECTIVO') base[1].count += 1
+            if (['TRANSFERENCIA', 'BANCO', 'DEPOSITO'].includes(movimiento.medio)) base[2].count += 1
+            if (movimiento.medio === 'TARJETA') base[3].count += 1
+            if (['EGRESO', 'GASTO', 'AJUSTE (-)'].includes(movimiento.tipo)) base[4].count += 1
+        })
+        return base
+    }, [movimientosPendientes])
 
     const handleSubmit = event => {
         event.preventDefault()
@@ -593,7 +800,7 @@ function RendirModalInner({ pendiente, crearRendicion, onClose, titulo = 'Regist
     }
 
     return (
-        <Modal title={titulo} onClose={onClose} maxWidth="620px">
+        <Modal title={titulo} onClose={onClose} maxWidth="980px">
             <form onSubmit={handleSubmit}>
                 <div className="card mb-16" style={{ padding: '14px 16px', marginBottom: 16 }}>
                     <div style={{ display: 'grid', gap: 8, fontSize: '0.86rem' }}>
@@ -609,6 +816,40 @@ function RendirModalInner({ pendiente, crearRendicion, onClose, titulo = 'Regist
                             emptyText="Todavía no hay movimientos pendientes para desglosar."
                         />
                     </div>
+                </div>
+
+                <div className="card mb-16" style={{ padding: '14px 16px', marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                        <div>
+                            <div style={{ fontWeight: 700 }}>Detalle del monto a rendir</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: 3 }}>
+                                Movimientos que explican el monto sugerido actual.
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {detalleFiltros.map(filtro => (
+                                <button
+                                    key={filtro.key}
+                                    type="button"
+                                    className={`btn btn-sm ${detalleFiltro === filtro.key ? 'btn-primary' : 'btn-secondary'}`}
+                                    onClick={() => setDetalleFiltro(filtro.key)}
+                                >
+                                    {filtro.label} ({filtro.count})
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <DetalleMovimientosJornada movimientos={movimientosPendientes} filtro={detalleFiltro} />
+                </div>
+
+                <div className="card mb-16" style={{ padding: '14px 16px', marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 12 }}>
+                        <div style={{ fontWeight: 700 }}>Pendiente de cobro</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                            {ventasPendientes.length} venta{ventasPendientes.length === 1 ? '' : 's'}
+                        </div>
+                    </div>
+                    <DetallePendientesVentasJornada ventas={ventasPendientes} />
                 </div>
 
                 <div className="form-group">
@@ -671,9 +912,18 @@ function RendirModalInner({ pendiente, crearRendicion, onClose, titulo = 'Regist
     )
 }
 
-function RendirModal({ pendiente, onClose }) {
+function RendirModal({ pendiente, onClose, movimientos = [], ventasPendientes = [], fechaDesde = null }) {
     const crearRendicion = useCrearRendicionJornada()
-    return <RendirModalInner pendiente={pendiente} crearRendicion={crearRendicion} onClose={onClose} />
+    return (
+        <RendirModalInner
+            pendiente={pendiente}
+            crearRendicion={crearRendicion}
+            onClose={onClose}
+            movimientosFallback={movimientos}
+            ventasPendientesFallback={ventasPendientes}
+            fechaDesdeFallback={fechaDesde}
+        />
+    )
 }
 
 function RendirModalHistorial({ jornadaId, jornadaFecha, onClose }) {
@@ -1046,9 +1296,11 @@ export default function JornadaRendicionesPage() {
     const [fechaHastaRendicion, setFechaHastaRendicion] = useState(toDateInputValue(new Date()))
     const [paginaRendiciones, setPaginaRendiciones] = useState(1)
     const [pageSizeRendiciones, setPageSizeRendiciones] = useState(25)
-    const [historialTab, setHistorialTab] = useState('jornadas')
+    const [historialTab, setHistorialTab] = useState('rendiciones')
+    const [fechaJornadaHistorial, setFechaJornadaHistorial] = useState('')
     const [jornadaHistorialSeleccionada, setJornadaHistorialSeleccionada] = useState(null)
     const [jornadaVerRendiciones, setJornadaVerRendiciones] = useState(null)
+    const [filtroMovimientosJornada, setFiltroMovimientosJornada] = useState('TODOS')
 
     const jornadaLoadT0 = useRef(null)
     const [jornadaLoadMs, setJornadaLoadMs] = useState({})
@@ -1070,26 +1322,19 @@ export default function JornadaRendicionesPage() {
         }
     }, [])
 
-    const estadoActualQuery = useFinancialJornadaStatus()
-    const cortesQuery = useCortesJornadaActual()
+    const panelQuery = useJornadaPanelInicial()
     const rendicionesQuery = useRendicionesJornadaActual()
-    const pendienteQuery = usePendienteRendicion()
-    const historialJornadasQuery = useHistorialJornadas(20, { enabled: historialTab === 'jornadas' })
+    const historialJornadasParams = useMemo(() => ({
+        fecha: fechaJornadaHistorial || undefined,
+    }), [fechaJornadaHistorial])
+    const historialJornadasQuery = useHistorialJornadas(60, historialJornadasParams, { enabled: historialTab === 'jornadas' })
 
     useMarkJornadaBenchRow(
         showJornadaLoadBench,
         jornadaLoadT0,
-        'GET /caja/jornada/estado-actual',
-        estadoActualQuery.isSuccess,
-        estadoActualQuery.dataUpdatedAt,
-        setJornadaLoadMs,
-    )
-    useMarkJornadaBenchRow(
-        showJornadaLoadBench,
-        jornadaLoadT0,
-        'GET /caja/jornada/cortes',
-        cortesQuery.isSuccess,
-        cortesQuery.dataUpdatedAt,
+        'GET /caja/jornada/panel-inicial',
+        panelQuery.isSuccess,
+        panelQuery.dataUpdatedAt,
         setJornadaLoadMs,
     )
     useMarkJornadaBenchRow(
@@ -1103,24 +1348,19 @@ export default function JornadaRendicionesPage() {
     useMarkJornadaBenchRow(
         showJornadaLoadBench,
         jornadaLoadT0,
-        'GET /caja/jornada/pendiente-rendir',
-        pendienteQuery.isSuccess,
-        pendienteQuery.dataUpdatedAt,
-        setJornadaLoadMs,
-    )
-    useMarkJornadaBenchRow(
-        showJornadaLoadBench,
-        jornadaLoadT0,
         'GET /caja/jornada/historial/jornadas?limit=20',
         historialJornadasQuery.isSuccess,
         historialJornadasQuery.dataUpdatedAt,
         setJornadaLoadMs,
     )
 
-    const { data, isLoading, isError, error } = estadoActualQuery
-    const { data: cortes = [], isLoading: isLoadingCortes } = cortesQuery
+    const { data: panel, isLoading: isLoadingPanel, isError, error } = panelQuery
+    const data = panel?.estado
+    const cortes = panel?.cortes ?? []
     const { data: rendiciones = [], isLoading: isLoadingRendiciones } = rendicionesQuery
-    const { data: pendiente } = pendienteQuery
+    const pendiente = data?.pendiente_rendicion
+    const isLoading = isLoadingPanel
+    const isLoadingCortes = isLoadingPanel
     const {
         data: historialJornadas = [],
         isLoading: isLoadingHistorialJornadas,
@@ -1211,6 +1451,54 @@ export default function JornadaRendicionesPage() {
         total_ventas: 0,
         total_cobrado: 0,
     }
+    const ventasDetalle = data?.ventas_detalle || {
+        items: [],
+        cantidad_ventas: 0,
+        total_ventas: 0,
+        total_efectivo: 0,
+        total_transferencia: 0,
+        total_tarjeta: 0,
+        total_otros: 0,
+        total_cobrado: 0,
+        total_pendiente: 0,
+    }
+    const movimientosDetalle = data?.movimientos_detalle || []
+    const ventasPendientesJornada = useMemo(() => {
+        const porId = new Map()
+        ;(ventasDetalle.items || [])
+            .filter(venta => Number(venta.pendiente || 0) > 0.009)
+            .forEach(venta => porId.set(Number(venta.venta_id), venta))
+        ;(pendiente?.ventas_pendientes || [])
+            .filter(venta => Number(venta.pendiente || 0) > 0.009)
+            .forEach(venta => porId.set(Number(venta.venta_id), venta))
+        return Array.from(porId.values())
+    }, [pendiente?.ventas_pendientes, ventasDetalle.items])
+    const movimientosPorFiltro = useMemo(() => {
+        const base = {
+            TODOS: movimientosDetalle.length,
+            EFECTIVO: 0,
+            TARJETA: 0,
+            TRANSFERENCIA: 0,
+            EGRESOS: 0,
+            OTROS: 0,
+            PENDIENTE: ventasPendientesJornada.length,
+        }
+        movimientosDetalle.forEach(movimiento => {
+            if (movimiento.medio === 'EFECTIVO') {
+                base.EFECTIVO += 1
+            } else if (movimiento.medio === 'TARJETA') {
+                base.TARJETA += 1
+            } else if (['TRANSFERENCIA', 'BANCO', 'DEPOSITO'].includes(movimiento.medio)) {
+                base.TRANSFERENCIA += 1
+            } else {
+                base.OTROS += 1
+            }
+            if (['EGRESO', 'GASTO', 'AJUSTE (-)'].includes(movimiento.tipo)) {
+                base.EGRESOS += 1
+            }
+        })
+        return base
+    }, [movimientosDetalle, ventasPendientesJornada.length])
     const historialRendicionesFiltradas = historialRendiciones
     const rendicionesDeJornadaSeleccionada = rendicionesJornadaData?.items || []
 
@@ -1339,9 +1627,67 @@ export default function JornadaRendicionesPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 16 }}>
                 <EstadoCard label="Estado" value={data?.estado || 'SIN_ABRIR'} color={data?.abierta ? 'var(--success)' : 'var(--warning)'} />
                 <EstadoCard label="Neto del día" value={fmtGs(resumen.neto)} color={resumen.neto >= 0 ? 'var(--primary-light)' : 'var(--danger)'} />
+                <EstadoCard label="Ventas del dia" value={ventasDetalle.cantidad_ventas || 0} color="var(--primary-light)" />
+                <EstadoCard label="Movimientos" value={resumen.movimientos_total || 0} color="var(--text-primary)" />
                 <EstadoCard label="Total rendido" value={fmtGs(totalRendido)} color="var(--info)" />
                 <EstadoCard label="Pendiente de rendir" value={fmtGs(pendiente?.monto_sugerido || 0)} color="var(--warning)" />
                 <EstadoCard label="A cobrar hoy" value={fmtGs(cuentasPorCobrar.total_pendiente || 0)} color={(cuentasPorCobrar.total_pendiente || 0) > 0 ? '#f59e0b' : 'var(--success)'} />
+            </div>
+
+            <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <ClipboardList size={18} style={{ color: 'var(--primary-light)' }} />
+                        <div style={{ fontWeight: 700 }}>Ventas de la jornada por medio de pago</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        <span>Ventas: <strong>{ventasDetalle.cantidad_ventas || 0}</strong></span>
+                        <span>Total: <strong>{fmtGs(ventasDetalle.total_ventas || 0)}</strong></span>
+                        <span>Cobrado: <strong style={{ color: 'var(--success)' }}>{fmtGs(ventasDetalle.total_cobrado || 0)}</strong></span>
+                        <span>Pendiente: <strong style={{ color: 'var(--warning)' }}>{fmtGs(ventasDetalle.total_pendiente || 0)}</strong></span>
+                    </div>
+                </div>
+                <DetalleVentasJornada detalle={ventasDetalle} />
+            </div>
+
+            <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Wallet size={18} style={{ color: '#60a5fa' }} />
+                        <div style={{ fontWeight: 700 }}>Movimientos individuales de la jornada</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        <span>Caja: <strong>{resumen.movimientos_caja || 0}</strong></span>
+                        <span>Banco: <strong>{resumen.movimientos_banco || 0}</strong></span>
+                        <span>Total que suma: <strong>{resumen.movimientos_total || 0}</strong></span>
+                        <span>Filas visibles: <strong>{movimientosDetalle.length}</strong></span>
+                    </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                    {[
+                        ['TODOS', 'Todos'],
+                        ['EFECTIVO', 'Caja'],
+                        ['TRANSFERENCIA', 'Transferencia'],
+                        ['TARJETA', 'Tarjeta'],
+                        ['EGRESOS', 'Egresos'],
+                        ['PENDIENTE', 'Pendiente'],
+                        ['OTROS', 'Otros'],
+                    ].map(([value, label]) => (
+                        <button
+                            key={value}
+                            type="button"
+                            className={`btn btn-sm ${filtroMovimientosJornada === value ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setFiltroMovimientosJornada(value)}
+                        >
+                            {label} ({movimientosPorFiltro[value] || 0})
+                        </button>
+                    ))}
+                </div>
+                {filtroMovimientosJornada === 'PENDIENTE' ? (
+                    <DetallePendientesVentasJornada ventas={ventasPendientesJornada} />
+                ) : (
+                    <DetalleMovimientosJornada movimientos={movimientosDetalle} filtro={filtroMovimientosJornada} />
+                )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
@@ -1634,6 +1980,30 @@ export default function JornadaRendicionesPage() {
                     </div>
                 )}
 
+                {historialTab === 'jornadas' && (
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+                        <div style={{ flex: '1 1 220px', maxWidth: 260 }}>
+                            <input
+                                className="form-input"
+                                type="date"
+                                value={fechaJornadaHistorial}
+                                onChange={event => setFechaJornadaHistorial(event.target.value)}
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => setFechaJornadaHistorial('')}
+                            disabled={!fechaJornadaHistorial}
+                        >
+                            Limpiar búsqueda
+                        </button>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                            {fechaJornadaHistorial ? 'Mostrando la jornada de la fecha seleccionada.' : 'Mostrando las jornadas recientes.'}
+                        </div>
+                    </div>
+                )}
+
                 {historialTab === 'jornadas' ? (
                     isLoadingHistorialJornadas ? (
                         <div className="flex-center" style={{ padding: 20 }}>
@@ -1848,7 +2218,13 @@ export default function JornadaRendicionesPage() {
                 <MovimientosPosterioresModal onClose={() => setShowPosterioresModal(false)} />
             )}
             {showRendirModal && (
-                <RendirModal pendiente={pendiente} onClose={() => setShowRendirModal(false)} />
+                <RendirModal
+                    pendiente={pendiente}
+                    movimientos={movimientosDetalle}
+                    ventasPendientes={ventasPendientesJornada}
+                    fechaDesde={ultimaRendicion?.fecha_hora_rendicion || null}
+                    onClose={() => setShowRendirModal(false)}
+                />
             )}
             {rendicionDetalleId && (
                 <VerRendicionModal
@@ -1933,17 +2309,18 @@ export default function JornadaRendicionesPage() {
                     <div style={{ fontWeight: 800, marginBottom: 6 }}>Diagnóstico: primera carga (Jornada)</div>
                     <div style={{ color: 'var(--text-secondary)', marginBottom: 10 }}>
                         T0 = montaje de esta pantalla. Cada fila: milisegundos hasta la <strong>primera</strong> respuesta OK de ese GET
-                        (los cinco salen en paralelo). Si React Query tenía caché, puede figurar un número muy bajo.
-                        La pantalla completa espera sobre todo a <code style={{ fontSize: '0.72rem' }}>estado-actual</code>.
+                        (en paralelo: panel-inicial + rendiciones; el historial de jornadas solo carga al abrir esa pestaña).
+                        Si React Query tenía caché, puede figurar un número muy bajo.
+                        El spinner principal espera sobre todo a <code style={{ fontSize: '0.72rem' }}>panel-inicial</code> (estado + cortes, una sola carga de movimientos en servidor).
                         Si abriste el panel después de cargar, pulsá <strong>F5</strong> para medir bien esta entrada al menú.
                     </div>
                     {jornadaBenchMaxMs != null ? (
                         <div style={{ marginBottom: 8, fontWeight: 700, color: 'var(--warning)' }}>
                             Más lenta (entre las medidas): {jornadaBenchMaxMs} ms
-                            {jornadaLoadMs['GET /caja/jornada/estado-actual'] != null ? (
+                            {jornadaLoadMs['GET /caja/jornada/panel-inicial'] != null ? (
                                 <>
                                     {' · '}
-                                    Bloquea el spinner inicial: {jornadaLoadMs['GET /caja/jornada/estado-actual']} ms
+                                    Bloquea el spinner inicial: {jornadaLoadMs['GET /caja/jornada/panel-inicial']} ms
                                 </>
                             ) : null}
                         </div>
@@ -1981,8 +2358,8 @@ export default function JornadaRendicionesPage() {
                                     t0: 'montaje JornadaRendicionesPage',
                                     primera_respuesta_ok_ms: jornadaLoadMs,
                                     mas_lenta_ms: jornadaBenchMaxMs,
-                                    bloquea_spinner_inicial_ms: jornadaLoadMs['GET /caja/jornada/estado-actual'] ?? null,
-                                    nota: 'GET en paralelo; ms = hasta primera respuesta OK por endpoint (incluye caché).',
+                                    bloquea_spinner_inicial_ms: jornadaLoadMs['GET /caja/jornada/panel-inicial'] ?? null,
+                                    nota: 'panel-inicial agrupa estado+cortes (una carga de movimientos). Historial jornadas al elegir pestaña.',
                                 }
                                 void navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
                             }}

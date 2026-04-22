@@ -41,7 +41,7 @@ const CLINICA_TABS = [
 ]
 
 const WHATSAPP_TEMPLATE_KEY = 'hesaka-clinica-whatsapp-template'
-const DEFAULT_WHATSAPP_TEMPLATE = 'Hola {paciente}, te escribimos de HESAKA. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.'
+const DEFAULT_WHATSAPP_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Te recordamos tu turno para el {proxima_consulta} a las {hora_turno}. Te esperamos. Si no podras asistir, por favor avisanos para reprogramar.'
 
 function formatError(error, fallback = 'Ocurrio un error.') {
     const detail = error?.response?.data?.detail
@@ -136,7 +136,15 @@ function normalizarTelefonoWhatsapp(value) {
         return `595${digits.slice(1)}`
     }
 
+    if (digits.startsWith('0') && digits.length >= 7 && digits.length <= 11) {
+        return `595${digits.slice(1)}`
+    }
+
     if (digits.startsWith('9') && digits.length === 9) {
+        return `595${digits}`
+    }
+
+    if (digits.startsWith('9') && digits.length >= 8 && digits.length <= 10) {
         return `595${digits}`
     }
 
@@ -144,7 +152,11 @@ function normalizarTelefonoWhatsapp(value) {
         return digits
     }
 
-    return digits.startsWith('595') ? digits : ''
+    return digits.startsWith('595') && digits.length >= 10 ? digits : ''
+}
+
+function getTurnoTelefono(item) {
+    return item?.paciente_telefono || item?.paciente_telefono_libre || ''
 }
 
 function getWhatsappTemplate() {
@@ -162,16 +174,18 @@ function applyWhatsappTemplate(template, replacements) {
 function buildWhatsappMessage(item, template = DEFAULT_WHATSAPP_TEMPLATE, empresa = 'HESAKA') {
     const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
     const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
+    const horaTurno = item?.fecha_hora ? new Date(item.fecha_hora).toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' }) : 'sin hora'
     return applyWhatsappTemplate(template || DEFAULT_WHATSAPP_TEMPLATE, {
         '{paciente}': item?.paciente_nombre || '',
         '{ultima_consulta}': ultimaConsulta,
         '{proxima_consulta}': proximaConsulta,
+        '{hora_turno}': horaTurno,
         '{empresa}': empresa,
     })
 }
 
-function buildReminderWhatsappLink(item, message = '', empresa = 'HESAKA') {
-    const telefono = normalizarTelefonoWhatsapp(item?.paciente_telefono)
+function buildReminderWhatsappLink(item, message = '', empresa = 'HESAKA', telefonoValue = null) {
+    const telefono = normalizarTelefonoWhatsapp(telefonoValue ?? getTurnoTelefono(item))
     if (!telefono) return ''
     const finalMessage = buildWhatsappMessage(item, message || getWhatsappTemplate(), empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
@@ -183,6 +197,7 @@ function buildTemplateFromMessage(message, item, empresa = 'HESAKA') {
         [item?.paciente_nombre || '', '{paciente}'],
         [item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro', '{ultima_consulta}'],
         [item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha', '{proxima_consulta}'],
+        [item?.fecha_hora ? new Date(item.fecha_hora).toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' }) : 'sin hora', '{hora_turno}'],
         [empresa, '{empresa}'],
     ]
     replacements.forEach(([value, placeholder]) => {
@@ -248,19 +263,19 @@ function ReminderCards({ items, onMarkRemembered, onOpenWhatsappEditor = null, a
                             </button>
                             <button
                                 type="button"
-                                className={`btn btn-secondary btn-sm ${!whatsappLink ? 'disabled' : ''}`}
+                                className="btn btn-secondary btn-sm"
                                 onClick={() => {
-                                    if (!whatsappLink) {
-                                        window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
-                                        return
-                                    }
                                     if (onOpenWhatsappEditor) {
                                         onOpenWhatsappEditor(item)
                                         return
                                     }
+                                    if (!whatsappLink) {
+                                        window.alert('Carga un telefono valido para abrir WhatsApp.')
+                                        return
+                                    }
                                     window.open(whatsappLink, '_blank', 'noopener,noreferrer')
                                 }}
-                                style={!whatsappLink ? { pointerEvents: 'auto', opacity: 0.6 } : undefined}
+                                title={whatsappLink ? 'Enviar recordatorio por WhatsApp' : 'Completar telefono para WhatsApp'}
                             >
                                 <MessageCircle size={14} /> WhatsApp
                             </button>
@@ -713,10 +728,6 @@ function TurnoAgendaActions({
                             Reprogramar
                         </button>
                         <button className="dropdown-item" onClick={() => handleAction(() => {
-                            if (!whatsappLink) {
-                                window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
-                                return
-                            }
                             onWhatsapp()
                         })}>
                             <MessageCircle size={14} style={{ marginRight: 8 }} /> WhatsApp
@@ -739,11 +750,14 @@ function WhatsappMessageModal({ item, onClose }) {
         retry: false,
     })
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
+    const [telefono, setTelefono] = useState(() => getTurnoTelefono(item))
     const [message, setMessage] = useState(() => buildWhatsappMessage(item, getWhatsappTemplate(), empresaNombre))
 
-    const whatsappLink = buildReminderWhatsappLink(item, message, empresaNombre)
+    const telefonoNormalizado = normalizarTelefonoWhatsapp(telefono)
+    const whatsappLink = buildReminderWhatsappLink(item, message, empresaNombre, telefono)
 
     useEffect(() => {
+        setTelefono(getTurnoTelefono(item))
         setMessage(buildWhatsappMessage(item, getWhatsappTemplate(), empresaNombre))
     }, [item, empresaNombre])
 
@@ -763,7 +777,7 @@ function WhatsappMessageModal({ item, onClose }) {
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.92rem' }}>
                     Puedes editar el texto antes de abrir WhatsApp. Variables automáticas disponibles en la plantilla:
                     {' '}
-                    <code>{'{paciente}'}</code>, <code>{'{ultima_consulta}'}</code>, <code>{'{proxima_consulta}'}</code>, <code>{'{empresa}'}</code>.
+                    <code>{'{paciente}'}</code>, <code>{'{ultima_consulta}'}</code>, <code>{'{proxima_consulta}'}</code>, <code>{'{hora_turno}'}</code>, <code>{'{empresa}'}</code>.
                 </div>
                 <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
                     <div style={{ fontWeight: 700 }}>{item?.paciente_nombre || 'Sin paciente'}</div>
@@ -772,6 +786,18 @@ function WhatsappMessageModal({ item, onClose }) {
                     </div>
                     <div style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                         Proxima consulta: {fmtDateTime(item?.fecha_hora)}
+                    </div>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Telefono WhatsApp</label>
+                    <input
+                        className="form-input"
+                        value={telefono}
+                        onChange={event => setTelefono(event.target.value)}
+                        placeholder="Ej.: 0981 123 456"
+                    />
+                    <div style={{ marginTop: 8, color: telefonoNormalizado ? 'var(--text-muted)' : '#f87171', fontSize: '0.82rem' }}>
+                        {telefonoNormalizado ? `Se abrira como +${telefonoNormalizado}.` : 'Carga un numero valido. Ej.: 0981 123 456 o +595981123456.'}
                     </div>
                 </div>
                 <div className="form-group">
@@ -798,9 +824,10 @@ function WhatsappMessageModal({ item, onClose }) {
                     <button
                         type="button"
                         className="btn btn-primary"
+                        disabled={!whatsappLink}
                         onClick={() => {
                             if (!whatsappLink) {
-                                window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
+                                window.alert('Carga un telefono valido para abrir WhatsApp.')
                                 return
                             }
                             window.open(whatsappLink, '_blank', 'noopener,noreferrer')
@@ -1075,9 +1102,11 @@ function TurnoClinicoForm({
                 id: initialData.paciente_id,
                 nombre_completo: initialData.paciente_nombre,
                 ci_pasaporte: initialData.paciente_ci,
+                telefono: initialData.paciente_telefono,
             }
             : null,
         paciente_nombre_libre: initialData?.paciente_nombre_libre || (!initialData?.paciente_id ? initialData?.paciente_nombre || '' : ''),
+        paciente_telefono_libre: initialData?.paciente_telefono_libre || (!initialData?.paciente_id ? initialData?.paciente_telefono || '' : ''),
         doctor_id: initialData?.doctor_id || '',
         lugar_atencion_id: initialData?.lugar_atencion_id || '',
         fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : new Date().toISOString().slice(0, 16),
@@ -1093,9 +1122,11 @@ function TurnoClinicoForm({
                     id: initialData.paciente_id,
                     nombre_completo: initialData.paciente_nombre,
                     ci_pasaporte: initialData.paciente_ci,
+                    telefono: initialData.paciente_telefono,
                 }
                 : null,
             paciente_nombre_libre: initialData?.paciente_nombre_libre || (!initialData?.paciente_id ? initialData?.paciente_nombre || '' : ''),
+            paciente_telefono_libre: initialData?.paciente_telefono_libre || (!initialData?.paciente_id ? initialData?.paciente_telefono || '' : ''),
             doctor_id: initialData?.doctor_id || '',
             lugar_atencion_id: initialData?.lugar_atencion_id || '',
             fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : new Date().toISOString().slice(0, 16),
@@ -1114,6 +1145,7 @@ function TurnoClinicoForm({
         onSave({
             paciente_id: form.paciente?.id || null,
             paciente_nombre_libre: form.paciente?.id ? null : (form.paciente_nombre_libre.trim() || null),
+            paciente_telefono_libre: form.paciente?.id ? null : (form.paciente_telefono_libre.trim() || null),
             doctor_id: form.doctor_id === '' ? null : Number(form.doctor_id),
             lugar_atencion_id: form.lugar_atencion_id === '' ? null : Number(form.lugar_atencion_id),
             fecha_hora: new Date(form.fecha_hora).toISOString(),
@@ -1130,7 +1162,7 @@ function TurnoClinicoForm({
                     <label className="form-label">Paciente</label>
                     <RemoteSearchSelect
                         value={form.paciente}
-                        onChange={option => setForm(prev => ({ ...prev, paciente: option, paciente_nombre_libre: option ? '' : prev.paciente_nombre_libre }))}
+                        onChange={option => setForm(prev => ({ ...prev, paciente: option, paciente_nombre_libre: option ? '' : prev.paciente_nombre_libre, paciente_telefono_libre: option ? '' : prev.paciente_telefono_libre }))}
                         onSearch={onSearchPaciente}
                         options={pacienteOptions}
                         loading={pacienteLoading}
@@ -1159,6 +1191,21 @@ function TurnoClinicoForm({
                         placeholder="Ej.: Juan Perez"
                         disabled={Boolean(form.paciente?.id)}
                     />
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Telefono del agendado</label>
+                    <input
+                        className="form-input"
+                        value={form.paciente?.id ? (form.paciente.telefono || '') : form.paciente_telefono_libre}
+                        onChange={event => setForm(prev => ({ ...prev, paciente_telefono_libre: event.target.value, paciente: null }))}
+                        placeholder="Ej.: 0981 123 456"
+                        disabled={Boolean(form.paciente?.id)}
+                    />
+                    {form.paciente?.id ? (
+                        <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                            El telefono viene de la ficha del paciente.
+                        </div>
+                    ) : null}
                 </div>
                 <div className="form-group">
                     <label className="form-label">Doctor</label>
@@ -1288,6 +1335,7 @@ function AgendaClinicaSection() {
             await api.put(`/clinica/agenda/${item.id}`, {
                 paciente_id: item.paciente_id,
                 paciente_nombre_libre: item.paciente_nombre_libre,
+                paciente_telefono_libre: item.paciente_telefono_libre,
                 doctor_id: item.doctor_id,
                 lugar_atencion_id: item.lugar_atencion_id,
                 fecha_hora: item.fecha_hora,
@@ -1467,47 +1515,65 @@ function AgendaClinicaSection() {
                                     <tr>
                                         <th>Fecha y hora</th>
                                         <th>Paciente</th>
+                                        <th>Telefono</th>
                                         <th>Doctor</th>
                                         <th>Lugar</th>
                                         <th>Motivo</th>
                                         <th>Estado</th>
-                                        <th style={{ width: 150 }}>Acciones</th>
+                                        <th style={{ width: 230 }}>Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {items.length ? items.map(item => (
-                                        <tr key={item.id}>
-                                            <td>{fmtDateTime(item.fecha_hora)}</td>
-                                            <td style={{ fontWeight: 700 }}>{item.paciente_nombre}</td>
-                                            <td>{item.doctor_nombre || '-'}</td>
-                                            <td>{item.lugar_nombre || '-'}</td>
-                                            <td>
-                                                <div>{item.motivo || '-'}</div>
-                                                {item.es_control ? (
-                                                    <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                                                        Seguimiento {typeof item.dias_restantes === 'number' ? `- faltan ${item.dias_restantes} dia(s)` : ''}
+                                    {items.length ? items.map(item => {
+                                        const telefonoTurno = getTurnoTelefono(item)
+                                        const whatsappLink = buildReminderWhatsappLink(item)
+                                        return (
+                                            <tr key={item.id}>
+                                                <td>{fmtDateTime(item.fecha_hora)}</td>
+                                                <td style={{ fontWeight: 700 }}>{item.paciente_nombre}</td>
+                                                <td style={{ whiteSpace: 'nowrap', color: telefonoTurno ? 'var(--text)' : 'var(--text-muted)' }}>
+                                                    {telefonoTurno || '-'}
+                                                </td>
+                                                <td>{item.doctor_nombre || '-'}</td>
+                                                <td>{item.lugar_nombre || '-'}</td>
+                                                <td>
+                                                    <div>{item.motivo || '-'}</div>
+                                                    {item.es_control ? (
+                                                        <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                            Seguimiento {typeof item.dias_restantes === 'number' ? `- faltan ${item.dias_restantes} dia(s)` : ''}
+                                                        </div>
+                                                    ) : null}
+                                                </td>
+                                                <td><span className={`badge ${item.estado === 'ATENDIDO' ? 'badge-green' : item.estado === 'CANCELADO' ? 'badge-gray' : 'badge-blue'}`}>{item.estado}</span></td>
+                                                <td>
+                                                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-secondary btn-sm"
+                                                            title={whatsappLink ? 'Enviar recordatorio por WhatsApp' : 'Completar telefono para WhatsApp'}
+                                                            onClick={() => setWhatsappItem(item)}
+                                                        >
+                                                            <MessageCircle size={14} /> WhatsApp
+                                                        </button>
+                                                        <TurnoAgendaActions
+                                                            item={item}
+                                                            disabled={cambiarEstadoMutation.isPending || deleteTurnoMutation.isPending}
+                                                            onEditar={() => setModalTurno({ mode: 'edit', data: item })}
+                                                            onConfirmar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CONFIRMADO' })}
+                                                            onAtender={() => atenderTurno(item)}
+                                                            onCancelar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CANCELADO' })}
+                                                            onReprogramar={() => setModalTurno({ mode: 'edit', data: item })}
+                                                            onWhatsapp={() => setWhatsappItem(item)}
+                                                            onEliminar={() => {
+                                                                if (!window.confirm('Se eliminara este turno. Desea continuar?')) return
+                                                                deleteTurnoMutation.mutate(item.id)
+                                                            }}
+                                                        />
                                                     </div>
-                                                ) : null}
-                                            </td>
-                                            <td><span className={`badge ${item.estado === 'ATENDIDO' ? 'badge-green' : item.estado === 'CANCELADO' ? 'badge-gray' : 'badge-blue'}`}>{item.estado}</span></td>
-                                            <td>
-                                                <TurnoAgendaActions
-                                                    item={item}
-                                                    disabled={cambiarEstadoMutation.isPending || deleteTurnoMutation.isPending}
-                                                    onEditar={() => setModalTurno({ mode: 'edit', data: item })}
-                                                    onConfirmar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CONFIRMADO' })}
-                                                    onAtender={() => atenderTurno(item)}
-                                                    onCancelar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CANCELADO' })}
-                                                    onReprogramar={() => setModalTurno({ mode: 'edit', data: item })}
-                                                    onWhatsapp={() => setWhatsappItem(item)}
-                                                    onEliminar={() => {
-                                                        if (!window.confirm('Se eliminara este turno. Desea continuar?')) return
-                                                        deleteTurnoMutation.mutate(item.id)
-                                                    }}
-                                                />
-                                            </td>
-                                        </tr>
-                                    )) : <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No hay turnos para los filtros seleccionados.</td></tr>}
+                                                </td>
+                                            </tr>
+                                        )
+                                    }) : <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No hay turnos para los filtros seleccionados.</td></tr>}
                                 </tbody>
                             </table>
                         </div>

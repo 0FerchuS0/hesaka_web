@@ -411,15 +411,20 @@ def _serializar_turno(turno) -> ClinicaTurnoOut:
     if turno.paciente_rel:
         paciente_nombre = turno.paciente_rel.nombre_completo
         paciente_ci = turno.paciente_rel.ci_pasaporte
+        paciente_telefono = turno.paciente_rel.telefono
     elif turno.paciente_nombre_libre:
         paciente_nombre = turno.paciente_nombre_libre
+        paciente_telefono = getattr(turno, "paciente_telefono_libre", None)
+    else:
+        paciente_telefono = getattr(turno, "paciente_telefono_libre", None)
     return ClinicaTurnoOut(
           id=turno.id,
           paciente_id=turno.paciente_id,
           paciente_nombre=paciente_nombre or "PACIENTE",
           paciente_nombre_libre=turno.paciente_nombre_libre,
           paciente_ci=paciente_ci,
-          paciente_telefono=turno.paciente_rel.telefono if turno.paciente_rel else None,
+          paciente_telefono=paciente_telefono,
+          paciente_telefono_libre=getattr(turno, "paciente_telefono_libre", None),
           doctor_id=turno.doctor_id,
           doctor_nombre=turno.doctor_rel.nombre_completo if turno.doctor_rel else None,
           lugar_atencion_id=turno.lugar_atencion_id,
@@ -1234,6 +1239,7 @@ def listar_turnos_clinica(
                     Paciente.ci_pasaporte.ilike(term),
                     Paciente.telefono.ilike(term),
                     TurnoClinico.paciente_nombre_libre.ilike(term),
+                    TurnoClinico.paciente_telefono_libre.ilike(term),
                     TurnoClinico.motivo.ilike(term),
                 )
             )
@@ -1344,6 +1350,7 @@ def crear_turno_clinica(
     try:
         paciente = None
         nombre_libre = _normalizar_texto(payload.paciente_nombre_libre)
+        telefono_libre = _normalizar_texto(payload.paciente_telefono_libre)
         if payload.paciente_id:
             paciente = _obtener_paciente_seguro(session, payload.paciente_id)
         elif not nombre_libre:
@@ -1360,6 +1367,7 @@ def crear_turno_clinica(
         turno = TurnoClinico(
             paciente_id=paciente.id if paciente else None,
             paciente_nombre_libre=nombre_libre,
+            paciente_telefono_libre=None if paciente else telefono_libre,
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             fecha_hora=payload.fecha_hora,
@@ -1410,6 +1418,7 @@ def editar_turno_clinica(
 
         paciente = None
         nombre_libre = _normalizar_texto(payload.paciente_nombre_libre)
+        telefono_libre = _normalizar_texto(payload.paciente_telefono_libre)
         if payload.paciente_id:
             paciente = _obtener_paciente_seguro(session, payload.paciente_id)
         elif not nombre_libre:
@@ -1425,6 +1434,7 @@ def editar_turno_clinica(
 
         turno.paciente_id = paciente.id if paciente else None
         turno.paciente_nombre_libre = nombre_libre
+        turno.paciente_telefono_libre = None if paciente else telefono_libre
         turno.doctor_id = payload.doctor_id
         turno.lugar_atencion_id = payload.lugar_atencion_id
         turno.fecha_hora = payload.fecha_hora
@@ -3281,6 +3291,8 @@ def convertir_paciente_a_cliente(
         if cliente:
             if not cliente.telefono and paciente.telefono:
                 cliente.telefono = paciente.telefono
+            if not getattr(cliente, "fecha_nacimiento", None) and paciente.fecha_nacimiento:
+                cliente.fecha_nacimiento = paciente.fecha_nacimiento
             if not cliente.direccion and paciente.direccion:
                 cliente.direccion = paciente.direccion
             if not cliente.referidor_id and getattr(paciente, "referidor_id", None):
@@ -3293,6 +3305,7 @@ def convertir_paciente_a_cliente(
                 nombre=paciente.nombre_completo,
                 ci=ci,
                 telefono=(paciente.telefono or "").strip() or None,
+                fecha_nacimiento=paciente.fecha_nacimiento,
                 direccion=(paciente.direccion or "").strip() or None,
                 notas=(paciente.notas or "").strip() or None,
                 referidor_id=getattr(paciente, "referidor_id", None),

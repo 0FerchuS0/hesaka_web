@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth, api } from '../context/AuthContext'
 import {
     TrendingUp, ShoppingCart, Package,
-    DollarSign, AlertCircle, Clock, BarChart3, MessageCircle
+    DollarSign, AlertCircle, Clock, BarChart3, MessageCircle, Gift
 } from 'lucide-react'
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -85,7 +85,11 @@ function normalizarTelefonoWhatsapp(value) {
         return `595${digits.slice(1)}`
     }
 
-    if (digits.startsWith('9') && digits.length === 9) {
+    if (digits.startsWith('0') && digits.length >= 7 && digits.length <= 11) {
+        return `595${digits.slice(1)}`
+    }
+
+    if (digits.startsWith('9') && digits.length >= 8 && digits.length <= 10) {
         return `595${digits}`
     }
 
@@ -93,7 +97,7 @@ function normalizarTelefonoWhatsapp(value) {
         return digits
     }
 
-    return digits.startsWith('595') ? digits : ''
+    return digits.startsWith('595') && digits.length >= 10 ? digits : ''
 }
 
 function buildReminderWhatsappLink(item) {
@@ -105,6 +109,17 @@ function buildReminderWhatsappLink(item) {
         `Hola ${item?.paciente_nombre || ''}, te escribimos de HESAKA.`,
         `Tu ultima consulta fue el ${ultimaConsulta} y tu proximo control esta previsto para el ${proximaConsulta}.`,
         'Quedamos atentos para ayudarte a confirmar tu cita.',
+    ].join(' ')
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
+}
+
+function buildBirthdayWhatsappLink(cliente, empresa = 'HESAKA') {
+    const telefono = normalizarTelefonoWhatsapp(cliente?.telefono)
+    if (!telefono) return ''
+    const mensaje = [
+        `Hola ${cliente?.nombre || ''}, te escribimos de ${empresa}.`,
+        'Queremos desearte un muy feliz cumpleanos.',
+        'Que tengas un excelente dia.',
     ].join(' ')
     return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
 }
@@ -177,6 +192,18 @@ export default function Dashboard() {
         queryFn: async () => (await api.get('/clinica/agenda/recordatorios')).data,
         staleTime: 60 * 1000,
     })
+    const birthdayQuery = useQuery({
+        queryKey: ['clientes', 'cumpleanos', new Date().toISOString().slice(0, 10)],
+        queryFn: async () => (await api.get('/clientes/cumpleanos')).data,
+        staleTime: 5 * 60 * 1000,
+        retry: false,
+    })
+    const { data: configPublica } = useQuery({
+        queryKey: ['configuracion-general-publica'],
+        queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
+        staleTime: 5 * 60 * 1000,
+        retry: false,
+    })
 
     const markReminderMutation = useMutation({
         mutationFn: async item => {
@@ -192,6 +219,8 @@ export default function Dashboard() {
     })
 
     const reminderItems = flattenReminderBuckets(reminderQuery.data)
+    const birthdayItems = birthdayQuery.data || []
+    const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
 
     useEffect(() => {
         if (!reminderItems.length) return
@@ -268,6 +297,58 @@ export default function Dashboard() {
                     <div style={{ color: 'var(--text-muted)' }}>
                         Hay {reminderItems.length} recordatorio(s) pendientes para controles clinicos.
                     </div>
+                </div>
+            ) : null}
+
+            {birthdayItems.length ? (
+                <div className="card" style={{ marginBottom: 20, border: '1px solid rgba(251,191,36,0.28)', background: 'rgba(251,191,36,0.08)' }}>
+                    <div className="card-title flex-between">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Gift size={18} style={{ color: '#fbbf24' }} />
+                            Cumpleanos de hoy
+                        </span>
+                        <a href="/clientes/cumpleanos" className="btn btn-secondary btn-sm">
+                            Ver modulo
+                        </a>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
+                        Hay {birthdayItems.length} cliente(s) de cumpleanos hoy.
+                    </div>
+                    <div style={{ display: 'grid', gap: 10 }}>
+                        {birthdayItems.slice(0, 4).map(cliente => {
+                            const whatsappLink = buildBirthdayWhatsappLink(cliente, empresaNombre)
+                            return (
+                                <div key={cliente.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, background: 'rgba(255,255,255,0.03)' }}>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontWeight: 800 }}>{cliente.nombre}</div>
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                                            {cliente.edad ? `Cumple ${cliente.edad} anos` : 'Cumpleanos registrado'} {cliente.telefono ? `- ${cliente.telefono}` : ''}
+                                        </div>
+                                    </div>
+                                    <a
+                                        href={whatsappLink || undefined}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className={`btn btn-secondary btn-sm ${!whatsappLink ? 'disabled' : ''}`}
+                                        onClick={event => {
+                                            if (!whatsappLink) {
+                                                event.preventDefault()
+                                                window.alert('Este cliente no tiene telefono valido para WhatsApp.')
+                                            }
+                                        }}
+                                        style={!whatsappLink ? { pointerEvents: 'auto', opacity: 0.6 } : undefined}
+                                    >
+                                        <MessageCircle size={14} /> WhatsApp
+                                    </a>
+                                </div>
+                            )
+                        })}
+                    </div>
+                    {birthdayItems.length > 4 ? (
+                        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                            Y {birthdayItems.length - 4} mas en el modulo de cumpleanos.
+                        </div>
+                    ) : null}
                 </div>
             ) : null}
 

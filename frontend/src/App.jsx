@@ -12,6 +12,7 @@ const UsuariosPage = lazy(() => import('./pages/UsuariosPage'))
 const ConfiguracionGeneralPage = lazy(() => import('./pages/ConfiguracionGeneralPage'))
 const ConfiguracionBackupsPage = lazy(() => import('./pages/ConfiguracionBackupsPage'))
 const ClientesPage = lazy(() => import('./pages/ClientesPage'))
+const CumpleanosClientesPage = lazy(() => import('./pages/CumpleanosClientesPage'))
 const ReferidoresPage = lazy(() => import('./pages/ReferidoresPage'))
 const VendedoresPage = lazy(() => import('./pages/VendedoresPage'))
 const CanalesVentaPage = lazy(() => import('./pages/CanalesVentaPage'))
@@ -207,6 +208,7 @@ function AppLayout() {
                         <Route path="/configuracion-general" element={<ConfiguracionGeneralPage />} />
                         <Route path="/configuracion-general/backups" element={<ConfiguracionBackupsPage />} />
                         <Route path="/clientes" element={<RoleRoute allowedRoles="catalogos"><ClientesPage /></RoleRoute>} />
+                        <Route path="/clientes/cumpleanos" element={<RoleRoute allowedRoles="catalogos"><CumpleanosClientesPage /></RoleRoute>} />
                         <Route path="/clientes/saldos" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteSaldosClientesPage /></RoleRoute>} />
                         <Route path="/referidores" element={<RoleRoute allowedRoles="catalogos"><ReferidoresPage /></RoleRoute>} />
                         <Route path="/vendedores" element={<RoleRoute allowedRoles="catalogos"><VendedoresPage /></RoleRoute>} />

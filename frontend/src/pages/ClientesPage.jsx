@@ -90,7 +90,7 @@ function GraduacionBox({ titulo, data }) {
 
 function ClienteForm({ initial = {}, onSave, onCancel, loading }) {
     const [f, setF] = useState({
-        nombre: '', ci: '', telefono: '', email: '',
+        nombre: '', ci: '', telefono: '', email: '', fecha_nacimiento: '',
         direccion: '', notas: '', referidor_id: null, ...initial
     })
     const set = (k, v) => setF(p => ({ ...p, [k]: v }))
@@ -119,6 +119,10 @@ function ClienteForm({ initial = {}, onSave, onCancel, loading }) {
                 <div className="form-group">
                     <label className="form-label">Email</label>
                     <input className="form-input" type="email" value={f.email || ''} onChange={e => set('email', e.target.value)} placeholder="correo@ejemplo.com" />
+                </div>
+                <div className="form-group">
+                    <label className="form-label">Fecha de nacimiento</label>
+                    <input className="form-input" type="date" value={f.fecha_nacimiento || ''} onChange={e => set('fecha_nacimiento', e.target.value)} />
                 </div>
             </div>
             <div className="form-group">
@@ -180,6 +184,7 @@ function ClienteFichaModal({ clienteId, onClose }) {
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', lineHeight: 1.5 }}>
                     CI/RUC: {cliente.ci || '-'}<br />
                     Telefono: {cliente.telefono || '-'}<br />
+                    Nacimiento: {fmt(cliente.fecha_nacimiento)}<br />
                     Email: {cliente.email || '-'}<br />
                     Direccion: {cliente.direccion || '-'}<br />
                     Referidor: {cliente.referidor_nombre || '-'}
@@ -372,8 +377,9 @@ export default function ClientesPage() {
     })
 
     const handleSave = (f) => {
-        if (modal === 'nuevo') crear.mutate(f)
-        else editar.mutate({ id: modal.id, ...f })
+        const payload = { ...f, fecha_nacimiento: f.fecha_nacimiento || null }
+        if (modal === 'nuevo') crear.mutate(payload)
+        else editar.mutate({ id: modal.id, ...payload })
     }
 
     const construirParams = () => {
@@ -490,12 +496,13 @@ export default function ClientesPage() {
                     </div>
                 ) : (
                     <div className="table-container" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
-                        <table style={{ minWidth: 980, tableLayout: 'fixed' }}>
+                        <table style={{ minWidth: 1110, tableLayout: 'fixed' }}>
                             <thead>
                                 <tr>
                                     <th style={{ width: 240 }}>Nombre</th>
                                     <th style={{ width: 130 }}>CI / RUC</th>
                                     <th style={{ width: 160 }}>Telefono</th>
+                                    <th style={{ width: 130 }}>Nacimiento</th>
                                     <th style={{ width: 220 }}>Email</th>
                                     <th style={{ width: 180 }}>Referidor</th>
                                     <th style={{ width: 110 }}>Registro</th>
@@ -526,6 +533,7 @@ export default function ClientesPage() {
                                                 </span>
                                             ) : '-'}
                                         </td>
+                                        <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{fmt(c.fecha_nacimiento)}</td>
                                         <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', whiteSpace: 'normal', lineHeight: 1.25, wordBreak: 'break-word' }}>{c.email || '-'}</td>
                                         <td>
                                             {c.referidor_nombre

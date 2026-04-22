@@ -330,6 +330,7 @@ class ClienteOut(BaseModel):
     telefono: Optional[str]
     email: Optional[str]
     direccion: Optional[str]
+    fecha_nacimiento: Optional[date] = None
     fecha_registro: Optional[datetime]
     notas: Optional[str]
     referidor_id: Optional[int]
@@ -345,6 +346,7 @@ class ClienteListItemOut(BaseModel):
     telefono: Optional[str] = None
     email: Optional[str] = None
     direccion: Optional[str] = None
+    fecha_nacimiento: Optional[date] = None
     fecha_registro: Optional[datetime] = None
     notas: Optional[str] = None
     referidor_id: Optional[int] = None
@@ -365,8 +367,20 @@ class ClienteCreate(BaseModel):
     telefono: Optional[str] = None
     email: Optional[str] = None
     direccion: Optional[str] = None
+    fecha_nacimiento: Optional[date] = None
     notas: Optional[str] = None
     referidor_id: Optional[int] = None
+
+
+class ClienteCumpleanosOut(BaseModel):
+    id: int
+    nombre: str
+    ci: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    fecha_nacimiento: date
+    edad: Optional[int] = None
+    referidor_nombre: Optional[str] = None
 
 
 # ──────────────────────────────────────────────
@@ -1202,6 +1216,8 @@ class JornadaEstadoOut(BaseModel):
     ultima_rendicion: Optional["RendicionJornadaOut"] = None
     pendiente_rendicion: Optional["PendienteRendicionOut"] = None
     cuentas_por_cobrar_dia: Optional["JornadaCuentasCobrarOut"] = None
+    movimientos_detalle: List[dict] = Field(default_factory=list)
+    ventas_detalle: dict = Field(default_factory=dict)
     alerta_movimientos_posteriores: Optional["MovimientosPosterioresUltimoCorteResumenOut"] = None
 
 
@@ -1234,6 +1250,13 @@ class CorteJornadaOut(BaseModel):
     es_ultimo: bool = False
 
 
+class JornadaPanelInicialOut(BaseModel):
+    """Respuesta agregada para la pantalla Jornada (una sola pasada de movimientos en servidor)."""
+
+    estado: JornadaEstadoOut
+    cortes: List[CorteJornadaOut] = Field(default_factory=list)
+
+
 class PendienteRendicionOut(BaseModel):
     monto_sugerido: float = 0.0
     cantidad_movimientos: int = 0
@@ -1241,6 +1264,8 @@ class PendienteRendicionOut(BaseModel):
     egresos: float = 0.0
     fecha_desde: Optional[datetime] = None
     desglose_medios: List[dict] = Field(default_factory=list)
+    movimientos: List[dict] = Field(default_factory=list)
+    ventas_pendientes: List[dict] = Field(default_factory=list)
 
 
 class DestinatarioRendicionCreate(BaseModel):
@@ -1945,6 +1970,7 @@ class ClinicaLugarSimpleOut(BaseModel):
 class ClinicaTurnoIn(BaseModel):
     paciente_id: Optional[int] = None
     paciente_nombre_libre: Optional[str] = None
+    paciente_telefono_libre: Optional[str] = None
     doctor_id: Optional[int] = None
     lugar_atencion_id: Optional[int] = None
     fecha_hora: datetime
@@ -1960,6 +1986,7 @@ class ClinicaTurnoOut(BaseModel):
     paciente_nombre_libre: Optional[str] = None
     paciente_ci: Optional[str] = None
     paciente_telefono: Optional[str] = None
+    paciente_telefono_libre: Optional[str] = None
     doctor_id: Optional[int] = None
     doctor_nombre: Optional[str] = None
     lugar_atencion_id: Optional[int] = None

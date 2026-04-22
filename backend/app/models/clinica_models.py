@@ -368,6 +368,7 @@ class TurnoClinico(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     paciente_id = Column(Integer, ForeignKey("clinica_pacientes.id"), nullable=True)
     paciente_nombre_libre = Column(String(200), nullable=True)
+    paciente_telefono_libre = Column(String(50), nullable=True)
     doctor_id = Column(Integer, ForeignKey("clinica_doctores.id"), nullable=True)
     lugar_atencion_id = Column(Integer, ForeignKey("clinica_lugares_atencion.id"), nullable=True)
     fecha_hora = Column(DateTime, default=datetime.now, nullable=False)

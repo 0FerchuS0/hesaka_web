@@ -36,6 +36,7 @@ from app.schemas.schemas import (
     GastoOut,
     JornadaAperturaCreate,
     JornadaEstadoOut,
+    JornadaPanelInicialOut,
     JornadaHistorialOut,
     MovimientosPosterioresUltimoCorteOut,
     PendienteRendicionOut,
@@ -59,6 +60,7 @@ from app.utils.jornada import (
     cargar_movimientos_jornada_normalizados,
     construir_alerta_movimientos_posteriores,
     construir_cuentas_por_cobrar_dia,
+    construir_detalle_ventas_jornada,
     construir_desglose_medios_rendicion,
     construir_desglose_por_medio,
     construir_resumen_corte,
@@ -76,6 +78,7 @@ from app.utils.jornada import (
     obtener_jornada_actual,
     hoy_jornada,
     require_jornada_abierta,
+    serializar_movimiento_jornada,
     serializar_corte,
     serializar_cortes_jornada_lista,
     serializar_rendicion_historial,
@@ -89,9 +92,12 @@ banco_router = APIRouter(prefix="/api/bancos", tags=["Bancos"])
 gasto_router = APIRouter(prefix="/api/gastos", tags=["Gastos"])
 
 
-def _serializar_estado_jornada(session) -> JornadaEstadoOut:
+def _serializar_estado_jornada(session, *, movimientos_cache: list | None = None) -> JornadaEstadoOut:
     jornada = obtener_jornada_actual(session)
-    all_movs = cargar_movimientos_jornada_normalizados(session, jornada) if jornada else []
+    if movimientos_cache is not None:
+        all_movs = list(movimientos_cache)
+    else:
+        all_movs = cargar_movimientos_jornada_normalizados(session, jornada) if jornada else []
     ultimo_corte = obtener_ultimo_corte_jornada(session, jornada.id) if jornada else None
     ultima_rendicion = obtener_ultima_rendicion_vigente(session, jornada.id) if jornada else None
 
@@ -158,6 +164,8 @@ def _serializar_estado_jornada(session) -> JornadaEstadoOut:
             movimientos_dia_cache=all_movs if jornada else None,
         ),
         cuentas_por_cobrar_dia=construir_cuentas_por_cobrar_dia(session, jornada),
+        movimientos_detalle=[serializar_movimiento_jornada(mov) for mov in all_movs],
+        ventas_detalle=construir_detalle_ventas_jornada(session, jornada, all_movs),
         alerta_movimientos_posteriores=construir_alerta_movimientos_posteriores(session),
     )
 
@@ -288,6 +296,37 @@ def obtener_estado_jornada_actual(
     session = get_session_for_tenant(tenant_slug)
     try:
         return _serializar_estado_jornada(session)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/panel-inicial", response_model=JornadaPanelInicialOut)
+def obtener_panel_inicial_jornada(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    """Estado del día + cortes con una sola carga de movimientos (evita triplicar trabajo vs GETs en paralelo)."""
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = obtener_jornada_actual(session)
+        if not jornada:
+            estado = _serializar_estado_jornada(session, movimientos_cache=None)
+            return JornadaPanelInicialOut(estado=estado, cortes=[])
+        all_movs = cargar_movimientos_jornada_normalizados(session, jornada)
+        estado = _serializar_estado_jornada(session, movimientos_cache=all_movs)
+        cortes = (
+            session.query(CorteJornadaFinanciera)
+            .filter(CorteJornadaFinanciera.jornada_id == jornada.id)
+            .order_by(CorteJornadaFinanciera.fecha_hora_corte.desc(), CorteJornadaFinanciera.id.desc())
+            .limit(40)
+            .all()
+        )
+        cortes_out = serializar_cortes_jornada_lista(session, jornada, cortes, movimientos_cache=all_movs)
+        return JornadaPanelInicialOut(estado=estado, cortes=cortes_out)
     except HTTPException:
         raise
     except Exception as exc:
@@ -564,15 +603,21 @@ def listar_historial_jornadas(
     tenant_slug: str = Depends(get_tenant_slug),
     current_user=Depends(get_current_user),
     limit: int = Query(15, ge=1, le=60),
+    fecha: Optional[date] = Query(None),
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        jornadas = (
-            session.query(JornadaFinanciera)
-            .order_by(JornadaFinanciera.fecha.desc(), JornadaFinanciera.id.desc())
-            .limit(limit)
-            .all()
-        )
+        query = session.query(JornadaFinanciera)
+        if fecha:
+            query = query.filter(JornadaFinanciera.fecha == fecha)
+        else:
+            if fecha_desde:
+                query = query.filter(JornadaFinanciera.fecha >= fecha_desde)
+            if fecha_hasta:
+                query = query.filter(JornadaFinanciera.fecha <= fecha_hasta)
+        jornadas = query.order_by(JornadaFinanciera.fecha.desc(), JornadaFinanciera.id.desc()).limit(limit).all()
         return construir_filas_historial_jornadas(session, jornadas)
     finally:
         session.close()

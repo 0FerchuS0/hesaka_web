@@ -64,6 +64,16 @@ def ahora_negocio(session=None) -> datetime:
     return datetime.now(tz).replace(tzinfo=None)
 
 
+def normalizar_fecha_negocio(session, value: datetime | None = None) -> datetime:
+    """Interpreta fechas financieras bajo la zona horaria configurada del negocio."""
+    tz = _zona_horaria_negocio(session)
+    if value is None:
+        return datetime.now(tz).replace(tzinfo=None)
+    if getattr(value, "tzinfo", None) is not None:
+        return value.astimezone(tz).replace(tzinfo=None)
+    return value
+
+
 def resolver_destinatario_rendicion_activo(session, destinatario_id: int) -> DestinatarioRendicion:
     dest = session.query(DestinatarioRendicion).filter(DestinatarioRendicion.id == destinatario_id).first()
     if not dest:

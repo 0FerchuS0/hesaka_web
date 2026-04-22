@@ -4,6 +4,12 @@ import { formatCurrency, formatDate } from '../utils/formatters'
 import { CheckCircle, AlertCircle, Save, Loader2, ArrowRight } from 'lucide-react'
 import Modal from '../components/Modal'
 
+const todayInputValue = () => {
+    const date = new Date()
+    const pad = n => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 export default function CobroMultiplePage() {
     const [loading, setLoading] = useState(true)
     const [submitting, setSubmitting] = useState(false)
@@ -17,7 +23,7 @@ export default function CobroMultiplePage() {
         metodo_pago: 'EFECTIVO',
         banco_id: '',
         nota: '',
-        fecha: new Date().toISOString().split('T')[0]
+        fecha: todayInputValue()
     })
 
     // id -> { selected: boolean, monto: number }

@@ -11,6 +11,12 @@ import { hasActionAccess } from '../utils/roles'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
+const toDateTimeLocalValue = value => {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = n => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 function estadoBadge(estado) {
     const map = {
@@ -196,7 +202,7 @@ function SeleccionarOSModal({ documentos, seleccionadas, onConfirm, onClose }) {
 
 function PagoProveedorModal({ proveedor, onClose }) {
     const queryClient = useQueryClient()
-    const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 16))
+    const [fecha, setFecha] = useState(() => toDateTimeLocalValue(new Date()))
     const [metodoPago, setMetodoPago] = useState('EFECTIVO')
     const [monto, setMonto] = useState('')
     const [bancoId, setBancoId] = useState('')
@@ -302,7 +308,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
 
         setErrorConfirmacion('')
         registrarPago.mutate({
-            fecha: new Date(fecha).toISOString(),
+            fecha: fecha || null,
             metodos_pago: metodos.map(item => ({
                 metodo_pago: item.metodo_pago,
                 monto: item.monto,
@@ -521,7 +527,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
 
 function EditarPagoHistorialModal({ grupoId, onClose }) {
     const queryClient = useQueryClient()
-    const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 16))
+    const [fecha, setFecha] = useState(() => toDateTimeLocalValue(new Date()))
     const [metodoPago, setMetodoPago] = useState('EFECTIVO')
     const [monto, setMonto] = useState('')
     const [bancoId, setBancoId] = useState('')
@@ -546,7 +552,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
 
     useEffect(() => {
         if (!detalle || seeded) return
-        setFecha(detalle.fecha ? new Date(detalle.fecha).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16))
+        setFecha(detalle.fecha ? toDateTimeLocalValue(detalle.fecha) : toDateTimeLocalValue(new Date()))
         setFacturaGlobal(detalle.factura_global || '')
         setMetodos((detalle.metodos_pago || []).map(item => ({
             metodo_pago: item.metodo_pago,
@@ -625,7 +631,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         }
         setErrorConfirmacion('')
         guardarEdicion.mutate({
-            fecha: new Date(fecha).toISOString(),
+            fecha: fecha || null,
             metodos_pago: metodos.map(item => ({
                 metodo_pago: item.metodo_pago,
                 monto: item.monto,
@@ -1356,5 +1362,4 @@ export default function CuentasPorPagarPage() {
         </div>
     )
 }
-
 

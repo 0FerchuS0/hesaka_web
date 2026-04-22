@@ -13,6 +13,12 @@ import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/u
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
 const fmtDateTime = d => d ? new Date(d).toLocaleString('es-PY', { dateStyle: 'short', timeStyle: 'short' }) : '—'
+const toDateTimeLocalValue = value => {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = n => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 const gs = v => `Gs. ${new Intl.NumberFormat('es-PY').format(v ?? 0)}`
 const formatDateTimeLocalValue = value => {
     if (!value) return ''
@@ -612,7 +618,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     const [metodo, setMetodo] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
     const [nota, setNota] = useState('')
-    const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 16))
+    const [fecha, setFecha] = useState(() => toDateTimeLocalValue(new Date()))
     const [pdfOpeningPagoId, setPdfOpeningPagoId] = useState(null)
     const [deletingPagoId, setDeletingPagoId] = useState(null)
     const { data: jornadaEstado } = useFinancialJornadaStatus()
@@ -718,7 +724,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
             metodo_pago: metodo,
             banco_id: bancoId ? parseInt(bancoId) : null,
             nota: nota || null,
-            fecha: new Date(fecha).toISOString()
+            fecha: fecha || null
         })
     }
 

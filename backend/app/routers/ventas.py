@@ -33,7 +33,7 @@ from app.utils.pdf_recibos_venta import (
 )
 from app.utils.pdf_presupuestos import generar_pdf_presupuesto
 from app.utils.filename_utils import sanitize_filename_component
-from app.utils.jornada import require_jornada_abierta
+from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
 pre_router = APIRouter(prefix="/api/presupuestos", tags=["Presupuestos"])
@@ -52,7 +52,14 @@ def _get_siguiente_codigo(session, modelo, prefijo: str) -> str:
 
 # ─── Helpers financieros ───────────────────────────────────────────────────────
 
-def _registrar_en_caja(session, monto: float, concepto: str, pago_venta_id: Optional[int] = None, grupo_pago_id: Optional[str] = None):
+def _registrar_en_caja(
+    session,
+    monto: float,
+    concepto: str,
+    pago_venta_id: Optional[int] = None,
+    grupo_pago_id: Optional[str] = None,
+    fecha: Optional[datetime] = None,
+):
     """Registra un ingreso de efectivo en caja, actualizando el saldo."""
     jornada = require_jornada_abierta(session)
     caja = session.query(ConfiguracionCaja).first()
@@ -63,6 +70,7 @@ def _registrar_en_caja(session, monto: float, concepto: str, pago_venta_id: Opti
     saldo_ant = caja.saldo_actual
     caja.saldo_actual += monto
     mov = MovimientoCaja(
+        fecha=normalizar_fecha_negocio(session, fecha),
         tipo="INGRESO",
         monto=monto,
         concepto=concepto,
@@ -75,8 +83,16 @@ def _registrar_en_caja(session, monto: float, concepto: str, pago_venta_id: Opti
     return mov
 
 
-def _registrar_en_banco(session, banco_id: int, monto: float, concepto: str,
-                        tipo: str = "INGRESO", pago_venta_id: Optional[int] = None, grupo_pago_id: Optional[str] = None):
+def _registrar_en_banco(
+    session,
+    banco_id: int,
+    monto: float,
+    concepto: str,
+    tipo: str = "INGRESO",
+    pago_venta_id: Optional[int] = None,
+    grupo_pago_id: Optional[str] = None,
+    fecha: Optional[datetime] = None,
+):
     """Registra un movimiento bancario (ingreso o egreso), actualizando el saldo del banco."""
     jornada = require_jornada_abierta(session)
     banco = session.query(Banco).filter(Banco.id == banco_id).first()
@@ -89,6 +105,7 @@ def _registrar_en_banco(session, banco_id: int, monto: float, concepto: str,
         banco.saldo_actual -= monto
     mov = MovimientoBanco(
         banco_id=banco_id,
+        fecha=normalizar_fecha_negocio(session, fecha),
         tipo=tipo,
         monto=monto,
         concepto=concepto,
@@ -103,8 +120,14 @@ def _registrar_en_banco(session, banco_id: int, monto: float, concepto: str,
     return mov
 
 
-def _registrar_comision_tarjeta(session, banco_id: int, monto_pago: float,
-                                 codigo_venta: str, pago_id: int):
+def _registrar_comision_tarjeta(
+    session,
+    banco_id: int,
+    monto_pago: float,
+    codigo_venta: str,
+    pago_id: int,
+    fecha: Optional[datetime] = None,
+):
     """Crea un GastoOperativo automático por comisión de tarjeta y lo descuenta del banco."""
     from app.models.models import GastoOperativo, CategoriaGasto, ConfiguracionEmpresa
     config = session.query(ConfiguracionEmpresa).first()
@@ -123,7 +146,7 @@ def _registrar_comision_tarjeta(session, banco_id: int, monto_pago: float,
 
     # 1. Gasto operativo
     gasto = GastoOperativo(
-        fecha=datetime.now(),
+        fecha=normalizar_fecha_negocio(session, fecha),
         categoria_id=cat.id,
         monto=monto_comision,
         concepto=f"Comisión tarjeta {pct}% - Venta {codigo_venta}",
@@ -139,17 +162,19 @@ def _registrar_comision_tarjeta(session, banco_id: int, monto_pago: float,
         concepto=f"Comisión tarjeta {pct}% - Venta {codigo_venta}",
         tipo="EGRESO",
         pago_venta_id=pago_id,
+        fecha=gasto.fecha,
     )
     gasto.movimiento_banco_id = mov.id
 
 
 def _procesar_pago(session, pago: Pago, venta_codigo: str):
     """Aplica los efectos financieros de un pago (caja / banco / comisión tarjeta)."""
+    pago.fecha = normalizar_fecha_negocio(session, pago.fecha)
     if pago.metodo_pago == "EFECTIVO":
         concepto = f"Pago venta {venta_codigo}"
         if pago.nota:
             concepto += f" ({pago.nota})"
-        _registrar_en_caja(session, pago.monto, concepto, pago_venta_id=pago.id)
+        _registrar_en_caja(session, pago.monto, concepto, pago_venta_id=pago.id, fecha=pago.fecha)
 
     elif pago.metodo_pago in ("TRANSFERENCIA", "TARJETA"):
         if not pago.banco_id:
@@ -157,10 +182,10 @@ def _procesar_pago(session, pago: Pago, venta_codigo: str):
         concepto = f"Cobro venta {venta_codigo} - {pago.metodo_pago}"
         if pago.nota:
             concepto += f" ({pago.nota})"
-        _registrar_en_banco(session, pago.banco_id, pago.monto, concepto, pago_venta_id=pago.id)
+        _registrar_en_banco(session, pago.banco_id, pago.monto, concepto, pago_venta_id=pago.id, fecha=pago.fecha)
 
         if pago.metodo_pago == "TARJETA":
-            _registrar_comision_tarjeta(session, pago.banco_id, pago.monto, venta_codigo, pago.id)
+            _registrar_comision_tarjeta(session, pago.banco_id, pago.monto, venta_codigo, pago.id, fecha=pago.fecha)
 
 
 def _revertir_pago(session, pago: Pago, venta_codigo: str):
@@ -1503,7 +1528,7 @@ def registrar_cobro_multiple(
     session = get_session_for_tenant(tenant_slug)
     try:
         grupo_id = str(uuid.uuid4())
-        fecha_pago = data.fecha if data.fecha else datetime.now()
+        fecha_pago = normalizar_fecha_negocio(session, data.fecha)
         pagos_orm = []
         total_acumulado = 0.0
 
@@ -1535,7 +1560,7 @@ def registrar_cobro_multiple(
 
             # Si es EFECTIVO, registramos movimiento individual en caja (como hacía el legacy)
             if data.metodo_pago == "EFECTIVO":
-                _registrar_en_caja(session, item.monto, f"Cobro Múltiple - Venta {venta.codigo}", pago.id)
+                _registrar_en_caja(session, item.monto, f"Cobro Múltiple - Venta {venta.codigo}", pago.id, fecha=fecha_pago)
 
         # Si es BANCO, registramos UN SOLO movimiento agrupado
         if data.metodo_pago in ("TRANSFERENCIA", "TARJETA"):
@@ -1548,14 +1573,14 @@ def registrar_cobro_multiple(
             
             _registrar_en_banco(
                 session, data.banco_id, total_acumulado, concepto, 
-                tipo="INGRESO", pago_venta_id=None, grupo_pago_id=grupo_id
+                tipo="INGRESO", pago_venta_id=None, grupo_pago_id=grupo_id, fecha=fecha_pago
             )
 
             if data.metodo_pago == "TARJETA":
                 # La comisión de tarjeta en cobro múltiple es un tema complejo.
                 # En el legacy se aplicaba por el total del grupo? 
                 # Reaplicamos lógica: por el total del grupo.
-                _registrar_comision_tarjeta_grupal(session, data.banco_id, total_acumulado, grupo_id)
+                _registrar_comision_tarjeta_grupal(session, data.banco_id, total_acumulado, grupo_id, fecha=fecha_pago)
 
         session.commit()
         return {"ok": True, "grupo_pago_id": grupo_id, "cantidad_pagos": len(pagos_orm)}
@@ -1748,7 +1773,13 @@ def eliminar_ajuste_venta(
         session.close()
 
 
-def _registrar_comision_tarjeta_grupal(session, banco_id: int, monto_total: float, grupo_id: str):
+def _registrar_comision_tarjeta_grupal(
+    session,
+    banco_id: int,
+    monto_total: float,
+    grupo_id: str,
+    fecha: Optional[datetime] = None,
+):
     """Versión grupal de la comisión de tarjeta."""
     from app.models.models import GastoOperativo, CategoriaGasto, ConfiguracionEmpresa
     config = session.query(ConfiguracionEmpresa).first()
@@ -1764,7 +1795,7 @@ def _registrar_comision_tarjeta_grupal(session, banco_id: int, monto_total: floa
     if not cat: return
 
     gasto = GastoOperativo(
-        fecha=datetime.now(),
+        fecha=normalizar_fecha_negocio(session, fecha),
         categoria_id=cat.id,
         monto=monto_comision,
         concepto=f"Comisión tarjeta {pct}% - Cobro Grupal",
@@ -1779,7 +1810,8 @@ def _registrar_comision_tarjeta_grupal(session, banco_id: int, monto_total: floa
         concepto=f"Comisión tarjeta {pct}% - Cobro Grupal",
         tipo="EGRESO",
         pago_venta_id=None,
-        grupo_pago_id=grupo_id
+        grupo_pago_id=grupo_id,
+        fecha=gasto.fecha,
     )
     gasto.movimiento_banco_id = mov.id
 

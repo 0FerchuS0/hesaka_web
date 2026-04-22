@@ -77,6 +77,7 @@ from app.utils.jornada import (
     obtener_ultimo_corte_jornada,
     obtener_jornada_actual,
     hoy_jornada,
+    normalizar_fecha_negocio,
     require_jornada_abierta,
     serializar_movimiento_jornada,
     serializar_corte,
@@ -217,6 +218,7 @@ def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaG
         saldo_ant = caja.saldo_actual
         caja.saldo_actual -= gasto.monto
         movimiento = MovimientoCaja(
+            fecha=gasto.fecha,
             tipo="GASTO",
             monto=gasto.monto,
             concepto=f"Gasto: {categoria.nombre} - {gasto.concepto}",
@@ -1012,6 +1014,7 @@ def ajustar_caja(
         saldo_ant = caja.saldo_actual
         caja.saldo_actual += monto
         movimiento = MovimientoCaja(
+            fecha=normalizar_fecha_negocio(session),
             tipo="AJUSTE",
             monto=monto,
             concepto=concepto,
@@ -1139,6 +1142,7 @@ def registrar_transferencia_interna(
 
         concepto = data.concepto or "TRANSFERENCIA INTERNA"
         transferencia_id = f"TRF-{uuid4().hex[:10].upper()}"
+        fecha_transferencia = normalizar_fecha_negocio(session)
 
         caja = _obtener_o_crear_caja(session)
         banco_origen = session.query(Banco).filter(Banco.id == data.banco_origen_id).first() if data.banco_origen_id else None
@@ -1161,7 +1165,7 @@ def registrar_transferencia_interna(
             saldo_anterior_caja = caja.saldo_actual or 0.0
             caja.saldo_actual = saldo_anterior_caja - monto
             movimiento_caja = MovimientoCaja(
-                fecha=datetime.now(),
+                fecha=fecha_transferencia,
                 tipo="EGRESO",
                 monto=monto,
                 concepto=f"Transferencia interna a {(banco_destino.nombre_banco if banco_destino else 'BANCO')} - {concepto}",
@@ -1176,7 +1180,7 @@ def registrar_transferencia_interna(
             banco_origen.saldo_actual = saldo_anterior_origen - monto
             movimiento_banco_origen = MovimientoBanco(
                 banco_id=banco_origen.id,
-                fecha=datetime.now(),
+                fecha=fecha_transferencia,
                 tipo="EGRESO",
                 monto=monto,
                 concepto=f"Transferencia interna a {('CAJA' if data.destino_tipo == 'CAJA' else banco_destino.nombre_banco)} - {concepto}",
@@ -1193,7 +1197,7 @@ def registrar_transferencia_interna(
             saldo_anterior_caja = caja.saldo_actual or 0.0
             caja.saldo_actual = saldo_anterior_caja + monto
             movimiento_caja_destino = MovimientoCaja(
-                fecha=datetime.now(),
+                fecha=fecha_transferencia,
                 tipo="INGRESO",
                 monto=monto,
                 concepto=f"Transferencia interna desde {(banco_origen.nombre_banco if banco_origen else 'CAJA')} - {concepto}",
@@ -1208,7 +1212,7 @@ def registrar_transferencia_interna(
             banco_destino.saldo_actual = saldo_anterior_destino + monto
             movimiento_banco_destino = MovimientoBanco(
                 banco_id=banco_destino.id,
-                fecha=datetime.now(),
+                fecha=fecha_transferencia,
                 tipo="INGRESO",
                 monto=monto,
                 concepto=f"Transferencia interna desde {('CAJA' if data.origen_tipo == 'CAJA' else banco_origen.nombre_banco)} - {concepto}",
@@ -1519,7 +1523,7 @@ def registrar_gasto(
                 raise HTTPException(status_code=404, detail="Banco no encontrado.")
 
         payload = data.model_dump()
-        payload["fecha"] = payload["fecha"] or datetime.now()
+        payload["fecha"] = normalizar_fecha_negocio(session, payload["fecha"])
         gasto = GastoOperativo(**payload)
         session.add(gasto)
         session.flush()
@@ -1562,7 +1566,7 @@ def editar_gasto(
         _revertir_impacto_gasto(session, gasto)
 
         payload = data.model_dump()
-        payload["fecha"] = payload["fecha"] or gasto.fecha or datetime.now()
+        payload["fecha"] = normalizar_fecha_negocio(session, payload["fecha"] or gasto.fecha)
         for key, value in payload.items():
             setattr(gasto, key, value)
 

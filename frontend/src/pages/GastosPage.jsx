@@ -16,6 +16,20 @@ function fmtDate(value) {
     return value ? new Date(value).toLocaleString('es-PY') : '-'
 }
 
+function toDateInputValue(value) {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = n => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function toDateTimeLocalValue(value) {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = n => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 function orderCategorias(categories, parentId = null, level = 0) {
     const current = categories
         .filter(category => (category.categoria_padre_id ?? null) === parentId)
@@ -33,8 +47,8 @@ export default function GastosPage() {
     const [modalGasto, setModalGasto] = useState(null)
     const [categoriaEditando, setCategoriaEditando] = useState(null)
     const [categoriaFiltro, setCategoriaFiltro] = useState('')
-    const [fechaDesde, setFechaDesde] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10))
-    const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().slice(0, 10))
+    const [fechaDesde, setFechaDesde] = useState(() => toDateInputValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
+    const [fechaHasta, setFechaHasta] = useState(() => toDateInputValue(new Date()))
 
     const [formCategoria, setFormCategoria] = useState({ nombre: '', descripcion: '', categoria_padre_id: '' })
     const [formGasto, setFormGasto] = useState({
@@ -44,7 +58,7 @@ export default function GastosPage() {
         comprobante: '',
         metodo_pago: 'EFECTIVO',
         banco_id: '',
-        fecha: new Date().toISOString().slice(0, 16),
+        fecha: toDateTimeLocalValue(new Date()),
     })
     const { data: jornadaEstado } = useFinancialJornadaStatus()
     const jornadaAbierta = Boolean(jornadaEstado?.abierta)
@@ -56,7 +70,7 @@ export default function GastosPage() {
         comprobante: '',
         metodo_pago: 'EFECTIVO',
         banco_id: '',
-        fecha: new Date().toISOString().slice(0, 16),
+        fecha: toDateTimeLocalValue(new Date()),
     })
 
     const { data: categorias = [] } = useQuery({
@@ -276,7 +290,7 @@ export default function GastosPage() {
                                                         comprobante: gasto.comprobante || '',
                                                         metodo_pago: gasto.metodo_pago || 'EFECTIVO',
                                                         banco_id: gasto.banco_id ? String(gasto.banco_id) : '',
-                                                        fecha: gasto.fecha ? new Date(gasto.fecha).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
+                                                        fecha: gasto.fecha ? toDateTimeLocalValue(gasto.fecha) : toDateTimeLocalValue(new Date()),
                                                     })
                                                     setModalGasto(gasto)
                                                 }}
@@ -436,7 +450,7 @@ export default function GastosPage() {
                             categoria_id: parseInt(formGasto.categoria_id, 10),
                             monto: parseFloat(formGasto.monto),
                             banco_id: formGasto.banco_id ? parseInt(formGasto.banco_id, 10) : null,
-                            fecha: formGasto.fecha ? new Date(formGasto.fecha).toISOString() : null,
+                            fecha: formGasto.fecha || null,
                         }
                         if (modalGasto === 'nuevo') {
                             crearGasto.mutate(payload)

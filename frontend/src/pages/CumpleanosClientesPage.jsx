@@ -142,10 +142,11 @@ export default function CumpleanosClientesPage() {
     const [fecha, setFecha] = useState(todayInputValue())
     const [buscar, setBuscar] = useState('')
     const [whatsappCliente, setWhatsappCliente] = useState(null)
+    const fechaConsulta = /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : todayInputValue()
 
     const { data: apiData, isLoading, isError, error } = useQuery({
-        queryKey: ['clientes-cumpleanos', fecha],
-        queryFn: () => api.get(`/clientes/cumpleanos?fecha=${fecha}`).then(response => response.data),
+        queryKey: ['clientes-cumpleanos', fechaConsulta],
+        queryFn: () => api.get(`/clientes/cumpleanos?fecha=${fechaConsulta}`).then(response => response.data),
         retry: false,
     })
     const data = Array.isArray(apiData) ? apiData : []
@@ -170,7 +171,7 @@ export default function CumpleanosClientesPage() {
                     </div>
                     <div>
                         <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Cumpleaños de clientes</h2>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{data.length} cumpleaños para {fmt(fecha)}</p>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{data.length} cumpleaños para {fmt(fechaConsulta)}</p>
                     </div>
                 </div>
             </div>
@@ -180,7 +181,7 @@ export default function CumpleanosClientesPage() {
                     <label className="form-label">Fecha</label>
                     <div style={{ position: 'relative' }}>
                         <CalendarDays size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
-                        <input className="form-input" type="date" value={fecha} onChange={event => setFecha(event.target.value || todayInputValue())} style={{ paddingLeft: 38 }} />
+                        <input className="form-input" type="date" value={fecha} onChange={event => setFecha(event.target.value)} style={{ paddingLeft: 38 }} />
                     </div>
                 </div>
                 <div className="search-bar" style={{ flex: '1 1 320px', minWidth: 240, marginTop: 24 }}>

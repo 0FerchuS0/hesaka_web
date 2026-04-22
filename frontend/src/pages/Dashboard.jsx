@@ -118,7 +118,7 @@ function buildBirthdayWhatsappLink(cliente, empresa = 'HESAKA') {
     if (!telefono) return ''
     const mensaje = [
         `Hola ${cliente?.nombre || ''}, te escribimos de ${empresa}.`,
-        'Queremos desearte un muy feliz cumpleanos.',
+        'Queremos desearte un muy feliz cumpleaños.',
         'Que tengas un excelente dia.',
     ].join(' ')
     return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
@@ -305,14 +305,14 @@ export default function Dashboard() {
                     <div className="card-title flex-between">
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <Gift size={18} style={{ color: '#fbbf24' }} />
-                            Cumpleanos de hoy
+                            Cumpleaños de hoy
                         </span>
                         <a href="/clientes/cumpleanos" className="btn btn-secondary btn-sm">
                             Ver modulo
                         </a>
                     </div>
                     <div style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-                        Hay {birthdayItems.length} cliente(s) de cumpleanos hoy.
+                        Hay {birthdayItems.length} cliente(s) de cumpleaños hoy.
                     </div>
                     <div style={{ display: 'grid', gap: 10 }}>
                         {birthdayItems.slice(0, 4).map(cliente => {
@@ -322,7 +322,7 @@ export default function Dashboard() {
                                     <div style={{ minWidth: 0 }}>
                                         <div style={{ fontWeight: 800 }}>{cliente.nombre}</div>
                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>
-                                            {cliente.edad ? `Cumple ${cliente.edad} anos` : 'Cumpleanos registrado'} {cliente.telefono ? `- ${cliente.telefono}` : ''}
+                                            {cliente.edad ? `Cumple ${cliente.edad} años` : 'Cumpleaños registrado'} {cliente.telefono ? `- ${cliente.telefono}` : ''}
                                         </div>
                                     </div>
                                     <a
@@ -346,7 +346,7 @@ export default function Dashboard() {
                     </div>
                     {birthdayItems.length > 4 ? (
                         <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: '0.84rem' }}>
-                            Y {birthdayItems.length - 4} mas en el modulo de cumpleanos.
+                            Y {birthdayItems.length - 4} más en el módulo de cumpleaños.
                         </div>
                     ) : null}
                 </div>

@@ -77,7 +77,7 @@ const navGroups = [
                 label: 'Clientes',
                 subItems: [
                     { to: '/clientes', label: 'Listado de Clientes' },
-                    { to: '/clientes/cumpleanos', label: 'Cumpleanos' },
+                    { to: '/clientes/cumpleanos', label: 'Cumpleaños' },
                     { to: '/clientes/saldos', label: 'Saldos Clientes' },
                 ]
             },

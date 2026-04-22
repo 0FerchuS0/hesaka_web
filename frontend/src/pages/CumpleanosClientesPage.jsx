@@ -5,7 +5,7 @@ import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
 
 const TEMPLATE_KEY = 'hesaka-cumpleanos-whatsapp-template'
-const DEFAULT_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleanos. Que tengas un excelente dia.'
+const DEFAULT_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
 
 function todayInputValue() {
     return new Date().toISOString().slice(0, 10)
@@ -77,11 +77,11 @@ function CumpleanosWhatsappModal({ cliente, onClose }) {
 
     const guardarPlantilla = () => {
         localStorage.setItem(TEMPLATE_KEY, buildTemplateFromMessage(message, cliente, empresaNombre))
-        window.alert('Plantilla de cumpleanos guardada.')
+        window.alert('Plantilla de cumpleaños guardada.')
     }
 
     return (
-        <Modal title="Mensaje de cumpleanos" onClose={onClose} maxWidth="720px">
+        <Modal title="Mensaje de cumpleaños" onClose={onClose} maxWidth="720px">
             <div style={{ display: 'grid', gap: 14 }}>
                 <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
                     <div style={{ fontWeight: 800 }}>{cliente?.nombre}</div>
@@ -169,8 +169,8 @@ export default function CumpleanosClientesPage() {
                         <Gift size={20} style={{ color: '#fbbf24' }} />
                     </div>
                     <div>
-                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Cumpleanos de clientes</h2>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{data.length} cumpleanos para {fmt(fecha)}</p>
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Cumpleaños de clientes</h2>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{data.length} cumpleaños para {fmt(fecha)}</p>
                     </div>
                 </div>
             </div>
@@ -198,15 +198,15 @@ export default function CumpleanosClientesPage() {
                         <div className="spinner" style={{ width: 32, height: 32 }} />
                     </div>
                 ) : isError ? (
-                    <div className="alert alert-error">{error?.response?.data?.detail || 'No se pudieron cargar los cumpleanos.'}</div>
+                    <div className="alert alert-error">{error?.response?.data?.detail || 'No se pudieron cargar los cumpleaños.'}</div>
                 ) : dataShapeError ? (
                     <div className="alert alert-error">
-                        La respuesta de cumpleanos no tiene el formato esperado. Verifica backend/deploy del endpoint <code>/api/clientes/cumpleanos</code>.
+                        La respuesta de cumpleaños no tiene el formato esperado. Verifica backend/deploy del endpoint <code>/api/clientes/cumpleanos</code>.
                     </div>
                 ) : filtrados.length === 0 ? (
                     <div className="empty-state" style={{ padding: '70px 20px' }}>
                         <Gift size={42} />
-                        <p>No hay clientes de cumpleanos para esta fecha.</p>
+                        <p>No hay clientes de cumpleaños para esta fecha.</p>
                     </div>
                 ) : (
                     <div className="table-container" style={{ overflowX: 'auto' }}>
@@ -233,7 +233,7 @@ export default function CumpleanosClientesPage() {
                                             ) : <span style={{ color: 'var(--text-muted)' }}>-</span>}
                                         </td>
                                         <td>{cliente.ci || '-'}</td>
-                                        <td>{cliente.edad ? `${cliente.edad} anos` : '-'}</td>
+                                        <td>{cliente.edad ? `${cliente.edad} años` : '-'}</td>
                                         <td>{cliente.referidor_nombre || '-'}</td>
                                         <td>
                                             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setWhatsappCliente(cliente)}>

@@ -208,7 +208,7 @@ function AppLayout() {
                         <Route path="/configuracion-general" element={<ConfiguracionGeneralPage />} />
                         <Route path="/configuracion-general/backups" element={<ConfiguracionBackupsPage />} />
                         <Route path="/clientes" element={<RoleRoute allowedRoles="catalogos"><ClientesPage /></RoleRoute>} />
-                        <Route path="/clientes/cumpleanos" element={<RoleRoute allowedRoles="catalogos"><CumpleanosClientesPage /></RoleRoute>} />
+                        <Route path="/clientes/cumpleanos" element={<RoleRoute allowedRoles="catalogos"><RouteErrorBoundary><CumpleanosClientesPage /></RouteErrorBoundary></RoleRoute>} />
                         <Route path="/clientes/saldos" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteSaldosClientesPage /></RoleRoute>} />
                         <Route path="/referidores" element={<RoleRoute allowedRoles="catalogos"><ReferidoresPage /></RoleRoute>} />
                         <Route path="/vendedores" element={<RoleRoute allowedRoles="catalogos"><VendedoresPage /></RoleRoute>} />

@@ -16,8 +16,10 @@ from app.utils.excel_reporte_ventas import generar_excel_reporte_ventas
 from app.utils.pdf_reporte_finanzas import generar_pdf_reporte_finanzas
 from app.utils.pdf_reporte_compras import generar_pdf_reporte_compras
 from app.utils.excel_reporte_compras import generar_excel_reporte_compras
+from app.utils.excel_reporte_ventas_productos import generar_excel_reporte_ventas_productos
 from app.utils.pdf_estado_cuenta_cliente import generar_pdf_estado_cuenta_cliente
 from app.utils.pdf_reporte_trabajos_lab import generar_pdf_reporte_trabajos_lab
+from app.utils.pdf_reporte_ventas_productos import generar_pdf_reporte_ventas_productos
 from app.utils.configuracion_general import obtener_canal_principal
 from app.utils.filename_utils import build_period_suffix, sanitize_filename_component
 from app.utils.timezone import ahora_negocio, fecha_actual_negocio
@@ -1073,6 +1075,7 @@ def _obtener_datos_reporte_ventas_por_producto(
     cliente_id: Optional[int] = None,
     categoria_id: Optional[int] = None,
     producto_id: Optional[int] = None,
+    producto_ids: Optional[List[int]] = None,
     vendedor_id: Optional[int] = None,
     canal_venta_id: Optional[int] = None,
 ):
@@ -1122,7 +1125,9 @@ def _obtener_datos_reporte_ventas_por_producto(
 
     if categoria_id:
         query = query.filter(Producto.categoria_id == categoria_id)
-    if producto_id:
+    if producto_ids:
+        query = query.filter(PresupuestoItem.producto_id.in_(producto_ids))
+    elif producto_id:
         query = query.filter(PresupuestoItem.producto_id == producto_id)
 
     rows = (
@@ -1713,6 +1718,7 @@ def obtener_reporte_ventas_por_producto(
     cliente_id: Optional[int] = Query(None),
     categoria_id: Optional[int] = Query(None),
     producto_id: Optional[int] = Query(None),
+    producto_ids: Optional[List[int]] = Query(None),
     vendedor_id: Optional[int] = Query(None),
     canal_venta_id: Optional[int] = Query(None),
     tenant_slug: str = Depends(get_tenant_slug),
@@ -1727,8 +1733,83 @@ def obtener_reporte_ventas_por_producto(
             cliente_id=cliente_id,
             categoria_id=categoria_id,
             producto_id=producto_id,
+            producto_ids=producto_ids,
             vendedor_id=vendedor_id,
             canal_venta_id=canal_venta_id,
+        )
+    finally:
+        session.close()
+
+
+@router.get("/ventas-por-producto/pdf")
+def exportar_reporte_ventas_por_producto_pdf(
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
+    cliente_id: Optional[int] = Query(None),
+    categoria_id: Optional[int] = Query(None),
+    producto_id: Optional[int] = Query(None),
+    producto_ids: Optional[List[int]] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        resumen = _obtener_datos_reporte_ventas_por_producto(
+            session,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            cliente_id=cliente_id,
+            categoria_id=categoria_id,
+            producto_id=producto_id,
+            producto_ids=producto_ids,
+            vendedor_id=vendedor_id,
+            canal_venta_id=canal_venta_id,
+        )
+        config = session.query(ConfiguracionEmpresa).first()
+        pdf_buffer = generar_pdf_reporte_ventas_productos(resumen, config, fecha_desde, fecha_hasta)
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_ventas_productos", fecha_desde, fecha_hasta)}"'},
+        )
+    finally:
+        session.close()
+
+
+@router.get("/ventas-por-producto/excel")
+def exportar_reporte_ventas_por_producto_excel(
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
+    cliente_id: Optional[int] = Query(None),
+    categoria_id: Optional[int] = Query(None),
+    producto_id: Optional[int] = Query(None),
+    producto_ids: Optional[List[int]] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        resumen = _obtener_datos_reporte_ventas_por_producto(
+            session,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            cliente_id=cliente_id,
+            categoria_id=categoria_id,
+            producto_id=producto_id,
+            producto_ids=producto_ids,
+            vendedor_id=vendedor_id,
+            canal_venta_id=canal_venta_id,
+        )
+        config = session.query(ConfiguracionEmpresa).first()
+        excel_buffer = generar_excel_reporte_ventas_productos(resumen, config, fecha_desde, fecha_hasta)
+        return StreamingResponse(
+            excel_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'inline; filename="{_build_report_filename("reporte_ventas_productos", fecha_desde, fecha_hasta, "xlsx")}"'},
         )
     finally:
         session.close()

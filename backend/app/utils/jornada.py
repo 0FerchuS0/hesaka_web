@@ -2,13 +2,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone, tzinfo
 from types import SimpleNamespace
 from typing import Optional
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, text
+from sqlalchemy import case, func
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.models.models import (
     Banco,
     ConfiguracionCaja,
@@ -22,57 +20,12 @@ from app.models.models import (
     Usuario,
     Venta,
 )
-
-
-def _resolver_tz_negocio(tz_name: str | None) -> tzinfo:
-    tz_name = (tz_name or settings.BUSINESS_TIMEZONE or "America/Asuncion").strip()
-    try:
-        return ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        try:
-            fallback_name = (settings.BUSINESS_TIMEZONE or "America/Asuncion").strip()
-            if fallback_name and fallback_name != tz_name:
-                return ZoneInfo(fallback_name)
-        except ZoneInfoNotFoundError:
-            pass
-        # Fallback final seguro incluso cuando no existe base IANA (tzdata ausente).
-        return timezone.utc
-
-
-def _leer_timezone_tenant_desde_db(session) -> str | None:
-    if session is None:
-        return None
-    try:
-        row = session.execute(text("SELECT business_timezone FROM configuracion_empresa ORDER BY id ASC LIMIT 1")).first()
-        if not row:
-            return None
-        tz = (row[0] or "").strip()
-        return tz or None
-    except Exception:
-        # Evita romper jornada si la columna aun no existe en un tenant legado.
-        return None
-
-
-def _zona_horaria_negocio(session=None) -> tzinfo:
-    tz_name = _leer_timezone_tenant_desde_db(session)
-    return _resolver_tz_negocio(tz_name)
-
-
-def ahora_negocio(session=None) -> datetime:
-    """Fecha/hora actual en zona de negocio (naive para compatibilidad con columnas DateTime sin tz)."""
-    tz = _zona_horaria_negocio(session)
-    return datetime.now(tz).replace(tzinfo=None)
-
-
-def normalizar_fecha_negocio(session, value: datetime | None = None) -> datetime:
-    """Interpreta fechas financieras bajo la zona horaria configurada del negocio."""
-    tz = _zona_horaria_negocio(session)
-    if value is None:
-        return datetime.now(tz).replace(tzinfo=None)
-    if getattr(value, "tzinfo", None) is not None:
-        return value.astimezone(tz).replace(tzinfo=None)
-    return value
-
+from app.utils.timezone import (
+    ahora_negocio,
+    fecha_actual_negocio,
+    normalizar_fecha_negocio,
+    zona_horaria_negocio as _zona_horaria_negocio,
+)
 
 def resolver_destinatario_rendicion_activo(session, destinatario_id: int) -> DestinatarioRendicion:
     dest = session.query(DestinatarioRendicion).filter(DestinatarioRendicion.id == destinatario_id).first()
@@ -109,7 +62,7 @@ class MovimientoJornadaNormalizado:
 
 
 def hoy_jornada(session=None) -> date:
-    return ahora_negocio(session).date()
+    return fecha_actual_negocio(session)
 
 
 def _normalizar_datetime_local(value: datetime, tz: tzinfo) -> datetime:
@@ -139,8 +92,51 @@ def _instante_movimiento_sql_least(m, tz: tzinfo) -> datetime:
     return a if a <= b else b
 
 
+def _jornada_sin_movimientos(session, jornada_id: int) -> bool:
+    checks = [
+        session.query(MovimientoCaja.id).filter(MovimientoCaja.jornada_id == jornada_id).first(),
+        session.query(MovimientoBanco.id).filter(MovimientoBanco.jornada_id == jornada_id).first(),
+        session.query(CorteJornadaFinanciera.id).filter(CorteJornadaFinanciera.jornada_id == jornada_id).first(),
+        session.query(RendicionJornadaFinanciera.id).filter(RendicionJornadaFinanciera.jornada_id == jornada_id).first(),
+    ]
+    return all(item is None for item in checks)
+
+
+def corregir_jornada_adelantada_por_utc(session, today: date) -> None:
+    futuras_abiertas = (
+        session.query(JornadaFinanciera)
+        .filter(JornadaFinanciera.estado == "ABIERTA", JornadaFinanciera.fecha > today)
+        .all()
+    )
+    if not futuras_abiertas:
+        return
+
+    corrigio = False
+    for jornada in futuras_abiertas:
+        hora_apertura = jornada.fecha_hora_apertura
+        parece_desfase_utc = (
+            hora_apertura is not None
+            and hora_apertura.date() == jornada.fecha
+            and hora_apertura.hour < 4
+        )
+        if parece_desfase_utc and _jornada_sin_movimientos(session, jornada.id):
+            session.delete(jornada)
+            corrigio = True
+
+    if corrigio:
+        jornada_hoy = (
+            session.query(JornadaFinanciera)
+            .filter(JornadaFinanciera.fecha == today, JornadaFinanciera.estado == "VENCIDA")
+            .first()
+        )
+        if jornada_hoy:
+            jornada_hoy.estado = "ABIERTA"
+        session.flush()
+
+
 def vencer_jornadas_antiguas(session) -> None:
     today = hoy_jornada(session)
+    corregir_jornada_adelantada_por_utc(session, today)
     (
         session.query(JornadaFinanciera)
         .filter(JornadaFinanciera.estado == "ABIERTA", JornadaFinanciera.fecha < today)

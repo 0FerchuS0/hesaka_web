@@ -1,6 +1,5 @@
 import io
 import os
-from datetime import datetime
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -9,6 +8,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from app.utils.media_storage import resolve_logo_disk_path
+from app.utils.timezone import ahora_desde_config
 
 
 def _fmt_gs(value):
@@ -70,7 +70,7 @@ def generar_pdf_reporte_trabajos_lab(trabajos, config, fecha_desde=None, fecha_h
     else:
         periodo = "Periodo: mes actual"
     elements.append(Paragraph(periodo, subtitle_style))
-    elements.append(Paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}", subtitle_style))
+    elements.append(Paragraph(f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}", subtitle_style))
     elements.append(Spacer(1, 0.3 * cm))
 
     resumen_data = [

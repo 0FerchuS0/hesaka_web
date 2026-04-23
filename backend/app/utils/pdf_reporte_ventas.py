@@ -1,6 +1,5 @@
 import io
 import os
-from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import cm
@@ -8,6 +7,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 from app.utils.media_storage import resolve_logo_disk_path
+from app.utils.timezone import ahora_desde_config
 
 def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hasta=None, 
                         total_comisiones_referidores=0.0, total_comisiones_bancarias=0.0) -> io.BytesIO:
@@ -116,7 +116,7 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
     elements.append(Paragraph(period_text, subtitle_style))
     
     # Generation date
-    gen_date = f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    gen_date = f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}"
     elements.append(Paragraph(gen_date, subtitle_style))
     
     elements.append(Spacer(1, 0.5*cm))

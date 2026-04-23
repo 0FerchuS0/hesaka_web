@@ -1,8 +1,8 @@
 import io
-from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from app.utils.timezone import ahora_desde_config
 
 def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hasta=None, 
                                  total_comisiones_referidores=0.0, total_comisiones_bancarias=0.0) -> io.BytesIO:
@@ -60,7 +60,7 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
     ws['A3'].font = font_subtitle
     ws['A3'].alignment = align_center
     
-    gen_date = f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    gen_date = f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}"
     ws.merge_cells('A4:H4')
     ws['A4'] = gen_date
     ws['A4'].font = font_normal

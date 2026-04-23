@@ -34,6 +34,7 @@ from app.utils.pdf_recibos_venta import (
 from app.utils.pdf_presupuestos import generar_pdf_presupuesto
 from app.utils.filename_utils import sanitize_filename_component
 from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta
+from app.utils.timezone import ahora_negocio
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
 pre_router = APIRouter(prefix="/api/presupuestos", tags=["Presupuestos"])
@@ -285,7 +286,7 @@ def _build_presupuesto_out(p):
     return PresupuestoOut(
         id=getattr(p, "id", 0) or 0,
         codigo=getattr(p, "codigo", "") or "",
-        fecha=getattr(p, "fecha", datetime.now()) or datetime.now(),
+        fecha=getattr(p, "fecha", ahora_negocio()) or ahora_negocio(),
         estado=getattr(p, "estado", "BORRADOR") or "BORRADOR",
         cliente_id=getattr(p, "cliente_id", 0) or 0,
         cliente_nombre=p.cliente_rel.nombre if getattr(p, "cliente_rel", None) else None,
@@ -1466,7 +1467,7 @@ def descargar_recibos_ventas_multiples(
         config = session.query(ConfiguracionEmpresa).first()
         pdf_buffer = generar_recibos_ventas_concatenado(ventas_data, config=config)
         codigos = [sanitize_filename_component(venta.codigo, "venta") for venta in ventas[:3]]
-        sufijo = "_".join(codigos) if codigos else datetime.now().strftime('%Y%m%d_%H%M%S')
+        sufijo = "_".join(codigos) if codigos else ahora_negocio(session).strftime('%Y%m%d_%H%M%S')
         if len(ventas) > 3:
             sufijo = f"{sufijo}_y_{len(ventas) - 3}_mas"
         nombre_archivo = f"ventas_{sufijo}.pdf"

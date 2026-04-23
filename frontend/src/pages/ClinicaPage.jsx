@@ -1109,7 +1109,7 @@ function TurnoClinicoForm({
         paciente_telefono_libre: initialData?.paciente_telefono_libre || (!initialData?.paciente_id ? initialData?.paciente_telefono || '' : ''),
         doctor_id: initialData?.doctor_id || '',
         lugar_atencion_id: initialData?.lugar_atencion_id || '',
-        fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : new Date().toISOString().slice(0, 16),
+        fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : formatDateTimeLocalValue(new Date()),
         estado: initialData?.estado || 'PENDIENTE',
         motivo: initialData?.motivo || '',
         notas: initialData?.notas || '',
@@ -1129,7 +1129,7 @@ function TurnoClinicoForm({
             paciente_telefono_libre: initialData?.paciente_telefono_libre || (!initialData?.paciente_id ? initialData?.paciente_telefono || '' : ''),
             doctor_id: initialData?.doctor_id || '',
             lugar_atencion_id: initialData?.lugar_atencion_id || '',
-            fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : new Date().toISOString().slice(0, 16),
+            fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : formatDateTimeLocalValue(new Date()),
             estado: initialData?.estado || 'PENDIENTE',
             motivo: initialData?.motivo || '',
             notas: initialData?.notas || '',
@@ -1252,12 +1252,12 @@ function AgendaClinicaSection() {
     const plusDays = useMemo(() => {
         const next = new Date(today)
         next.setDate(next.getDate() + 7)
-        return next.toISOString().slice(0, 10)
+        return formatDateInputValue(next)
     }, [today])
     const [buscar, setBuscar] = useState('')
     const [estado, setEstado] = useState('')
     const [recordatorioFiltro, setRecordatorioFiltro] = useState('')
-    const [fechaDesde, setFechaDesde] = useState(today.toISOString().slice(0, 10))
+    const [fechaDesde, setFechaDesde] = useState(formatDateInputValue(today))
     const [fechaHasta, setFechaHasta] = useState(plusDays)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
@@ -1394,8 +1394,8 @@ function AgendaClinicaSection() {
         } else if (tipo === 'semana') {
             to.setDate(to.getDate() + 7)
         }
-        setFechaDesde(from.toISOString().slice(0, 10))
-        setFechaHasta(to.toISOString().slice(0, 10))
+        setFechaDesde(formatDateInputValue(from))
+        setFechaHasta(formatDateInputValue(to))
         setRecordatorioFiltro('')
         setPage(1)
     }
@@ -1488,7 +1488,7 @@ function AgendaClinicaSection() {
                             className="btn btn-secondary btn-sm"
                             onClick={() => {
                                 setRecordatorioFiltro('')
-                                setFechaDesde(today.toISOString().slice(0, 10))
+                                setFechaDesde(formatDateInputValue(today))
                                 setFechaHasta(plusDays)
                                 setPage(1)
                             }}
@@ -3035,7 +3035,7 @@ function RecetaMedicamentoForm({
 }) {
     const recipeAlreadySaved = Boolean(savedReceta?.id)
     const [form, setForm] = useState(() => ({
-        fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : new Date().toISOString().slice(0, 16),
+        fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : formatDateTimeLocalValue(new Date()),
         doctor_nombre: initialData?.doctor_nombre || '',
         diagnostico: initialData?.diagnostico || '',
         observaciones: initialData?.observaciones || '',
@@ -3051,7 +3051,7 @@ function RecetaMedicamentoForm({
 
     useEffect(() => {
         setForm({
-            fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : new Date().toISOString().slice(0, 16),
+            fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : formatDateTimeLocalValue(new Date()),
             doctor_nombre: initialData?.doctor_nombre || '',
             diagnostico: initialData?.diagnostico || '',
             observaciones: initialData?.observaciones || '',

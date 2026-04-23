@@ -1,5 +1,4 @@
 import io
-from datetime import datetime
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -7,6 +6,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from app.utils.timezone import ahora_desde_config
 
 
 GREEN_TEXT = colors.HexColor("#15803d")
@@ -107,7 +107,7 @@ def generar_pdf_reporte_finanzas(
     else:
         period_text = "Periodo: Movimientos financieros"
     elements.append(Paragraph(period_text, subtitle_style))
-    elements.append(Paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}", subtitle_style))
+    elements.append(Paragraph(f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}", subtitle_style))
     elements.append(Spacer(1, 0.4 * cm))
 
     elements.append(Paragraph("RESUMEN", section_style))

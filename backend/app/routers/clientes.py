@@ -75,6 +75,7 @@ from app.utils.excel_reporte_clientes import generar_excel_reporte_clientes
 from app.utils.filename_utils import sanitize_filename_component
 from app.utils.pdf_fichas import generar_pdf_ficha_cliente, generar_pdf_ficha_proveedor
 from app.utils.pdf_reporte_clientes import generar_pdf_reporte_clientes
+from app.utils.timezone import ahora_negocio, fecha_actual_negocio
 
 router = APIRouter(prefix="/api/clientes", tags=["Clientes"])
 prov_router = APIRouter(prefix="/api/proveedores", tags=["Proveedores"])
@@ -184,7 +185,7 @@ def _construir_query_clientes(session, buscar: Optional[str], referidor_id: Opti
 def _calcular_edad(fecha_nacimiento: date | None, fecha_referencia: date | None = None) -> int | None:
     if not fecha_nacimiento:
         return None
-    referencia = fecha_referencia or date.today()
+    referencia = fecha_referencia or fecha_actual_negocio()
     return referencia.year - fecha_nacimiento.year - (
         (referencia.month, referencia.day) < (fecha_nacimiento.month, fecha_nacimiento.day)
     )
@@ -682,7 +683,7 @@ def _build_cliente_ficha(session, cliente: Cliente):
 
         historial_armazones.append(
             ArmazonHistorialItemOut(
-                fecha=presupuesto.fecha if presupuesto else cliente.fecha_registro or datetime.now(),
+                fecha=presupuesto.fecha if presupuesto else cliente.fecha_registro or ahora_negocio(session),
                 producto=item.producto_rel.nombre if item.producto_rel else (item.descripcion or "-"),
                 codigo_producto=item.producto_rel.codigo if item.producto_rel else None,
                 codigo_armazon=item.codigo_armazon or "-",
@@ -922,9 +923,9 @@ def listar_cumpleanos_clientes(
     current_user=Depends(get_current_user),
     fecha: date | None = Query(default=None),
 ):
-    fecha_objetivo = fecha or date.today()
     session = get_session_for_tenant(tenant_slug)
     try:
+        fecha_objetivo = fecha or fecha_actual_negocio(session)
         resultados: list[ClienteCumpleanosOut] = []
         cliente_ids_cubiertos: set[int] = set()
 

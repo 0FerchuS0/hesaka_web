@@ -1,8 +1,8 @@
 import io
-from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from app.utils.timezone import ahora_desde_config
 
 
 def generar_excel_rendicion_jornada(rendicion, resumen, config):
@@ -41,7 +41,7 @@ def generar_excel_rendicion_jornada(rendicion, resumen, config):
     ws["A2"].alignment = align_center
 
     ws.merge_cells("A3:F3")
-    ws["A3"] = f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    ws["A3"] = f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}"
     ws["A3"].alignment = align_right
 
     row = 5

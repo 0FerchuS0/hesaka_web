@@ -19,6 +19,12 @@ function fmt(value) {
     }).format(value ?? 0)
 }
 
+function todayInputValue() {
+    const now = new Date()
+    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    return localDate.toISOString().slice(0, 10)
+}
+
 function fmtShortRange(desde, hasta) {
     const start = new Date(desde)
     const end = new Date(hasta)
@@ -134,7 +140,7 @@ function flattenReminderBuckets(reminderBuckets) {
 
 function getDailyReminderStorageKey(user) {
     const userKey = user?.id || user?.email || user?.nombre || 'anon'
-    return `hesaka-recordatorios-vistos-${userKey}-${new Date().toISOString().slice(0, 10)}`
+    return `hesaka-recordatorios-vistos-${userKey}-${todayInputValue()}`
 }
 
 function ReminderCards({ items, onMarkRemembered, actionPendingId = null }) {
@@ -193,7 +199,7 @@ export default function Dashboard() {
         staleTime: 60 * 1000,
     })
     const birthdayQuery = useQuery({
-        queryKey: ['clientes', 'cumpleanos', new Date().toISOString().slice(0, 10)],
+        queryKey: ['clientes', 'cumpleanos', todayInputValue()],
         queryFn: async () => (await api.get('/clientes/cumpleanos')).data,
         staleTime: 5 * 60 * 1000,
         retry: false,

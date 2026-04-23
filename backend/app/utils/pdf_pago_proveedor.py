@@ -1,5 +1,4 @@
 import io
-from datetime import datetime
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -7,6 +6,7 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from app.utils.timezone import ahora_desde_config
 
 
 def _fmt_gs(valor):
@@ -136,7 +136,7 @@ def generar_pdf_pago_proveedor(grupo, config):
     elementos = [
         Paragraph(company_name, title_style),
         Paragraph("COMPROBANTE DE PAGO A PROVEEDOR", title_style),
-        Paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}", subtitle_style),
+        Paragraph(f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}", subtitle_style),
         Spacer(1, 0.3 * cm),
     ]
 

@@ -8,7 +8,9 @@ const TEMPLATE_KEY = 'hesaka-cumpleanos-whatsapp-template'
 const DEFAULT_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
 
 function todayInputValue() {
-    return new Date().toISOString().slice(0, 10)
+    const now = new Date()
+    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    return localDate.toISOString().slice(0, 10)
 }
 
 function fmt(fecha) {

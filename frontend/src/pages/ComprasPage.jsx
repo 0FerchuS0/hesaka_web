@@ -13,6 +13,12 @@ import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/u
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
 const fmtDateTime = value => value ? new Date(value).toLocaleString('es-PY') : '-'
+const formatDateInputValue = value => {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = number => String(number).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
 const COMPRA_FLOW_OPTIONS = [
@@ -651,7 +657,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
         setTipoDocumento(compraDetalle.tipo_documento || 'FACTURA')
         setNroFactura(compraDetalle.nro_factura || '')
         setCondicionPago(compraDetalle.condicion_pago || 'CONTADO')
-        setFechaVencimiento(compraDetalle.fecha_vencimiento ? new Date(compraDetalle.fecha_vencimiento).toISOString().slice(0, 10) : '')
+        setFechaVencimiento(compraDetalle.fecha_vencimiento ? formatDateInputValue(compraDetalle.fecha_vencimiento) : '')
         setTipoCompra(compraDetalle.tipo_compra || 'ORIGINAL')
         setEstadoEntrega(compraDetalle.estado_entrega || 'RECIBIDO')
         setObservaciones(compraDetalle.observaciones || '')

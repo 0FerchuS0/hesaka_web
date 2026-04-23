@@ -20,6 +20,7 @@ from app.utils.pdf_estado_cuenta_cliente import generar_pdf_estado_cuenta_client
 from app.utils.pdf_reporte_trabajos_lab import generar_pdf_reporte_trabajos_lab
 from app.utils.configuracion_general import obtener_canal_principal
 from app.utils.filename_utils import build_period_suffix, sanitize_filename_component
+from app.utils.timezone import ahora_negocio, fecha_actual_negocio
 
 router = APIRouter(prefix="/api/reportes", tags=["Reportes"])
 
@@ -492,7 +493,7 @@ def _detalle_trabajo_laboratorio(venta: Venta) -> str:
 
 
 def _obtener_comparativa_dashboard(session: Session) -> ComparativaVentasDashboardOut:
-    ahora = datetime.now()
+    ahora = ahora_negocio(session)
 
     inicio_actual = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     fin_actual = ahora.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -772,7 +773,7 @@ def _obtener_resumen_dashboard(session: Session) -> DashboardResumenOut:
         .all()
     )
 
-    ahora = datetime.now()
+    ahora = ahora_negocio(session)
     serie_ventas = []
     nombres_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     for year, month in _iterar_ultimos_meses(ahora, 7):
@@ -1341,8 +1342,8 @@ def _obtener_datos_reporte_financiero(
     )
 
 
-def _inicio_fin_periodo(fecha_desde: Optional[date], fecha_hasta: Optional[date]):
-    hoy = date.today()
+def _inicio_fin_periodo(session: Session, fecha_desde: Optional[date], fecha_hasta: Optional[date]):
+    hoy = fecha_actual_negocio(session)
     fecha_desde = fecha_desde or hoy.replace(day=1)
     fecha_hasta = fecha_hasta or hoy
     inicio = datetime.combine(fecha_desde, datetime.min.time())
@@ -1356,7 +1357,7 @@ def _obtener_datos_saldos_clientes(
     fecha_hasta: Optional[date],
     cliente_id: Optional[int] = None,
 ):
-    fecha_desde, fecha_hasta, inicio, fin = _inicio_fin_periodo(fecha_desde, fecha_hasta)
+    fecha_desde, fecha_hasta, inicio, fin = _inicio_fin_periodo(session, fecha_desde, fecha_hasta)
 
     query = (
         session.query(Venta)
@@ -1427,7 +1428,7 @@ def _obtener_detalle_saldo_cliente(
     fecha_desde: Optional[date],
     fecha_hasta: Optional[date],
 ):
-    fecha_desde, fecha_hasta, inicio, fin = _inicio_fin_periodo(fecha_desde, fecha_hasta)
+    fecha_desde, fecha_hasta, inicio, fin = _inicio_fin_periodo(session, fecha_desde, fecha_hasta)
     cliente = session.query(Cliente).filter(Cliente.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado.")
@@ -1565,7 +1566,7 @@ def obtener_reporte_comparativo_mensual(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        fecha_base = fecha_referencia or date.today()
+        fecha_base = fecha_referencia or fecha_actual_negocio(session)
         fecha_dt = datetime.combine(fecha_base, datetime.min.time())
         modo_normalizado = (modo or "MES").upper()
         if modo_normalizado not in ("MES", "DIA"):
@@ -1612,7 +1613,7 @@ def obtener_reporte_compras(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         fecha_desde = fecha_desde or hoy.replace(day=1)
         fecha_hasta = fecha_hasta or hoy
         resumen, _ = _obtener_datos_reporte_compras(
@@ -1671,7 +1672,7 @@ def obtener_reporte_financiero(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         if desde_inicio:
             fecha_desde = date(2000, 1, 1)
             fecha_hasta = hoy
@@ -1740,7 +1741,7 @@ def exportar_reporte_compras_pdf(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         fecha_desde = fecha_desde or hoy.replace(day=1)
         fecha_hasta = fecha_hasta or hoy
         resumen, compras_data = _obtener_datos_reporte_compras(
@@ -1773,7 +1774,7 @@ def exportar_estado_cuenta_cliente_pdf(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        fecha_desde, fecha_hasta, _, _ = _inicio_fin_periodo(fecha_desde, fecha_hasta)
+        fecha_desde, fecha_hasta, _, _ = _inicio_fin_periodo(session, fecha_desde, fecha_hasta)
         detalle = _obtener_detalle_saldo_cliente(session, cliente_id, fecha_desde, fecha_hasta)
         cliente_slug = sanitize_filename_component(detalle.cliente.nombre if detalle and detalle.cliente else None, "cliente")
         config = session.query(ConfiguracionEmpresa).first()
@@ -1836,7 +1837,7 @@ def exportar_reporte_compras_excel(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         fecha_desde = fecha_desde or hoy.replace(day=1)
         fecha_hasta = fecha_hasta or hoy
         resumen, compras_data = _obtener_datos_reporte_compras(
@@ -1871,7 +1872,7 @@ def exportar_reporte_finanzas_pdf(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         if desde_inicio:
             fecha_desde = date(2000, 1, 1)
             fecha_hasta = hoy
@@ -1911,7 +1912,7 @@ def exportar_reporte_finanzas_excel(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         if desde_inicio:
             fecha_desde = date(2000, 1, 1)
             fecha_hasta = hoy
@@ -1995,7 +1996,7 @@ def obtener_reporte_trabajos_laboratorio(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         fecha_desde = fecha_desde or hoy.replace(day=1)
         fecha_hasta = fecha_hasta or hoy
         return _obtener_trabajos_laboratorio(session, fecha_desde, fecha_hasta, buscar)
@@ -2013,7 +2014,7 @@ def exportar_reporte_trabajos_laboratorio_pdf(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         fecha_desde = fecha_desde or hoy.replace(day=1)
         fecha_hasta = fecha_hasta or hoy
         resumen = _obtener_trabajos_laboratorio(session, fecha_desde, fecha_hasta, buscar)

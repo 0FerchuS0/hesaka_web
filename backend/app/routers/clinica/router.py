@@ -73,6 +73,7 @@ from app.utils.pdf_receta_medicamento_clinica import (
     generar_pdf_receta_medicamento_compra_clinica,
     generar_pdf_receta_medicamento_indicaciones_clinica,
 )
+from app.utils.timezone import ahora_negocio, fecha_actual_negocio
 
 router = APIRouter(prefix="/api/clinica", tags=["Clinica"])
 
@@ -95,9 +96,9 @@ def _count_rows(query) -> int:
     return query.scalar() or 0
 
 
-def _calcular_edad(fecha_nacimiento, edad_manual) -> int | None:
+def _calcular_edad(fecha_nacimiento, edad_manual, fecha_referencia: date | None = None) -> int | None:
     if fecha_nacimiento:
-        hoy = date.today()
+        hoy = fecha_referencia or fecha_actual_negocio()
         return hoy.year - fecha_nacimiento.year - (
             (hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day)
         )
@@ -363,7 +364,7 @@ def _serializar_pacientes(session, pacientes):
                 nombre_completo=paciente.nombre_completo,
                 fecha_nacimiento=paciente.fecha_nacimiento,
                 edad_manual=paciente.edad_manual,
-                edad_calculada=_calcular_edad(paciente.fecha_nacimiento, paciente.edad_manual),
+                edad_calculada=_calcular_edad(paciente.fecha_nacimiento, paciente.edad_manual, fecha_actual_negocio(session)),
                 ci_pasaporte=paciente.ci_pasaporte,
                 telefono=paciente.telefono,
                 direccion=paciente.direccion,
@@ -392,8 +393,8 @@ def _normalizar_estado_turno(value: str | None) -> str:
     return estado
 
 
-def _serializar_turno(turno) -> ClinicaTurnoOut:
-    hoy = date.today()
+def _serializar_turno(turno, fecha_referencia: date | None = None) -> ClinicaTurnoOut:
+    hoy = fecha_referencia or fecha_actual_negocio()
     dias_restantes = None
     recordatorio_categoria = None
     if turno.fecha_hora:
@@ -470,11 +471,11 @@ def _adjuntar_contexto_turnos(session, turnos_serializados: list[ClinicaTurnoOut
     return turnos_serializados
 
 
-def _rango_recordatorio(recordatorio: str | None):
+def _rango_recordatorio(recordatorio: str | None, session=None):
     if not recordatorio:
         return None
     recordatorio_norm = str(recordatorio).strip().lower()
-    hoy = date.today()
+    hoy = fecha_actual_negocio(session)
     if recordatorio_norm in {"15", "15_dias", "15dias"}:
         return (_inicio_dia(hoy + timedelta(days=15)), _inicio_dia(hoy + timedelta(days=16)))
     if recordatorio_norm in {"8", "8_dias", "8dias"}:
@@ -495,8 +496,8 @@ def _campo_recordado_para_categoria(recordatorio: str | None):
     raise HTTPException(status_code=400, detail="Categoria de recordatorio invalida.")
 
 
-def _aplicar_filtro_recordatorio(query, recordatorio: str | None):
-    rango = _rango_recordatorio(recordatorio)
+def _aplicar_filtro_recordatorio(query, recordatorio: str | None, session=None):
+    rango = _rango_recordatorio(recordatorio, session)
     if not rango:
         return query
     inicio, fin = rango
@@ -979,7 +980,7 @@ def obtener_dashboard_clinico(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        hoy = date.today()
+        hoy = fecha_actual_negocio(session)
         inicio_hoy = _inicio_dia(hoy)
         inicio_mes = _inicio_mes(hoy)
         inicio_semana = datetime.combine(hoy - timedelta(days=hoy.weekday()), datetime.min.time())
@@ -1020,18 +1021,21 @@ def obtener_dashboard_clinico(
             _aplicar_filtro_recordatorio(
                 session.query(func.count(TurnoClinico.id)),
                 "hoy",
+                session,
             )
         )
         recordatorios_8_dias = _count_rows(
             _aplicar_filtro_recordatorio(
                 session.query(func.count(TurnoClinico.id)),
                 "8",
+                session,
             )
         )
         recordatorios_15_dias = _count_rows(
             _aplicar_filtro_recordatorio(
                 session.query(func.count(TurnoClinico.id)),
                 "15",
+                session,
             )
         )
         pacientes_nuevos_mes = _count_rows(session.query(func.count(Paciente.id)).filter(Paciente.fecha_registro >= inicio_mes))
@@ -1243,7 +1247,7 @@ def listar_turnos_clinica(
                     TurnoClinico.motivo.ilike(term),
                 )
             )
-        query = _aplicar_filtro_recordatorio(query, recordatorio)
+        query = _aplicar_filtro_recordatorio(query, recordatorio, session)
         if fecha_desde:
             query = query.filter(TurnoClinico.fecha_hora >= _inicio_dia(fecha_desde))
         if fecha_hasta:
@@ -1263,7 +1267,8 @@ def listar_turnos_clinica(
             .limit(page_size)
             .all()
         )
-        serialized_items = _adjuntar_contexto_turnos(session, [_serializar_turno(item) for item in items])
+        hoy_negocio = fecha_actual_negocio(session)
+        serialized_items = _adjuntar_contexto_turnos(session, [_serializar_turno(item, hoy_negocio) for item in items])
         return ClinicaTurnosListOut(
             items=serialized_items,
             total=total,
@@ -1283,7 +1288,7 @@ def listar_proximos_controles_clinica(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        inicio_hoy = _inicio_dia(date.today())
+        inicio_hoy = _inicio_dia(fecha_actual_negocio(session))
         items = (
             session.query(TurnoClinico)
             .options(
@@ -1300,7 +1305,8 @@ def listar_proximos_controles_clinica(
             .limit(limit)
             .all()
         )
-        return _adjuntar_contexto_turnos(session, [_serializar_turno(item) for item in items])
+        hoy_negocio = fecha_actual_negocio(session)
+        return _adjuntar_contexto_turnos(session, [_serializar_turno(item, hoy_negocio) for item in items])
     finally:
         session.close()
 
@@ -1321,10 +1327,12 @@ def listar_recordatorios_clinica(
             )
         )
 
+        hoy_negocio = fecha_actual_negocio(session)
+
         def _items_para(recordatorio: str):
             return _adjuntar_contexto_turnos(session, [
-                _serializar_turno(item) for item in (
-                _aplicar_filtro_recordatorio(base_query, recordatorio)
+                _serializar_turno(item, hoy_negocio) for item in (
+                _aplicar_filtro_recordatorio(base_query, recordatorio, session)
                 .order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc())
                 .limit(8)
                 .all()
@@ -1378,7 +1386,7 @@ def crear_turno_clinica(
         session.add(turno)
         session.commit()
         session.refresh(turno)
-        return _serializar_turno(turno)
+        return _serializar_turno(turno, fecha_actual_negocio(session))
     finally:
         session.close()
 
@@ -1443,7 +1451,7 @@ def editar_turno_clinica(
         turno.notas = _normalizar_texto(payload.notas)
         session.commit()
         session.refresh(turno)
-        return _serializar_turno(turno)
+        return _serializar_turno(turno, fecha_actual_negocio(session))
     finally:
         session.close()
 
@@ -2466,7 +2474,7 @@ def crear_receta_medicamento(
             paciente_id=payload.paciente_id,
             consulta_id=payload.consulta_id,
             consulta_tipo=_normalizar_texto(payload.consulta_tipo),
-            fecha_emision=payload.fecha_emision or datetime.now(),
+            fecha_emision=payload.fecha_emision or ahora_negocio(session),
             doctor_nombre=_normalizar_texto(payload.doctor_nombre),
             diagnostico=_normalizar_texto(payload.diagnostico),
             observaciones=_normalizar_texto(payload.observaciones),
@@ -2509,7 +2517,7 @@ def editar_receta_medicamento(
         receta.paciente_id = payload.paciente_id
         receta.consulta_id = payload.consulta_id
         receta.consulta_tipo = _normalizar_texto(payload.consulta_tipo)
-        receta.fecha_emision = payload.fecha_emision or receta.fecha_emision or datetime.now()
+        receta.fecha_emision = payload.fecha_emision or receta.fecha_emision or ahora_negocio(session)
         receta.doctor_nombre = _normalizar_texto(payload.doctor_nombre)
         receta.diagnostico = _normalizar_texto(payload.diagnostico)
         receta.observaciones = _normalizar_texto(payload.observaciones)
@@ -2784,7 +2792,7 @@ def crear_consulta_oftalmologica(
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             agenda_turno_id=payload.agenda_turno_id,
-            fecha=payload.fecha or datetime.now(),
+            fecha=payload.fecha or ahora_negocio(session),
             motivo=_normalizar_texto(payload.motivo),
             diagnostico=_normalizar_texto(payload.diagnostico),
             plan_tratamiento=_normalizar_texto(payload.plan_tratamiento),
@@ -2896,7 +2904,7 @@ def editar_consulta_oftalmologica(
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
         consulta.agenda_turno_id = payload.agenda_turno_id
-        consulta.fecha = payload.fecha or consulta.fecha or datetime.now()
+        consulta.fecha = payload.fecha or consulta.fecha or ahora_negocio(session)
         consulta.motivo = _normalizar_texto(payload.motivo)
         consulta.diagnostico = _normalizar_texto(payload.diagnostico)
         consulta.plan_tratamiento = _normalizar_texto(payload.plan_tratamiento)
@@ -3053,7 +3061,7 @@ def crear_consulta_contactologia(
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             agenda_turno_id=payload.agenda_turno_id,
-            fecha=payload.fecha or datetime.now(),
+            fecha=payload.fecha or ahora_negocio(session),
             tipo_lente=_normalizar_texto(payload.tipo_lente),
             diseno=_normalizar_texto(payload.diseno),
             diagnostico=_normalizar_texto(payload.diagnostico),
@@ -3111,7 +3119,7 @@ def editar_consulta_contactologia(
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
         consulta.agenda_turno_id = payload.agenda_turno_id
-        consulta.fecha = payload.fecha or consulta.fecha or datetime.now()
+        consulta.fecha = payload.fecha or consulta.fecha or ahora_negocio(session)
         consulta.tipo_lente = _normalizar_texto(payload.tipo_lente)
         consulta.diseno = _normalizar_texto(payload.diseno)
         consulta.diagnostico = _normalizar_texto(payload.diagnostico)

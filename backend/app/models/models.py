@@ -513,6 +513,21 @@ class DestinatarioRendicion(TimestampMixin, Base):
     activo = Column(Boolean, nullable=False, default=True)
 
 
+class PlantillaWhatsapp(TimestampMixin, Base):
+    """Catalogo tenant de plantillas predefinidas para mensajes de WhatsApp."""
+    __tablename__ = 'plantillas_whatsapp'
+    __table_args__ = (
+        Index('idx_plantilla_whatsapp_codigo', 'codigo'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    codigo = Column(String(80), unique=True, nullable=False)
+    nombre = Column(String(150), nullable=False)
+    descripcion = Column(Text, nullable=True)
+    plantilla = Column(Text, nullable=False)
+    activo = Column(Boolean, nullable=False, default=True)
+    editable = Column(Boolean, nullable=False, default=True)
+
+
 class CorteJornadaFinanciera(TimestampMixin, Base):
     __tablename__ = 'cortes_jornada_financiera'
     __table_args__ = (

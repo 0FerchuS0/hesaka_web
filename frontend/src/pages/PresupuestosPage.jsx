@@ -1072,6 +1072,8 @@ export default function PresupuestosPage() {
     const [fechaPre, setFechaPre] = useState(null)
     const [asignacionPre, setAsignacionPre] = useState(null)
     const [estadoFiltro, setEstadoFiltro] = useState('')
+    const [fechaDesdeFiltro, setFechaDesdeFiltro] = useState('')
+    const [fechaHastaFiltro, setFechaHastaFiltro] = useState('')
     const [vendedorFiltro, setVendedorFiltro] = useState('')
     const [canalFiltro, setCanalFiltro] = useState('')
     const [convertirPre, setConvertirPre] = useState(null)
@@ -1091,10 +1093,12 @@ export default function PresupuestosPage() {
     const { data: canalesFiltro = [] } = useQuery({ queryKey: ['presupuestos-canales-filtro'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data), retry: false })
 
     const { data: presupuestosData, isLoading } = useQuery({
-        queryKey: ['presupuestos', estadoFiltro, vendedorFiltro, canalFiltro, buscar],
+        queryKey: ['presupuestos', estadoFiltro, fechaDesdeFiltro, fechaHastaFiltro, vendedorFiltro, canalFiltro, buscar],
         queryFn: () => {
             const params = new URLSearchParams({ page: '1', page_size: '100' })
             if (estadoFiltro) params.append('estado', estadoFiltro)
+            if (fechaDesdeFiltro) params.append('fecha_desde', fechaDesdeFiltro)
+            if (fechaHastaFiltro) params.append('fecha_hasta', fechaHastaFiltro)
             if (vendedorFiltro) params.append('vendedor_id', vendedorFiltro)
             if (canalFiltro) params.append('canal_venta_id', canalFiltro)
             if (buscar.trim()) params.append('search', buscar.trim())
@@ -1179,6 +1183,22 @@ export default function PresupuestosPage() {
                         <option value="">Todos los estados</option>
                         {['PENDIENTE', 'VENDIDO', 'VENCIDO', 'CANCELADO'].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
+                    <input
+                        className="form-input"
+                        style={{ width: 155 }}
+                        type="date"
+                        value={fechaDesdeFiltro}
+                        onChange={e => setFechaDesdeFiltro(e.target.value)}
+                        title="Desde"
+                    />
+                    <input
+                        className="form-input"
+                        style={{ width: 155 }}
+                        type="date"
+                        value={fechaHastaFiltro}
+                        onChange={e => setFechaHastaFiltro(e.target.value)}
+                        title="Hasta"
+                    />
                     <select className="form-select" style={{ width: 180 }} value={vendedorFiltro} onChange={e => setVendedorFiltro(e.target.value)}>
                         <option value="">Todos los vendedores</option>
                         {vendedoresFiltro.map(vendedor => <option key={vendedor.id} value={vendedor.id}>{vendedor.nombre}</option>)}
@@ -1187,6 +1207,20 @@ export default function PresupuestosPage() {
                         <option value="">Todos los canales</option>
                         {canalesFiltro.map(canal => <option key={canal.id} value={canal.id}>{canal.nombre}</option>)}
                     </select>
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                            setBuscar('')
+                            setEstadoFiltro('')
+                            setFechaDesdeFiltro('')
+                            setFechaHastaFiltro('')
+                            setVendedorFiltro('')
+                            setCanalFiltro('')
+                        }}
+                    >
+                        Limpiar filtros
+                    </button>
                 </div>
             </div>
 

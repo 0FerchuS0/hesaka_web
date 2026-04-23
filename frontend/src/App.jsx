@@ -22,6 +22,7 @@ const MarcasPage = lazy(() => import('./pages/MarcasPage'))
 const ProductosPage = lazy(() => import('./pages/ProductosPage'))
 const ProveedoresPage = lazy(() => import('./pages/ProveedoresPage'))
 const DestinatariosRendicionPage = lazy(() => import('./pages/DestinatariosRendicionPage'))
+const PlantillasWhatsappPage = lazy(() => import('./pages/PlantillasWhatsappPage'))
 const PresupuestosPage = lazy(() => import('./pages/PresupuestosPage'))
 const VentasPage = lazy(() => import('./pages/VentasPage'))
 const ComprasPage = lazy(() => import('./pages/ComprasPage'))
@@ -30,6 +31,7 @@ const JornadaRendicionesPage = lazy(() => import('./pages/JornadaRendicionesPage
 const GastosPage = lazy(() => import('./pages/GastosPage'))
 const CuentasPorPagarPage = lazy(() => import('./pages/CuentasPorPagarPage'))
 const ReporteVentasPage = lazy(() => import('./pages/ReporteVentasPage'))
+const ReporteVentasProductosPage = lazy(() => import('./pages/ReporteVentasProductosPage'))
 const ReporteComparativoMensualPage = lazy(() => import('./pages/ReporteComparativoMensualPage'))
 const ReporteComprasPage = lazy(() => import('./pages/ReporteComprasPage'))
 const ReporteFinanzasPage = lazy(() => import('./pages/ReporteFinanzasPage'))
@@ -219,6 +221,7 @@ function AppLayout() {
                         <Route path="/productos" element={<RoleRoute allowedRoles="catalogos"><ProductosPage /></RoleRoute>} />
                         <Route path="/proveedores" element={<RoleRoute allowedRoles="catalogos"><ProveedoresPage /></RoleRoute>} />
                         <Route path="/catalogos/destinatarios-rendicion" element={<RoleRoute allowedRoles="catalogos"><DestinatariosRendicionPage /></RoleRoute>} />
+                        <Route path="/catalogos/plantillas-whatsapp" element={<RoleRoute allowedRoles="catalogos"><PlantillasWhatsappPage /></RoleRoute>} />
                         <Route path="/presupuestos" element={<RoleRoute allowedRoles="presupuestos"><PresupuestosPage /></RoleRoute>} />
                         <Route path="/ventas" element={<RoleRoute allowedRoles="ventas"><VentasPage /></RoleRoute>} />
                         <Route path="/ventas/ajustes" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><ReporteAjustesVentasPage /></RouteErrorBoundary></RoleRoute>} />
@@ -233,6 +236,7 @@ function AppLayout() {
 
                         <Route path="/reportes" element={<Navigate to="/reportes/ventas" replace />} />
                         <Route path="/reportes/ventas" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasPage /></RoleRoute>} />
+                        <Route path="/reportes/ventas-productos" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasProductosPage /></RoleRoute>} />
                         <Route path="/reportes/comparativo-mensual" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComparativoMensualPage /></RoleRoute>} />
                         <Route path="/reportes/compras" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComprasPage /></RoleRoute>} />
                         <Route path="/reportes/ajustes-ventas" element={<Navigate to="/ventas/ajustes" replace />} />

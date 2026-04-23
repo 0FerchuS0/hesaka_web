@@ -18,6 +18,7 @@ from app.models.models import (
     Cliente,
     Compra,
     ConfiguracionEmpresa,
+    PlantillaWhatsapp,
     Pago,
     PagoCompra,
     Presupuesto,
@@ -39,6 +40,8 @@ from app.schemas.schemas import (
     ConfiguracionGeneralOut,
     ConfiguracionGeneralPublicaOut,
     ConfiguracionGeneralUpdate,
+    PlantillaWhatsappOut,
+    PlantillaWhatsappUpdate,
     CanalVentaCreate,
     CanalVentaListItemOut,
     CanalVentaListResponseOut,
@@ -83,6 +86,76 @@ ref_router = APIRouter(prefix="/api/referidores", tags=["Referidores"])
 vend_router = APIRouter(prefix="/api/vendedores", tags=["Vendedores"])
 canal_router = APIRouter(prefix="/api/canales-venta", tags=["Canales Venta"])
 config_router = APIRouter(prefix="/api/configuracion-general", tags=["Configuracion General"])
+
+
+WHATSAPP_TEMPLATE_DEFAULTS = [
+    {
+        "codigo": "venta_aviso_retiro",
+        "nombre": "Venta - Aviso de retiro",
+        "descripcion": "Mensaje para avisar que el trabajo de una venta ya esta listo para retiro.",
+        "plantilla": "Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.",
+    },
+    {
+        "codigo": "venta_comprobante",
+        "nombre": "Venta - Envio de comprobante",
+        "descripcion": "Mensaje de acompanamiento para compartir comprobante de venta por WhatsApp.",
+        "plantilla": "Hola {cliente}, te compartimos el comprobante de tu venta {venta} de {empresa}. En este chat puedes responder cualquier consulta.",
+    },
+    {
+        "codigo": "clinica_recordatorio_turno",
+        "nombre": "Clinica - Recordatorio de turno",
+        "descripcion": "Recordatorio de turno/control para pacientes de clinica.",
+        "plantilla": "Hola {paciente}, te escribimos de {empresa}. Te recordamos tu turno para el {proxima_consulta} a las {hora_turno}. Te esperamos. Si no podras asistir, por favor avisanos para reprogramar.",
+    },
+    {
+        "codigo": "cumpleanos_cliente",
+        "nombre": "Clientes - Feliz cumpleanos",
+        "descripcion": "Mensaje de saludo para clientes en su cumpleanos.",
+        "plantilla": "Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.",
+    },
+    {
+        "codigo": "dashboard_recordatorio",
+        "nombre": "Dashboard - Recordatorio rapido",
+        "descripcion": "Mensaje rapido desde dashboard para recordar proximas consultas.",
+        "plantilla": "Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.",
+    },
+]
+
+
+def _asegurar_catalogo_plantillas_whatsapp(session):
+    existentes = {row.codigo: row for row in session.query(PlantillaWhatsapp).all()}
+    cambios = False
+    for item in WHATSAPP_TEMPLATE_DEFAULTS:
+        row = existentes.get(item["codigo"])
+        if not row:
+            session.add(PlantillaWhatsapp(
+                codigo=item["codigo"],
+                nombre=item["nombre"],
+                descripcion=item["descripcion"],
+                plantilla=item["plantilla"],
+                activo=True,
+                editable=True,
+            ))
+            cambios = True
+            continue
+        # Si cambia metadata por version, se refresca sin tocar texto editable del usuario.
+        if row.nombre != item["nombre"]:
+            row.nombre = item["nombre"]
+            cambios = True
+        if row.descripcion != item["descripcion"]:
+            row.descripcion = item["descripcion"]
+            cambios = True
+        if not row.plantilla:
+            row.plantilla = item["plantilla"]
+            cambios = True
+        if row.activo is None:
+            row.activo = True
+            cambios = True
+        if row.editable is None:
+            row.editable = True
+            cambios = True
+    if cambios:
+        session.commit()
 
 
 class MovimientoFichaOut(BaseModel):
@@ -316,6 +389,52 @@ def listar_zonas_horarias_configuracion_general(
         )
     items.sort(key=lambda item: (item["offset_minutes"], item["id"]))
     return items
+
+
+@config_router.get("/whatsapp-templates", response_model=List[PlantillaWhatsappOut])
+def listar_plantillas_whatsapp_configuracion_general(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        _asegurar_catalogo_plantillas_whatsapp(session)
+        return (
+            session.query(PlantillaWhatsapp)
+            .order_by(PlantillaWhatsapp.nombre.asc())
+            .all()
+        )
+    finally:
+        session.close()
+
+
+@config_router.put("/whatsapp-templates/{codigo}", response_model=PlantillaWhatsappOut)
+def actualizar_plantilla_whatsapp_configuracion_general(
+    codigo: str,
+    data: PlantillaWhatsappUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_admin),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        _asegurar_catalogo_plantillas_whatsapp(session)
+        plantilla = (
+            session.query(PlantillaWhatsapp)
+            .filter(PlantillaWhatsapp.codigo == codigo)
+            .first()
+        )
+        if not plantilla:
+            raise HTTPException(status_code=404, detail="Plantilla de WhatsApp no encontrada.")
+        if not plantilla.editable:
+            raise HTTPException(status_code=403, detail="Esta plantilla no se puede editar.")
+        plantilla.plantilla = data.plantilla
+        if data.activo is not None:
+            plantilla.activo = bool(data.activo)
+        session.commit()
+        session.refresh(plantilla)
+        return plantilla
+    finally:
+        session.close()
 
 
 @config_router.put("/", response_model=ConfiguracionGeneralOut)

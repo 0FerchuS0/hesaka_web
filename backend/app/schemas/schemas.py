@@ -146,6 +146,34 @@ class BackupRestoreOut(BaseModel):
     backup: BackupItemOut
 
 
+class PlantillaWhatsappOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    descripcion: Optional[str] = None
+    plantilla: str
+    activo: bool = True
+    editable: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class PlantillaWhatsappUpdate(BaseModel):
+    plantilla: str
+    activo: Optional[bool] = None
+
+    @field_validator("plantilla")
+    @classmethod
+    def validar_plantilla(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            raise ValueError("La plantilla no puede quedar vacia.")
+        if len(value) > 4000:
+            raise ValueError("La plantilla es demasiado larga.")
+        return value
+
+
 # ──────────────────────────────────────────────
 # CATEGORÍAS & ATRIBUTOS
 # ──────────────────────────────────────────────

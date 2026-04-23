@@ -52,6 +52,7 @@ TIMESTAMP_FALLBACKS = {
     "cortes_jornada_financiera": "fecha_hora_corte",
     "rendiciones_jornada_financiera": "fecha_hora_rendicion",
     "destinatarios_rendicion": None,
+    "plantillas_whatsapp": None,
     "configuracion_caja": None,
     "configuracion_empresa": None,
     "usuarios": "creado_en",
@@ -128,6 +129,8 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         tablas_catalogo_comercial.append(models.CorteJornadaFinanciera.__table__)
     if "destinatarios_rendicion" not in table_names:
         tablas_catalogo_comercial.append(models.DestinatarioRendicion.__table__)
+    if "plantillas_whatsapp" not in table_names:
+        tablas_catalogo_comercial.append(models.PlantillaWhatsapp.__table__)
     if "rendiciones_jornada_financiera" not in table_names:
         tablas_catalogo_comercial.append(models.RendicionJornadaFinanciera.__table__)
     if tablas_catalogo_comercial:

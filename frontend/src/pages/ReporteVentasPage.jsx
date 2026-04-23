@@ -16,6 +16,7 @@ export default function ReporteVentasPage() {
     const [exportingPdf, setExportingPdf] = useState(false)
     const [exportingExcel, setExportingExcel] = useState(false)
     const [data, setData] = useState(null)
+    const [productosData, setProductosData] = useState(null)
     const [error, setError] = useState('')
     const [clientes, setClientes] = useState([])
     const [vendedores, setVendedores] = useState([])
@@ -107,12 +108,17 @@ export default function ReporteVentasPage() {
             if (filtrosActuales.vendedorId) params.append('vendedor_id', filtrosActuales.vendedorId)
             if (filtrosActuales.canalVentaId) params.append('canal_venta_id', filtrosActuales.canalVentaId)
             if (filtrosActuales.estadoPago) params.append('estado_pago', filtrosActuales.estadoPago)
-            const response = await api.get(`/reportes/ventas?${params.toString()}`)
+            const [response, responseProductos] = await Promise.all([
+                api.get(`/reportes/ventas?${params.toString()}`),
+                api.get(`/reportes/ventas-por-producto?${params.toString()}`),
+            ])
             setData(response.data || null)
+            setProductosData(responseProductos.data || null)
         } catch (err) {
             console.error('Error al cargar reporte:', err)
             setError(err?.response?.data?.detail || 'No se pudo cargar el reporte de ventas.')
             setData(null)
+            setProductosData(null)
         } finally {
             setLoading(false)
         }
@@ -283,6 +289,52 @@ export default function ReporteVentasPage() {
                         <div className="kpi-title" style={{ color: '#2ecc71' }}>Utilidad neta</div>
                         <div className="kpi-value db-green">{formatCurrency(utilidadNeta)}</div>
                         <div className="kpi-subtitle">Utilidad bruta menos comisiones</div>
+                    </div>
+                </div>
+            )}
+
+            {productosData && (
+                <div className="card" style={{ marginTop: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+                        <h3 style={{ margin: 0 }}>Ventas por producto</h3>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                            {productosData.total_productos || 0} productos · Cantidad: {Number(productosData.total_cantidad || 0).toLocaleString('es-PY')} · Total: {formatCurrency(productosData.total_vendido || 0)}
+                        </div>
+                    </div>
+                    <div className="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Producto</th>
+                                    <th>Codigo</th>
+                                    <th>Categoria</th>
+                                    <th>Cantidad</th>
+                                    <th>Total vendido</th>
+                                    <th>Precio promedio</th>
+                                    <th>Ventas</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(productosData.productos || []).map((item, index) => (
+                                    <tr key={`${item.producto_id || 'no-id'}-${index}`}>
+                                        <td>{item.producto_nombre}</td>
+                                        <td>{item.producto_codigo || '—'}</td>
+                                        <td>{item.categoria_nombre || '—'}</td>
+                                        <td>{Number(item.cantidad_vendida || 0).toLocaleString('es-PY')}</td>
+                                        <td>{formatCurrency(item.total_vendido || 0)}</td>
+                                        <td>{formatCurrency(item.precio_promedio || 0)}</td>
+                                        <td>{item.ventas_count || 0}</td>
+                                    </tr>
+                                ))}
+                                {(!productosData.productos || productosData.productos.length === 0) && (
+                                    <tr>
+                                        <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                                            No hay ventas por producto en el rango seleccionado.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}

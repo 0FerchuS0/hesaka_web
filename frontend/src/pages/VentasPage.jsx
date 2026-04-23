@@ -9,6 +9,7 @@ import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
@@ -34,6 +35,8 @@ const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
 const COMPROBANTE_WHATSAPP_TEMPLATE_KEY = 'hesaka-comprobante-whatsapp-template'
 const DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE = 'Hola {cliente}, te compartimos el comprobante de tu venta {venta} de {empresa}. En este chat puedes responder cualquier consulta.'
+const RETIRO_TEMPLATE_CODE = 'venta_aviso_retiro'
+const COMPROBANTE_TEMPLATE_CODE = 'venta_comprobante'
 const getErrorText = (err, fallback) => {
     const detail = err?.response?.data?.detail
     if (typeof detail === 'string' && detail.trim()) return detail
@@ -144,7 +147,7 @@ function buildComprobanteWhatsappLink(context, message = '', empresa = 'HESAKA')
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
 }
 
-function WhatsappRetiroModal({ context, onClose, empresaNombre = 'HESAKA' }) {
+function WhatsappRetiroModal({ context, onClose, empresaNombre = 'HESAKA', onGuardarPlantilla = null, guardandoPlantilla = false }) {
     const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))
     const whatsappLink = buildRetiroWhatsappLink(context, message, empresaNombre)
 
@@ -179,7 +182,20 @@ function WhatsappRetiroModal({ context, onClose, empresaNombre = 'HESAKA' }) {
                     <button type="button" className="btn btn-secondary" onClick={() => setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))}>
                         <RotateCcw size={15} /> Restaurar sugerido
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={() => { localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, buildRetiroTemplateFromMessage(message, context, empresaNombre)); window.alert('Plantilla de retiro guardada.') }}>
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={async () => {
+                            const plantilla = buildRetiroTemplateFromMessage(message, context, empresaNombre)
+                            if (onGuardarPlantilla) {
+                                const ok = await onGuardarPlantilla(plantilla)
+                                if (!ok) return
+                            }
+                            localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, plantilla)
+                            window.alert('Plantilla de retiro guardada.')
+                        }}
+                        disabled={guardandoPlantilla}
+                    >
                         Guardar plantilla
                     </button>
                 </div>
@@ -194,7 +210,7 @@ function WhatsappRetiroModal({ context, onClose, empresaNombre = 'HESAKA' }) {
     )
 }
 
-function WhatsappComprobanteModal({ context, onClose, empresaNombre = 'HESAKA' }) {
+function WhatsappComprobanteModal({ context, onClose, empresaNombre = 'HESAKA', onGuardarPlantilla = null, guardandoPlantilla = false }) {
     const [message, setMessage] = useState(() => buildComprobanteWhatsappMessage(context, getComprobanteWhatsappTemplate(), empresaNombre))
     const [pdfOpening, setPdfOpening] = useState(false)
     const whatsappLink = buildComprobanteWhatsappLink(context, message, empresaNombre)
@@ -253,11 +269,16 @@ function WhatsappComprobanteModal({ context, onClose, empresaNombre = 'HESAKA' }
                     <button
                         type="button"
                         className="btn btn-secondary"
-                        onClick={() => {
-                            localStorage.setItem(COMPROBANTE_WHATSAPP_TEMPLATE_KEY, buildComprobanteTemplateFromMessage(message, context, empresaNombre))
+                        onClick={async () => {
+                            const plantilla = buildComprobanteTemplateFromMessage(message, context, empresaNombre)
+                            if (onGuardarPlantilla) {
+                                const ok = await onGuardarPlantilla(plantilla)
+                                if (!ok) return
+                            }
+                            localStorage.setItem(COMPROBANTE_WHATSAPP_TEMPLATE_KEY, plantilla)
                             window.alert('Plantilla de comprobante guardada.')
                         }}
-                        disabled={pdfOpening}
+                        disabled={pdfOpening || guardandoPlantilla}
                     >
                         Guardar plantilla
                     </button>
@@ -1143,6 +1164,8 @@ export default function VentasPage() {
     const [buscar, setBuscar] = useState('')
     const [buscarDebounced, setBuscarDebounced] = useState('')
     const [estadoFiltro, setEstadoFiltro] = useState('')
+    const [fechaDesdeFiltro, setFechaDesdeFiltro] = useState('')
+    const [fechaHastaFiltro, setFechaHastaFiltro] = useState('')
     const [entregaFiltro, setEntregaFiltro] = useState('')
     const [vendedorFiltro, setVendedorFiltro] = useState('')
     const [canalFiltro, setCanalFiltro] = useState('')
@@ -1168,7 +1191,16 @@ export default function VentasPage() {
         retry: false,
     })
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
+    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
+    const actualizarWhatsappTemplate = useActualizarWhatsappTemplate()
     const confirmPageNavigation = usePendingNavigationGuard(Boolean(pdfConjuntoBusy || anularBusyId), 'Hay una accion de venta aun en proceso. ¿Seguro que desea salir de esta vista?')
+
+    useEffect(() => {
+        const retiroTemplate = getWhatsappTemplateByCode(whatsappTemplates, RETIRO_TEMPLATE_CODE, DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
+        const comprobanteTemplate = getWhatsappTemplateByCode(whatsappTemplates, COMPROBANTE_TEMPLATE_CODE, DEFAULT_COMPROBANTE_WHATSAPP_TEMPLATE)
+        localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, retiroTemplate)
+        localStorage.setItem(COMPROBANTE_WHATSAPP_TEMPLATE_KEY, comprobanteTemplate)
+    }, [whatsappTemplates])
 
     useEffect(() => {
         const timer = setTimeout(() => setBuscarDebounced(buscar.trim()), 350)
@@ -1177,11 +1209,11 @@ export default function VentasPage() {
 
     useEffect(() => {
         setPage(1)
-    }, [buscarDebounced, estadoFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
+    }, [buscarDebounced, estadoFiltro, fechaDesdeFiltro, fechaHastaFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
 
     useEffect(() => {
         setSeleccionadas([])
-    }, [page, buscarDebounced, estadoFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
+    }, [page, buscarDebounced, estadoFiltro, fechaDesdeFiltro, fechaHastaFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
 
     const { data: vendedoresFiltro = [] } = useQuery({
         queryKey: ['ventas-vendedores-filtro'],
@@ -1196,12 +1228,14 @@ export default function VentasPage() {
     })
 
     const { data, isLoading } = useQuery({
-        queryKey: ['ventas-optimizado', buscarDebounced, estadoFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, page, pageSize],
+        queryKey: ['ventas-optimizado', buscarDebounced, estadoFiltro, fechaDesdeFiltro, fechaHastaFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, page, pageSize],
         queryFn: () => {
             const params = new URLSearchParams()
             params.append('page', String(page))
             params.append('page_size', String(pageSize))
             if (estadoFiltro) params.append('estado', estadoFiltro)
+            if (fechaDesdeFiltro) params.append('fecha_desde', fechaDesdeFiltro)
+            if (fechaHastaFiltro) params.append('fecha_hasta', fechaHastaFiltro)
             if (entregaFiltro) params.append('estado_entrega', entregaFiltro)
             if (vendedorFiltro) params.append('vendedor_id', vendedorFiltro)
             if (canalFiltro) params.append('canal_venta_id', canalFiltro)
@@ -1361,6 +1395,14 @@ export default function VentasPage() {
                     <option value="PAGADO">PAGADO</option>
                     <option value="ANULADA">ANULADO</option>
                 </select>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ marginBottom: 4 }}>Desde</label>
+                    <input className="form-input" style={{ width: 150 }} type="date" value={fechaDesdeFiltro} onChange={e => setFechaDesdeFiltro(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ marginBottom: 4 }}>Hasta</label>
+                    <input className="form-input" style={{ width: 150 }} type="date" value={fechaHastaFiltro} onChange={e => setFechaHastaFiltro(e.target.value)} />
+                </div>
                 <select className="form-select" style={{ width: 170 }} value={entregaFiltro} onChange={e => setEntregaFiltro(e.target.value)}>
                     <option value="">Filtro Laboratorio</option>
                     <option value="EN_LABORATORIO">EN LABORATORIO</option>
@@ -1392,6 +1434,22 @@ export default function VentasPage() {
                     <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                         {seleccionadasVisibles.length} seleccionada{seleccionadasVisibles.length === 1 ? '' : 's'}
                     </span>
+                    <button
+                        className="btn btn-secondary btn-sm"
+                        type="button"
+                        onClick={() => {
+                            setEstadoFiltro('')
+                            setFechaDesdeFiltro('')
+                            setFechaHastaFiltro('')
+                            setEntregaFiltro('')
+                            setVendedorFiltro('')
+                            setCanalFiltro('')
+                            setSoloPendientes(false)
+                            setBuscar('')
+                        }}
+                    >
+                        Limpiar filtros
+                    </button>
                     {hasActionAccess(user, 'ventas.exportar', 'ventas') && (
                         <button
                             className="btn btn-secondary btn-sm"
@@ -1540,12 +1598,46 @@ export default function VentasPage() {
             )}
             {whatsappRetiro && (
                 <Modal title="Aviso de retiro por WhatsApp" onClose={() => setWhatsappRetiro(null)} maxWidth="680px">
-                    <WhatsappRetiroModal context={whatsappRetiro} onClose={() => setWhatsappRetiro(null)} empresaNombre={empresaNombre} />
+                    <WhatsappRetiroModal
+                        context={whatsappRetiro}
+                        onClose={() => setWhatsappRetiro(null)}
+                        empresaNombre={empresaNombre}
+                        guardandoPlantilla={actualizarWhatsappTemplate.isPending}
+                        onGuardarPlantilla={async plantilla => {
+                            try {
+                                await actualizarWhatsappTemplate.mutateAsync({
+                                    codigo: RETIRO_TEMPLATE_CODE,
+                                    payload: { plantilla, activo: true },
+                                })
+                                return true
+                            } catch {
+                                window.alert('No se pudo guardar la plantilla en el catálogo. Verifica permisos de administrador.')
+                                return false
+                            }
+                        }}
+                    />
                 </Modal>
             )}
             {whatsappComprobante && (
                 <Modal title="Enviar comprobante por WhatsApp" onClose={() => setWhatsappComprobante(null)} maxWidth="720px">
-                    <WhatsappComprobanteModal context={whatsappComprobante} onClose={() => setWhatsappComprobante(null)} empresaNombre={empresaNombre} />
+                    <WhatsappComprobanteModal
+                        context={whatsappComprobante}
+                        onClose={() => setWhatsappComprobante(null)}
+                        empresaNombre={empresaNombre}
+                        guardandoPlantilla={actualizarWhatsappTemplate.isPending}
+                        onGuardarPlantilla={async plantilla => {
+                            try {
+                                await actualizarWhatsappTemplate.mutateAsync({
+                                    codigo: COMPROBANTE_TEMPLATE_CODE,
+                                    payload: { plantilla, activo: true },
+                                })
+                                return true
+                            } catch {
+                                window.alert('No se pudo guardar la plantilla en el catálogo. Verifica permisos de administrador.')
+                                return false
+                            }
+                        }}
+                    />
                 </Modal>
             )}
         </div>

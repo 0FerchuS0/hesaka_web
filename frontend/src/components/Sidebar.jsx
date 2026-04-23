@@ -23,6 +23,7 @@ import {
     Tag,
     Landmark,
     Shield,
+    MessageCircle,
     PanelLeftClose,
     PanelLeftOpen,
 } from 'lucide-react'
@@ -90,6 +91,7 @@ const navGroups = [
             { to: '/productos', icon: Package, label: 'Productos' },
             { to: '/proveedores', icon: Building2, label: 'Proveedores' },
             { to: '/catalogos/destinatarios-rendicion', icon: UserRoundPlus, label: 'Destinatarios rendicion' },
+            { to: '/catalogos/plantillas-whatsapp', icon: MessageCircle, label: 'Plantillas WhatsApp' },
         ]
     },
     {
@@ -121,6 +123,7 @@ const navGroups = [
                 label: 'Centro',
                 subItems: [
                     { to: '/reportes/ventas', label: 'Ventas y Rentabilidad' },
+                    { to: '/reportes/ventas-productos', label: 'Ventas por Productos' },
                     { to: '/reportes/comparativo-mensual', label: 'Comparativo Mensual' },
                     { to: '/reportes/compras', label: 'Compras y Proveedores' },
                     { to: '/reportes/laboratorio', label: 'Trabajos Laboratorio' },
@@ -264,7 +267,7 @@ export default function Sidebar({ collapsed = false, onToggle }) {
                     }
                     if (item.to === '/reportes') {
                         const subItems = (item.subItems || []).filter(sub => {
-                            if (['/reportes/ventas', '/reportes/comparativo-mensual', '/reportes/compras'].includes(sub.to)) {
+                            if (['/reportes/ventas', '/reportes/ventas-productos', '/reportes/comparativo-mensual', '/reportes/compras'].includes(sub.to)) {
                                 return hasModuleAccess(user, 'reportes_comercial')
                             }
                             if (sub.to === '/reportes/laboratorio') {

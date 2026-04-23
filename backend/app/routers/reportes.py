@@ -7,7 +7,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from app.database import get_session_for_tenant
-from app.models.models import Banco, CanalVenta, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem, CompraDetalle
+from app.models.models import Banco, CanalVenta, Categoria, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem, CompraDetalle, Producto
 from app.utils.auth import get_current_user
 from app.middleware.tenant import get_tenant_slug
 from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
@@ -69,6 +69,32 @@ class ResumenGrupoVentasOut(BaseModel):
     total_costos: float
     utilidad_neta: float
     margen_promedio: float
+
+
+class ReporteVentaProductoOut(BaseModel):
+    producto_id: Optional[int] = None
+    producto_nombre: str
+    producto_codigo: Optional[str] = None
+    categoria_nombre: Optional[str] = None
+    cantidad_vendida: float
+    ingresos_totales: float
+    costos_totales: float
+    utilidad_bruta: float
+    margen_bruto: float
+    total_vendido: float
+    precio_promedio: float
+    ventas_count: int
+
+
+class ResumenReporteVentasPorProductoOut(BaseModel):
+    productos: List[ReporteVentaProductoOut]
+    total_productos: int
+    total_cantidad: float
+    total_ingresos: float
+    total_costos: float
+    utilidad_bruta_total: float
+    margen_bruto_promedio: float
+    total_vendido: float
 
 
 class ReporteCompraOut(BaseModel):
@@ -1040,6 +1066,129 @@ def _obtener_datos_reporte_ventas(
     return resumen_json, ventas_data, suma_comisiones_referidor, suma_comisiones_bancarias
 
 
+def _obtener_datos_reporte_ventas_por_producto(
+    session: Session,
+    fecha_desde: Optional[date],
+    fecha_hasta: Optional[date],
+    cliente_id: Optional[int] = None,
+    categoria_id: Optional[int] = None,
+    producto_id: Optional[int] = None,
+    vendedor_id: Optional[int] = None,
+    canal_venta_id: Optional[int] = None,
+):
+    fecha_desde_dt = datetime.combine(fecha_desde, datetime.min.time()) if fecha_desde else None
+    fecha_hasta_dt = datetime.combine(fecha_hasta, datetime.max.time()) if fecha_hasta else None
+
+    base_sq = _construir_query_base_ventas(
+        session,
+        fecha_desde=fecha_desde_dt,
+        fecha_hasta=fecha_hasta_dt,
+        cliente_id=cliente_id,
+        vendedor_id=vendedor_id,
+        canal_venta_id=canal_venta_id,
+    ).subquery()
+
+    compra_costos_sq = _build_compra_costos_por_item_sq(session)
+
+    query = (
+        session.query(
+            PresupuestoItem.producto_id.label("producto_id"),
+            func.coalesce(Producto.nombre, PresupuestoItem.descripcion_personalizada, "Producto sin nombre").label("producto_nombre"),
+            Producto.codigo.label("producto_codigo"),
+            Categoria.nombre.label("categoria_nombre"),
+            func.coalesce(func.sum(func.coalesce(PresupuestoItem.cantidad, 0.0)), 0.0).label("cantidad_vendida"),
+            func.coalesce(func.sum(func.coalesce(PresupuestoItem.subtotal, func.coalesce(PresupuestoItem.precio_unitario, 0.0) * func.coalesce(PresupuestoItem.cantidad, 0.0))), 0.0).label("ingresos_totales"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            compra_costos_sq.c.presupuesto_item_id.isnot(None),
+                            compra_costos_sq.c.costo_real_total,
+                        ),
+                        else_=func.coalesce(PresupuestoItem.costo_unitario, 0.0) * func.coalesce(PresupuestoItem.cantidad, 0),
+                    )
+                ),
+                0.0,
+            ).label("costos_totales"),
+            func.count(func.distinct(base_sq.c.venta_id)).label("ventas_count"),
+        )
+        .select_from(base_sq)
+        .join(Presupuesto, Presupuesto.id == base_sq.c.presupuesto_id)
+        .join(PresupuestoItem, PresupuestoItem.presupuesto_id == Presupuesto.id)
+        .outerjoin(Producto, Producto.id == PresupuestoItem.producto_id)
+        .outerjoin(Categoria, Categoria.id == Producto.categoria_id)
+        .outerjoin(compra_costos_sq, compra_costos_sq.c.presupuesto_item_id == PresupuestoItem.id)
+    )
+
+    if categoria_id:
+        query = query.filter(Producto.categoria_id == categoria_id)
+    if producto_id:
+        query = query.filter(PresupuestoItem.producto_id == producto_id)
+
+    rows = (
+        query
+        .group_by(
+            PresupuestoItem.producto_id,
+            Producto.nombre,
+            PresupuestoItem.descripcion_personalizada,
+            Producto.codigo,
+            Categoria.nombre,
+        )
+        .order_by(
+            func.coalesce(
+                func.sum(
+                    func.coalesce(
+                        PresupuestoItem.subtotal,
+                        func.coalesce(PresupuestoItem.precio_unitario, 0.0) * func.coalesce(PresupuestoItem.cantidad, 0.0),
+                    )
+                ),
+                0.0,
+            ).desc()
+        )
+        .all()
+    )
+
+    productos = []
+    total_cantidad = 0.0
+    total_ingresos = 0.0
+    total_costos = 0.0
+    for row in rows:
+        cantidad = float(row.cantidad_vendida or 0.0)
+        ingresos = float(row.ingresos_totales or 0.0)
+        costos = float(row.costos_totales or 0.0)
+        utilidad = ingresos - costos
+        margen = (utilidad / ingresos * 100.0) if ingresos > 0 else 0.0
+        total_cantidad += cantidad
+        total_ingresos += ingresos
+        total_costos += costos
+        productos.append(ReporteVentaProductoOut(
+            producto_id=row.producto_id,
+            producto_nombre=row.producto_nombre or "Producto sin nombre",
+            producto_codigo=row.producto_codigo,
+            categoria_nombre=row.categoria_nombre,
+            cantidad_vendida=cantidad,
+            ingresos_totales=ingresos,
+            costos_totales=costos,
+            utilidad_bruta=utilidad,
+            margen_bruto=margen,
+            total_vendido=ingresos,
+            precio_promedio=(ingresos / cantidad) if cantidad > 0 else 0.0,
+            ventas_count=int(row.ventas_count or 0),
+        ))
+
+    utilidad_bruta_total = total_ingresos - total_costos
+    return ResumenReporteVentasPorProductoOut(
+        productos=productos,
+        total_productos=len(productos),
+        total_cantidad=total_cantidad,
+        total_ingresos=total_ingresos,
+        total_costos=total_costos,
+        utilidad_bruta_total=utilidad_bruta_total,
+        margen_bruto_promedio=(utilidad_bruta_total / total_ingresos * 100.0) if total_ingresos > 0 else 0.0,
+        total_vendido=total_ingresos,
+    )
+
+
 def _obtener_datos_reporte_compras(
     session: Session,
     fecha_desde: Optional[date],
@@ -1553,6 +1702,34 @@ def obtener_reporte_ventas(
     try:
         resumen, _, _, _ = _obtener_datos_reporte_ventas(session, fecha_desde, fecha_hasta, cliente_id, estado_pago, vendedor_id, canal_venta_id)
         return resumen
+    finally:
+        session.close()
+
+
+@router.get("/ventas-por-producto", response_model=ResumenReporteVentasPorProductoOut)
+def obtener_reporte_ventas_por_producto(
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
+    cliente_id: Optional[int] = Query(None),
+    categoria_id: Optional[int] = Query(None),
+    producto_id: Optional[int] = Query(None),
+    vendedor_id: Optional[int] = Query(None),
+    canal_venta_id: Optional[int] = Query(None),
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        return _obtener_datos_reporte_ventas_por_producto(
+            session,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            cliente_id=cliente_id,
+            categoria_id=categoria_id,
+            producto_id=producto_id,
+            vendedor_id=vendedor_id,
+            canal_venta_id=canal_venta_id,
+        )
     finally:
         session.close()
 

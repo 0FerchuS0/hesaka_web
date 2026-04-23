@@ -3,7 +3,7 @@ Lógica financiera completa replicando el sistema de escritorio original.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import List, Optional
-from datetime import datetime
+from datetime import date, datetime
 from math import ceil
 from sqlalchemy import or_
 from app.database import get_session_for_tenant
@@ -348,6 +348,8 @@ def listar_presupuestos_optimizado(
     tenant_slug: str = Depends(get_tenant_slug),
     current_user=Depends(get_current_user),
     estado: Optional[str] = Query(None),
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
     vendedor_id: Optional[int] = Query(None),
     canal_venta_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
@@ -391,6 +393,10 @@ def listar_presupuestos_optimizado(
 
         if estado:
             query = query.filter(Presupuesto.estado == estado)
+        if fecha_desde:
+            query = query.filter(Presupuesto.fecha >= datetime.combine(fecha_desde, datetime.min.time()))
+        if fecha_hasta:
+            query = query.filter(Presupuesto.fecha <= datetime.combine(fecha_hasta, datetime.max.time()))
         if vendedor_id:
             query = query.filter(Presupuesto.vendedor_id == vendedor_id)
         if canal_venta_id:
@@ -1025,6 +1031,8 @@ def listar_ventas_optimizado(
     tenant_slug: str = Depends(get_tenant_slug),
     current_user=Depends(get_current_user),
     estado: Optional[str] = Query(None),
+    fecha_desde: Optional[date] = Query(None),
+    fecha_hasta: Optional[date] = Query(None),
     estado_entrega: Optional[str] = Query(None),
     vendedor_id: Optional[int] = Query(None),
     canal_venta_id: Optional[int] = Query(None),
@@ -1045,6 +1053,10 @@ def listar_ventas_optimizado(
             query = query.filter(Venta.estado == estado)
         else:
             query = query.filter(Venta.estado != "ANULADA")
+        if fecha_desde:
+            query = query.filter(Venta.fecha >= datetime.combine(fecha_desde, datetime.min.time()))
+        if fecha_hasta:
+            query = query.filter(Venta.fecha <= datetime.combine(fecha_hasta, datetime.max.time()))
         if estado_entrega:
             query = query.filter(Venta.estado_entrega == estado_entrega)
         if vendedor_id:

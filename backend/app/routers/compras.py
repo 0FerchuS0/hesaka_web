@@ -163,7 +163,7 @@ def _estado_vencimiento_compra(session, compra: Compra) -> str:
     return "AL_DIA"
 
 
-def _prioridad_cxp(compra: Compra) -> tuple[int, datetime, datetime]:
+def _prioridad_cxp(session, compra: Compra) -> tuple[int, datetime, datetime]:
     estado_vencimiento = _estado_vencimiento_compra(session, compra)
     prioridad = {
         "VENCIDO": 0,
@@ -176,7 +176,7 @@ def _prioridad_cxp(compra: Compra) -> tuple[int, datetime, datetime]:
     return prioridad, fecha_vencimiento, fecha_compra
 
 
-def _serializar_documento_cxp(compra: Compra) -> CuentaPorPagarDocumentoOut:
+def _serializar_documento_cxp(session, compra: Compra) -> CuentaPorPagarDocumentoOut:
     clientes, ventas_codigos = _obtener_clientes_y_ventas(compra)
     return CuentaPorPagarDocumentoOut(
         compra_id=compra.id,
@@ -491,7 +491,7 @@ def _aplicar_pago_proveedor(session, proveedor_id: int, data: PagoProveedorCreat
     if total_a_pagar > total_abierto:
         raise HTTPException(status_code=422, detail="El monto total a pagar no puede superar la deuda abierta del proveedor.")
 
-    compras_ordenadas = sorted(compras_abiertas, key=_prioridad_cxp)
+    compras_ordenadas = sorted(compras_abiertas, key=lambda compra: _prioridad_cxp(session, compra))
     fecha_pago = normalizar_fecha_negocio(session, data.fecha)
     lote_pago_id = lote_pago_id_forzado or (str(uuid4()) if len(data.metodos_pago) > 1 else None)
     aplicaciones = []
@@ -752,7 +752,7 @@ def obtener_contados_pendientes(
             .order_by(Compra.fecha.desc())
             .all()
         )
-        return [_serializar_documento_cxp(compra) for compra in compras]
+        return [_serializar_documento_cxp(session, compra) for compra in compras]
     finally:
         session.close()
 
@@ -787,7 +787,7 @@ def obtener_detalle_cuentas_por_pagar_proveedor(
             Compra.fecha_vencimiento.asc(),
             Compra.fecha.asc(),
         ).all()
-        return [_serializar_documento_cxp(compra) for compra in compras]
+        return [_serializar_documento_cxp(session, compra) for compra in compras]
     finally:
         session.close()
 

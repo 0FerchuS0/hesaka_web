@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarDays, MessageCircle, Search, Gift, Phone } from 'lucide-react'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
+import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 
 const TEMPLATE_KEY = 'hesaka-cumpleanos-whatsapp-template'
 const DEFAULT_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
+const CUMPLEANOS_TEMPLATE_CODE = 'cumpleanos_cliente'
 
 function todayInputValue() {
     const now = new Date()
@@ -63,7 +65,7 @@ function buildTemplateFromMessage(message, cliente, empresa) {
     return template
 }
 
-function CumpleanosWhatsappModal({ cliente, onClose }) {
+function CumpleanosWhatsappModal({ cliente, onClose, template = DEFAULT_TEMPLATE, onGuardarPlantilla = null, guardandoPlantilla = false }) {
     const { data: configPublica } = useQuery({
         queryKey: ['configuracion-general-publica'],
         queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
@@ -71,14 +73,22 @@ function CumpleanosWhatsappModal({ cliente, onClose }) {
     })
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
     const [telefono, setTelefono] = useState(cliente?.telefono || '')
-    const [message, setMessage] = useState(() => buildMessage(cliente, getTemplate(), empresaNombre))
+    const [message, setMessage] = useState(() => buildMessage(cliente, template, empresaNombre))
+    useEffect(() => {
+        setMessage(buildMessage(cliente, template, empresaNombre))
+    }, [cliente, template, empresaNombre])
     const telefonoNormalizado = normalizarTelefonoWhatsapp(telefono)
     const whatsappLink = telefonoNormalizado
         ? `https://wa.me/${telefonoNormalizado}?text=${encodeURIComponent(buildMessage(cliente, message, empresaNombre))}`
         : ''
 
-    const guardarPlantilla = () => {
-        localStorage.setItem(TEMPLATE_KEY, buildTemplateFromMessage(message, cliente, empresaNombre))
+    const guardarPlantilla = async () => {
+        const text = buildTemplateFromMessage(message, cliente, empresaNombre)
+        if (onGuardarPlantilla) {
+            const ok = await onGuardarPlantilla(text)
+            if (!ok) return
+        }
+        localStorage.setItem(TEMPLATE_KEY, text)
         window.alert('Plantilla de cumpleaños guardada.')
     }
 
@@ -119,8 +129,8 @@ function CumpleanosWhatsappModal({ cliente, onClose }) {
                         <button type="button" className="btn btn-secondary" onClick={() => setMessage(buildMessage(cliente, DEFAULT_TEMPLATE, empresaNombre))}>
                             Restaurar sugerido
                         </button>
-                        <button type="button" className="btn btn-secondary" onClick={guardarPlantilla}>
-                            Guardar plantilla
+                        <button type="button" className="btn btn-secondary" onClick={guardarPlantilla} disabled={guardandoPlantilla}>
+                            {guardandoPlantilla ? 'Guardando...' : 'Guardar plantilla'}
                         </button>
                     </div>
                     <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
@@ -153,6 +163,9 @@ export default function CumpleanosClientesPage() {
     })
     const data = Array.isArray(apiData) ? apiData : []
     const dataShapeError = apiData != null && !Array.isArray(apiData)
+    const { data: templates = [] } = useWhatsappTemplatesCatalog()
+    const actualizarTemplate = useActualizarWhatsappTemplate()
+    const cumpleanosTemplate = getWhatsappTemplateByCode(templates, CUMPLEANOS_TEMPLATE_CODE, getTemplate())
 
     const filtrados = useMemo(() => {
         const term = buscar.trim().toLowerCase()
@@ -252,7 +265,24 @@ export default function CumpleanosClientesPage() {
             </div>
 
             {whatsappCliente ? (
-                <CumpleanosWhatsappModal cliente={whatsappCliente} onClose={() => setWhatsappCliente(null)} />
+                <CumpleanosWhatsappModal
+                    cliente={whatsappCliente}
+                    onClose={() => setWhatsappCliente(null)}
+                    template={cumpleanosTemplate}
+                    guardandoPlantilla={actualizarTemplate.isPending}
+                    onGuardarPlantilla={async plantilla => {
+                        try {
+                            await actualizarTemplate.mutateAsync({
+                                codigo: CUMPLEANOS_TEMPLATE_CODE,
+                                payload: { plantilla, activo: true },
+                            })
+                            return true
+                        } catch {
+                            window.alert('No se pudo guardar la plantilla en el catálogo. Verifica permisos de administrador.')
+                            return false
+                        }
+                    }}
+                />
             ) : null}
         </div>
     )

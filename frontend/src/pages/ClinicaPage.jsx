@@ -20,6 +20,7 @@ import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api, useAuth } from '../context/AuthContext'
 import { hasActionAccess } from '../utils/roles'
+import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 
 const CLINICA_PALETTE = {
     accent: '#1dd3c7',
@@ -42,6 +43,7 @@ const CLINICA_TABS = [
 
 const WHATSAPP_TEMPLATE_KEY = 'hesaka-clinica-whatsapp-template'
 const DEFAULT_WHATSAPP_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Te recordamos tu turno para el {proxima_consulta} a las {hora_turno}. Te esperamos. Si no podras asistir, por favor avisanos para reprogramar.'
+const CLINICA_TEMPLATE_CODE = 'clinica_recordatorio_turno'
 
 function formatError(error, fallback = 'Ocurrio un error.') {
     const detail = error?.response?.data?.detail
@@ -750,6 +752,7 @@ function WhatsappMessageModal({ item, onClose }) {
         retry: false,
     })
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
+    const actualizarWhatsappTemplate = useActualizarWhatsappTemplate()
     const [telefono, setTelefono] = useState(() => getTurnoTelefono(item))
     const [message, setMessage] = useState(() => buildWhatsappMessage(item, getWhatsappTemplate(), empresaNombre))
 
@@ -765,8 +768,17 @@ function WhatsappMessageModal({ item, onClose }) {
         setMessage(buildWhatsappMessage(item, DEFAULT_WHATSAPP_TEMPLATE, empresaNombre))
     }
 
-    const saveAsTemplate = () => {
+    const saveAsTemplate = async () => {
         const template = buildTemplateFromMessage(message, item, empresaNombre)
+        try {
+            await actualizarWhatsappTemplate.mutateAsync({
+                codigo: CLINICA_TEMPLATE_CODE,
+                payload: { plantilla: template, activo: true },
+            })
+        } catch {
+            window.alert('No se pudo guardar la plantilla en el catálogo. Verifica permisos de administrador.')
+            return
+        }
         localStorage.setItem(WHATSAPP_TEMPLATE_KEY, template)
         window.alert('Plantilla de WhatsApp guardada correctamente.')
     }
@@ -815,8 +827,8 @@ function WhatsappMessageModal({ item, onClose }) {
                     <button type="button" className="btn btn-secondary" onClick={restoreSuggested}>
                         Restaurar sugerido
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={saveAsTemplate}>
-                        Guardar como plantilla
+                    <button type="button" className="btn btn-secondary" onClick={saveAsTemplate} disabled={actualizarWhatsappTemplate.isPending}>
+                        {actualizarWhatsappTemplate.isPending ? 'Guardando...' : 'Guardar como plantilla'}
                     </button>
                 </div>
                 <div className="modal-actions">
@@ -6529,6 +6541,12 @@ export default function ClinicaPage() {
     const location = useLocation()
     const navigate = useNavigate()
     const { user } = useAuth()
+    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
+
+    useEffect(() => {
+        const clinicaTemplate = getWhatsappTemplateByCode(whatsappTemplates, CLINICA_TEMPLATE_CODE, DEFAULT_WHATSAPP_TEMPLATE)
+        localStorage.setItem(WHATSAPP_TEMPLATE_KEY, clinicaTemplate)
+    }, [whatsappTemplates])
 
     const sectionKey = useMemo(() => {
         const found = CLINICA_TABS.find(tab => location.pathname === tab.path)

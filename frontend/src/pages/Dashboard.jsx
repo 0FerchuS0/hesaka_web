@@ -10,6 +10,12 @@ import {
     Tooltip, ResponsiveContainer
 } from 'recharts'
 import Modal from '../components/Modal'
+import { getWhatsappTemplateByCode, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
+
+const DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.'
+const DEFAULT_CUMPLEANOS_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
+const DASHBOARD_RECORDATORIO_TEMPLATE_CODE = 'dashboard_recordatorio'
+const CUMPLEANOS_TEMPLATE_CODE = 'cumpleanos_cliente'
 
 function fmt(value) {
     return new Intl.NumberFormat('es-PY', {
@@ -106,27 +112,25 @@ function normalizarTelefonoWhatsapp(value) {
     return digits.startsWith('595') && digits.length >= 10 ? digits : ''
 }
 
-function buildReminderWhatsappLink(item) {
+function buildReminderWhatsappLink(item, empresa = 'HESAKA', template = DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE) {
     const telefono = normalizarTelefonoWhatsapp(item?.paciente_telefono)
     if (!telefono) return ''
     const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
     const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
-    const mensaje = [
-        `Hola ${item?.paciente_nombre || ''}, te escribimos de HESAKA.`,
-        `Tu ultima consulta fue el ${ultimaConsulta} y tu proximo control esta previsto para el ${proximaConsulta}.`,
-        'Quedamos atentos para ayudarte a confirmar tu cita.',
-    ].join(' ')
+    const mensaje = (template || DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE)
+        .replaceAll('{paciente}', item?.paciente_nombre || '')
+        .replaceAll('{ultima_consulta}', ultimaConsulta)
+        .replaceAll('{proxima_consulta}', proximaConsulta)
+        .replaceAll('{empresa}', empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
 }
 
-function buildBirthdayWhatsappLink(cliente, empresa = 'HESAKA') {
+function buildBirthdayWhatsappLink(cliente, empresa = 'HESAKA', template = DEFAULT_CUMPLEANOS_TEMPLATE) {
     const telefono = normalizarTelefonoWhatsapp(cliente?.telefono)
     if (!telefono) return ''
-    const mensaje = [
-        `Hola ${cliente?.nombre || ''}, te escribimos de ${empresa}.`,
-        'Queremos desearte un muy feliz cumpleaños.',
-        'Que tengas un excelente dia.',
-    ].join(' ')
+    const mensaje = (template || DEFAULT_CUMPLEANOS_TEMPLATE)
+        .replaceAll('{cliente}', cliente?.nombre || '')
+        .replaceAll('{empresa}', empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
 }
 
@@ -143,11 +147,11 @@ function getDailyReminderStorageKey(user) {
     return `hesaka-recordatorios-vistos-${userKey}-${todayInputValue()}`
 }
 
-function ReminderCards({ items, onMarkRemembered, actionPendingId = null }) {
+function ReminderCards({ items, onMarkRemembered, actionPendingId = null, empresaNombre = 'HESAKA', reminderTemplate = DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE }) {
     return (
         <div style={{ display: 'grid', gap: 12 }}>
             {items.map(item => {
-                const whatsappLink = buildReminderWhatsappLink(item)
+                const whatsappLink = buildReminderWhatsappLink(item, empresaNombre, reminderTemplate)
                 const isPending = actionPendingId === item.id
                 return (
                     <div key={`${item.id}-${item.recordatorio_categoria || 'sin-categoria'}`} className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
@@ -210,6 +214,7 @@ export default function Dashboard() {
         staleTime: 5 * 60 * 1000,
         retry: false,
     })
+    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
 
     const markReminderMutation = useMutation({
         mutationFn: async item => {
@@ -227,6 +232,16 @@ export default function Dashboard() {
     const reminderItems = flattenReminderBuckets(reminderQuery.data)
     const birthdayItems = birthdayQuery.data || []
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
+    const reminderTemplate = getWhatsappTemplateByCode(
+        whatsappTemplates,
+        DASHBOARD_RECORDATORIO_TEMPLATE_CODE,
+        DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE,
+    )
+    const cumpleanosTemplate = getWhatsappTemplateByCode(
+        whatsappTemplates,
+        CUMPLEANOS_TEMPLATE_CODE,
+        DEFAULT_CUMPLEANOS_TEMPLATE,
+    )
 
     useEffect(() => {
         if (!reminderItems.length) return
@@ -322,7 +337,7 @@ export default function Dashboard() {
                     </div>
                     <div style={{ display: 'grid', gap: 10 }}>
                         {birthdayItems.slice(0, 4).map(cliente => {
-                            const whatsappLink = buildBirthdayWhatsappLink(cliente, empresaNombre)
+                            const whatsappLink = buildBirthdayWhatsappLink(cliente, empresaNombre, cumpleanosTemplate)
                             return (
                                 <div key={cliente.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, background: 'rgba(255,255,255,0.03)' }}>
                                     <div style={{ minWidth: 0 }}>
@@ -509,6 +524,8 @@ export default function Dashboard() {
                         items={reminderItems}
                         onMarkRemembered={item => markReminderMutation.mutate(item)}
                         actionPendingId={markReminderMutation.variables?.id}
+                        empresaNombre={empresaNombre}
+                        reminderTemplate={reminderTemplate}
                     />
                 </Modal>
             ) : null}

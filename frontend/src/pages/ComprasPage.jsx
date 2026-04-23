@@ -9,6 +9,7 @@ import { api, useAuth } from '../context/AuthContext'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
@@ -21,6 +22,7 @@ const formatDateInputValue = value => {
 }
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
+const RETIRO_TEMPLATE_CODE = 'venta_aviso_retiro'
 const COMPRA_FLOW_OPTIONS = [
     {
         key: 'PEDIDO_CLIENTE',
@@ -103,7 +105,7 @@ function buildRetiroWhatsappLink(context, message = '') {
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
 }
 
-function WhatsappRetiroModal({ context, onClose }) {
+function WhatsappRetiroModal({ context, onClose, onGuardarPlantilla = null, guardandoPlantilla = false }) {
     const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
     const whatsappLink = buildRetiroWhatsappLink(context, message)
 
@@ -116,8 +118,12 @@ function WhatsappRetiroModal({ context, onClose }) {
     }
 
     const saveTemplate = () => {
+        const template = message
+        if (onGuardarPlantilla) {
+            onGuardarPlantilla(template)
+        }
         if (typeof window !== 'undefined') {
-            localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, message)
+            localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, template)
         }
         window.alert('Plantilla de retiro guardada.')
     }
@@ -161,7 +167,7 @@ function WhatsappRetiroModal({ context, onClose }) {
                     <button type="button" className="btn btn-secondary" onClick={restoreSuggested}>
                         <RotateCcw size={15} /> Restaurar sugerido
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={saveTemplate}>
+                    <button type="button" className="btn btn-secondary" onClick={saveTemplate} disabled={guardandoPlantilla}>
                         Guardar plantilla
                     </button>
                 </div>
@@ -1189,6 +1195,13 @@ export default function ComprasPage() {
     const [deletingId, setDeletingId] = useState(null)
     const [entregaProcessing, setEntregaProcessing] = useState(false)
     const [whatsappRetiro, setWhatsappRetiro] = useState(null)
+    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
+    const actualizarWhatsappTemplate = useActualizarWhatsappTemplate()
+
+    useEffect(() => {
+        const retiroTemplate = getWhatsappTemplateByCode(whatsappTemplates, RETIRO_TEMPLATE_CODE, DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
+        localStorage.setItem(RETIRO_WHATSAPP_TEMPLATE_KEY, retiroTemplate)
+    }, [whatsappTemplates])
 
     useEffect(() => {
         const timer = setTimeout(() => setBuscarDebounced(buscar.trim()), 350)
@@ -1468,7 +1481,17 @@ export default function ComprasPage() {
                     onClose={() => setWhatsappRetiro(null)}
                     maxWidth="680px"
                 >
-                    <WhatsappRetiroModal context={whatsappRetiro} onClose={() => setWhatsappRetiro(null)} />
+                    <WhatsappRetiroModal
+                        context={whatsappRetiro}
+                        onClose={() => setWhatsappRetiro(null)}
+                        guardandoPlantilla={actualizarWhatsappTemplate.isPending}
+                        onGuardarPlantilla={plantilla => {
+                            actualizarWhatsappTemplate.mutate({
+                                codigo: RETIRO_TEMPLATE_CODE,
+                                payload: { plantilla, activo: true },
+                            })
+                        }}
+                    />
                 </Modal>
             )}
         </div>

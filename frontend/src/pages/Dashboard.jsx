@@ -37,13 +37,13 @@ function fmtShortRange(desde, hasta) {
     return `${dd(start.getDate())}/${dd(start.getMonth() + 1)} - ${dd(end.getDate())}/${dd(end.getMonth() + 1)}/${end.getFullYear()}`
 }
 
-function StatCard({ icon: Icon, iconClass, label, value, sub }) {
+function StatCard({ icon: Icon, iconClass, label, value, sub, valueClassName = '', cardClassName = '' }) {
     return (
-        <div className="stat-card">
+        <div className={`stat-card ${cardClassName}`.trim()}>
             <div className={`stat-icon ${iconClass}`}><Icon size={22} /></div>
             <div className="stat-info">
                 <div className="stat-label">{label}</div>
-                <div className="stat-value">{value}</div>
+                <div className={`stat-value ${valueClassName}`.trim()}>{value}</div>
                 {sub && <div className="stat-sub">{sub}</div>}
             </div>
         </div>
@@ -279,6 +279,8 @@ export default function Dashboard() {
                     iconClass="green"
                     label="Saldo en Caja"
                     value={fmt(dashboard?.saldo_caja ?? 0)}
+                    valueClassName="stat-value--currency"
+                    cardClassName="stat-card--stacked"
                 />
                 <StatCard
                     icon={TrendingUp}
@@ -300,6 +302,8 @@ export default function Dashboard() {
                     label="Modulo Activo"
                     value="Administrativo"
                     sub="+ Clinico disponible"
+                    valueClassName="stat-value--module"
+                    cardClassName="stat-card--stacked"
                 />
             </div>
 

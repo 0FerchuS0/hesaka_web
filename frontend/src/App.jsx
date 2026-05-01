@@ -1,10 +1,21 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { AuthProvider, useAuth, api } from './context/AuthContext'
+import Modal from './components/Modal'
 import Sidebar from './components/Sidebar'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { hasModuleAccess, normalizeRole } from './utils/roles'
+import {
+    consumeBeforeUnloadSuppression,
+    getNavigationControlState,
+    subscribeNavigationControl,
+    suppressNextBeforeUnload,
+} from './utils/navigationControl'
+
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000
+const REFRESH_WARNING_MESSAGE = 'Si actualizas la pagina, puedes perder informacion no guardada. ¿Deseas continuar?'
+const CLOSE_TAB_MESSAGE = 'Si cierras o actualizas la pagina, puedes perder informacion no guardada.'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -42,32 +53,6 @@ const ReporteAjustesVentasPage = lazy(() => import('./pages/ReporteAjustesVentas
 const CobroMultiplePage = lazy(() => import('./pages/CobroMultiplePage'))
 const HistorialCobrosMultiplesPage = lazy(() => import('./pages/HistorialCobrosMultiplesPage'))
 const ClinicaPage = lazy(() => import('./pages/ClinicaPage'))
-
-const Placeholder = ({ title, icon = '...' }) => (
-    <div className="page-body">
-        <div className="card">
-            <div className="empty-state" style={{ padding: '80px 20px' }}>
-                <div
-                    style={{
-                        fontSize: '3rem',
-                        marginBottom: 16,
-                        background: 'linear-gradient(135deg, #1a56db, #7c3aed)',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                    }}
-                >
-                    {icon}
-                </div>
-                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: 8 }}>
-                    Modulo en desarrollo
-                </h3>
-                <p style={{ color: 'var(--text-muted)' }}>
-                    El modulo <strong style={{ color: 'var(--primary-light)' }}>{title}</strong> sera implementado proximamente.
-                </p>
-            </div>
-        </div>
-    </div>
-)
 
 const RouteLoader = () => (
     <div className="page-body">
@@ -119,12 +104,17 @@ function HomeRoute() {
 }
 
 function AppLayout() {
-    const { user } = useAuth()
+    const { user, logout } = useAuth()
     const location = useLocation()
     const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
         const saved = window.localStorage.getItem('hesaka-sidebar-collapsed')
         return saved === 'true'
     })
+    const [navigationState, setNavigationState] = useState(() => getNavigationControlState())
+    const [showIdleBlockedModal, setShowIdleBlockedModal] = useState(false)
+    const idleTimerRef = useRef(null)
+    const idleExpiredRef = useRef(false)
+    const idleBlockedModalOpenRef = useRef(false)
 
     const { data: estadoConfig, isLoading: loadingConfig } = useQuery({
         queryKey: ['configuracion-general-estado'],
@@ -133,32 +123,156 @@ function AppLayout() {
         staleTime: 60000,
     })
 
+    const performIdleLogout = useCallback(() => {
+        if (idleTimerRef.current) {
+            window.clearTimeout(idleTimerRef.current)
+            idleTimerRef.current = null
+        }
+        idleExpiredRef.current = false
+        idleBlockedModalOpenRef.current = false
+        setShowIdleBlockedModal(false)
+        suppressNextBeforeUnload()
+        logout()
+    }, [logout])
+
+    const handleIdleTimeout = useCallback(() => {
+        idleExpiredRef.current = true
+        const currentNavigationState = getNavigationControlState()
+        if (currentNavigationState.hasBlockers) {
+            idleBlockedModalOpenRef.current = true
+            setShowIdleBlockedModal(true)
+            return
+        }
+        performIdleLogout()
+    }, [performIdleLogout])
+
+    const resetIdleTimer = useCallback(() => {
+        if (idleTimerRef.current) {
+            window.clearTimeout(idleTimerRef.current)
+        }
+        idleTimerRef.current = window.setTimeout(handleIdleTimeout, IDLE_TIMEOUT_MS)
+    }, [handleIdleTimeout])
+
+    const confirmPendingNavigation = useCallback(() => {
+        const currentNavigationState = getNavigationControlState()
+        if (!currentNavigationState.hasBlockers) return true
+        return window.confirm(currentNavigationState.message || CLOSE_TAB_MESSAGE)
+    }, [])
+
     useEffect(() => {
         window.localStorage.setItem('hesaka-sidebar-collapsed', String(sidebarCollapsed))
     }, [sidebarCollapsed])
 
     useEffect(() => {
+        return subscribeNavigationControl(() => {
+            setNavigationState(getNavigationControlState())
+        })
+    }, [])
+
+    useEffect(() => {
+        idleBlockedModalOpenRef.current = showIdleBlockedModal
+    }, [showIdleBlockedModal])
+
+    useEffect(() => {
+        if (idleExpiredRef.current && !navigationState.hasBlockers) {
+            performIdleLogout()
+        }
+    }, [navigationState.hasBlockers, performIdleLogout])
+
+    useEffect(() => {
         const onBeforeUnload = event => {
+            if (consumeBeforeUnloadSuppression()) return
             event.preventDefault()
-            // Requerido por navegadores modernos para mostrar alerta nativa.
             event.returnValue = ''
         }
+
         const onKeyDown = event => {
             const key = String(event.key || '').toLowerCase()
             const isRefreshShortcut = key === 'f5' || ((event.ctrlKey || event.metaKey) && key === 'r')
             if (!isRefreshShortcut) return
-            const ok = window.confirm('Hay una acción de actualización de página. Si continúas, puedes perder información no guardada. ¿Deseas actualizar?')
-            if (ok) return
+
             event.preventDefault()
             event.stopPropagation()
+
+            const currentNavigationState = getNavigationControlState()
+            const promptMessage = currentNavigationState.hasBlockers
+                ? `${currentNavigationState.message}\n\nSi actualizas ahora, la accion en curso puede interrumpirse.`
+                : REFRESH_WARNING_MESSAGE
+
+            if (!window.confirm(promptMessage)) return
+            suppressNextBeforeUnload()
+            window.location.reload()
         }
+
+        const onDocumentClick = event => {
+            const currentNavigationState = getNavigationControlState()
+            if (!currentNavigationState.hasBlockers) return
+
+            const anchor = event.target?.closest?.('a[href]')
+            if (!anchor) return
+            if (anchor.target === '_blank') return
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+
+            const href = anchor.getAttribute('href')
+            if (!href || href.startsWith('#') || href.startsWith('javascript:')) return
+
+            const url = new URL(anchor.href, window.location.href)
+            if (url.origin !== window.location.origin) return
+
+            if (confirmPendingNavigation()) return
+
+            event.preventDefault()
+            event.stopPropagation()
+            if (typeof event.stopImmediatePropagation === 'function') {
+                event.stopImmediatePropagation()
+            }
+        }
+
+        const onPopState = () => {
+            if (confirmPendingNavigation()) return
+            window.setTimeout(() => {
+                window.history.go(1)
+            }, 0)
+        }
+
         window.addEventListener('beforeunload', onBeforeUnload)
         window.addEventListener('keydown', onKeyDown, { capture: true })
+        document.addEventListener('click', onDocumentClick, true)
+        window.addEventListener('popstate', onPopState)
+
         return () => {
             window.removeEventListener('beforeunload', onBeforeUnload)
             window.removeEventListener('keydown', onKeyDown, { capture: true })
+            document.removeEventListener('click', onDocumentClick, true)
+            window.removeEventListener('popstate', onPopState)
         }
-    }, [])
+    }, [confirmPendingNavigation])
+
+    useEffect(() => {
+        const onUserActivity = () => {
+            if (idleBlockedModalOpenRef.current) return
+            if (idleExpiredRef.current) {
+                idleExpiredRef.current = false
+            }
+            resetIdleTimer()
+        }
+
+        const events = ['mousedown', 'keydown', 'touchstart', 'scroll']
+        events.forEach(eventName => {
+            window.addEventListener(eventName, onUserActivity, true)
+        })
+        resetIdleTimer()
+
+        return () => {
+            if (idleTimerRef.current) {
+                window.clearTimeout(idleTimerRef.current)
+                idleTimerRef.current = null
+            }
+            events.forEach(eventName => {
+                window.removeEventListener(eventName, onUserActivity, true)
+            })
+        }
+    }, [resetIdleTimer])
 
     const role = normalizeRole(user?.rol)
     const configIncomplete = estadoConfig && !estadoConfig.configuracion_completa
@@ -200,64 +314,96 @@ function AppLayout() {
     }
 
     return (
-        <div className="app-layout">
-            <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(prev => !prev)} />
-            <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
-                <Suspense fallback={<RouteLoader />}>
-                    <Routes>
-                        <Route path="/" element={<HomeRoute />} />
-                        <Route path="/usuarios" element={<RoleRoute allowedRoles="usuarios"><UsuariosPage /></RoleRoute>} />
-                        <Route path="/configuracion-general" element={<ConfiguracionGeneralPage />} />
-                        <Route path="/configuracion-general/backups" element={<ConfiguracionBackupsPage />} />
-                        <Route path="/clientes" element={<RoleRoute allowedRoles="catalogos"><ClientesPage /></RoleRoute>} />
-                        <Route path="/clientes/cumpleanos" element={<RoleRoute allowedRoles="catalogos"><RouteErrorBoundary><CumpleanosClientesPage /></RouteErrorBoundary></RoleRoute>} />
-                        <Route path="/clientes/saldos" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteSaldosClientesPage /></RoleRoute>} />
-                        <Route path="/referidores" element={<RoleRoute allowedRoles="catalogos"><ReferidoresPage /></RoleRoute>} />
-                        <Route path="/vendedores" element={<RoleRoute allowedRoles="catalogos"><VendedoresPage /></RoleRoute>} />
-                        <Route path="/canales-venta" element={<RoleRoute allowedRoles="catalogos"><CanalesVentaPage /></RoleRoute>} />
-                        <Route path="/categorias" element={<RoleRoute allowedRoles="catalogos"><CategoriasPage /></RoleRoute>} />
-                        <Route path="/atributos" element={<RoleRoute allowedRoles="catalogos"><AtributosPage /></RoleRoute>} />
-                        <Route path="/marcas" element={<RoleRoute allowedRoles="catalogos"><MarcasPage /></RoleRoute>} />
-                        <Route path="/productos" element={<RoleRoute allowedRoles="catalogos"><ProductosPage /></RoleRoute>} />
-                        <Route path="/proveedores" element={<RoleRoute allowedRoles="catalogos"><ProveedoresPage /></RoleRoute>} />
-                        <Route path="/catalogos/destinatarios-rendicion" element={<RoleRoute allowedRoles="catalogos"><DestinatariosRendicionPage /></RoleRoute>} />
-                        <Route path="/catalogos/plantillas-whatsapp" element={<RoleRoute allowedRoles="catalogos"><PlantillasWhatsappPage /></RoleRoute>} />
-                        <Route path="/presupuestos" element={<RoleRoute allowedRoles="presupuestos"><PresupuestosPage /></RoleRoute>} />
-                        <Route path="/ventas" element={<RoleRoute allowedRoles="ventas"><VentasPage /></RoleRoute>} />
-                        <Route path="/ventas/ajustes" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><ReporteAjustesVentasPage /></RouteErrorBoundary></RoleRoute>} />
-                        <Route path="/compras" element={<RoleRoute allowedRoles="compras"><ComprasPage /></RoleRoute>} />
-                        <Route path="/caja" element={<RoleRoute allowedRoles="finanzas"><CajaPage /></RoleRoute>} />
-                        <Route path="/finanzas/jornada" element={<RoleRoute allowedRoles="finanzas"><JornadaRendicionesPage /></RoleRoute>} />
-                        <Route path="/bancos" element={<Navigate to="/caja" replace />} />
-                        <Route path="/ventas/cobro-multiple" element={<RoleRoute allowedRoles="cobros"><CobroMultiplePage /></RoleRoute>} />
-                        <Route path="/ventas/historial-cobros-multiples" element={<RoleRoute allowedRoles="cobros"><HistorialCobrosMultiplesPage /></RoleRoute>} />
-                        <Route path="/cuentas-por-pagar" element={<RoleRoute allowedRoles="cuentas_por_pagar"><CuentasPorPagarPage /></RoleRoute>} />
-                        <Route path="/gastos" element={<RoleRoute allowedRoles="finanzas"><GastosPage /></RoleRoute>} />
+        <>
+            <div className="app-layout">
+                <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(prev => !prev)} />
+                <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
+                    <Suspense fallback={<RouteLoader />}>
+                        <Routes>
+                            <Route path="/" element={<HomeRoute />} />
+                            <Route path="/usuarios" element={<RoleRoute allowedRoles="usuarios"><UsuariosPage /></RoleRoute>} />
+                            <Route path="/configuracion-general" element={<ConfiguracionGeneralPage />} />
+                            <Route path="/configuracion-general/backups" element={<ConfiguracionBackupsPage />} />
+                            <Route path="/clientes" element={<RoleRoute allowedRoles="catalogos"><ClientesPage /></RoleRoute>} />
+                            <Route path="/clientes/cumpleanos" element={<RoleRoute allowedRoles="catalogos"><RouteErrorBoundary><CumpleanosClientesPage /></RouteErrorBoundary></RoleRoute>} />
+                            <Route path="/clientes/saldos" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteSaldosClientesPage /></RoleRoute>} />
+                            <Route path="/referidores" element={<RoleRoute allowedRoles="catalogos"><ReferidoresPage /></RoleRoute>} />
+                            <Route path="/vendedores" element={<RoleRoute allowedRoles="catalogos"><VendedoresPage /></RoleRoute>} />
+                            <Route path="/canales-venta" element={<RoleRoute allowedRoles="catalogos"><CanalesVentaPage /></RoleRoute>} />
+                            <Route path="/categorias" element={<RoleRoute allowedRoles="catalogos"><CategoriasPage /></RoleRoute>} />
+                            <Route path="/atributos" element={<RoleRoute allowedRoles="catalogos"><AtributosPage /></RoleRoute>} />
+                            <Route path="/marcas" element={<RoleRoute allowedRoles="catalogos"><MarcasPage /></RoleRoute>} />
+                            <Route path="/productos" element={<RoleRoute allowedRoles="catalogos"><ProductosPage /></RoleRoute>} />
+                            <Route path="/proveedores" element={<RoleRoute allowedRoles="catalogos"><ProveedoresPage /></RoleRoute>} />
+                            <Route path="/catalogos/destinatarios-rendicion" element={<RoleRoute allowedRoles="catalogos"><DestinatariosRendicionPage /></RoleRoute>} />
+                            <Route path="/catalogos/plantillas-whatsapp" element={<RoleRoute allowedRoles="catalogos"><PlantillasWhatsappPage /></RoleRoute>} />
+                            <Route path="/presupuestos" element={<RoleRoute allowedRoles="presupuestos"><PresupuestosPage /></RoleRoute>} />
+                            <Route path="/ventas" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><VentasPage /></RouteErrorBoundary></RoleRoute>} />
+                            <Route path="/ventas/ajustes" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><ReporteAjustesVentasPage /></RouteErrorBoundary></RoleRoute>} />
+                            <Route path="/compras" element={<RoleRoute allowedRoles="compras"><ComprasPage /></RoleRoute>} />
+                            <Route path="/caja" element={<RoleRoute allowedRoles="finanzas"><CajaPage /></RoleRoute>} />
+                            <Route path="/finanzas/jornada" element={<RoleRoute allowedRoles="finanzas"><JornadaRendicionesPage /></RoleRoute>} />
+                            <Route path="/bancos" element={<Navigate to="/caja" replace />} />
+                            <Route path="/ventas/cobro-multiple" element={<RoleRoute allowedRoles="cobros"><CobroMultiplePage /></RoleRoute>} />
+                            <Route path="/ventas/historial-cobros-multiples" element={<RoleRoute allowedRoles="cobros"><HistorialCobrosMultiplesPage /></RoleRoute>} />
+                            <Route path="/cuentas-por-pagar" element={<RoleRoute allowedRoles="cuentas_por_pagar"><CuentasPorPagarPage /></RoleRoute>} />
+                            <Route path="/gastos" element={<RoleRoute allowedRoles="finanzas"><GastosPage /></RoleRoute>} />
 
-                        <Route path="/reportes" element={<Navigate to="/reportes/ventas" replace />} />
-                        <Route path="/reportes/ventas" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasPage /></RoleRoute>} />
-                        <Route path="/reportes/ventas-productos" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasProductosPage /></RoleRoute>} />
-                        <Route path="/reportes/comparativo-mensual" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComparativoMensualPage /></RoleRoute>} />
-                        <Route path="/reportes/compras" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComprasPage /></RoleRoute>} />
-                        <Route path="/reportes/ajustes-ventas" element={<Navigate to="/ventas/ajustes" replace />} />
-                        <Route path="/reportes/finanzas" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteFinanzasPage /></RoleRoute>} />
-                        <Route path="/reportes/comisiones" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteComisionesPage /></RoleRoute>} />
-                        <Route path="/reportes/saldos" element={<Navigate to="/clientes/saldos" replace />} />
-                        <Route path="/reportes/laboratorio" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteTrabajosLaboratorioPage /></RoleRoute>} />
-                        <Route path="/clinica" element={<Navigate to="/clinica/dashboard" replace />} />
-                        <Route path="/clinica/dashboard" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/pacientes" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/doctores" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/agenda" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/consulta" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/historial" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/lugares" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="/clinica/vademecum" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
-                        <Route path="*" element={<Navigate to="/" replace />} />
-                    </Routes>
-                </Suspense>
-            </main>
-        </div>
+                            <Route path="/reportes" element={<Navigate to="/reportes/ventas" replace />} />
+                            <Route path="/reportes/ventas" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasPage /></RoleRoute>} />
+                            <Route path="/reportes/ventas-productos" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasProductosPage /></RoleRoute>} />
+                            <Route path="/reportes/comparativo-mensual" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComparativoMensualPage /></RoleRoute>} />
+                            <Route path="/reportes/compras" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteComprasPage /></RoleRoute>} />
+                            <Route path="/reportes/ajustes-ventas" element={<Navigate to="/ventas/ajustes" replace />} />
+                            <Route path="/reportes/finanzas" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteFinanzasPage /></RoleRoute>} />
+                            <Route path="/reportes/comisiones" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteComisionesPage /></RoleRoute>} />
+                            <Route path="/reportes/saldos" element={<Navigate to="/clientes/saldos" replace />} />
+                            <Route path="/reportes/laboratorio" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteTrabajosLaboratorioPage /></RoleRoute>} />
+                            <Route path="/clinica" element={<Navigate to="/clinica/dashboard" replace />} />
+                            <Route path="/clinica/dashboard" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/pacientes" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/doctores" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/agenda" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/consulta" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/historial" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/lugares" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="/clinica/vademecum" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
+                            <Route path="*" element={<Navigate to="/" replace />} />
+                        </Routes>
+                    </Suspense>
+                </main>
+            </div>
+            {showIdleBlockedModal && (
+                <Modal
+                    title="Sesion por inactividad"
+                    onClose={() => {}}
+                    closeOnBackdrop={false}
+                    closeDisabled
+                    maxWidth="520px"
+                >
+                    <div style={{ display: 'grid', gap: 16 }}>
+                        <p style={{ margin: 0, color: 'var(--text-muted)' }}>
+                            La sesion vencio por inactividad, pero hay una operacion en curso. Puedes esperar a que termine o cerrar sesion ahora.
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => {
+                                    idleBlockedModalOpenRef.current = false
+                                    setShowIdleBlockedModal(false)
+                                }}
+                            >
+                                Seguir esperando
+                            </button>
+                            <button type="button" className="btn btn-primary" onClick={performIdleLogout}>
+                                Cerrar sesion
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+        </>
     )
 }
 
@@ -280,19 +426,19 @@ export default function App() {
                 <Routes>
                     <Route
                         path="/login"
-                        element={
+                        element={(
                             <Suspense fallback={<div className="flex-center" style={{ minHeight: '100vh' }}><div className="spinner" style={{ width: 40, height: 40 }} /></div>}>
                                 <LoginPage />
                             </Suspense>
-                        }
+                        )}
                     />
                     <Route
                         path="/*"
-                        element={
+                        element={(
                             <ProtectedRoute>
                                 <AppLayout />
                             </ProtectedRoute>
-                        }
+                        )}
                     />
                 </Routes>
             </BrowserRouter>

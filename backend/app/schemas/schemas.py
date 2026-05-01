@@ -1556,6 +1556,7 @@ class TransferenciaInternaHistorialOut(BaseModel):
 class ComisionOut(BaseModel):
     id: int
     fecha: datetime
+    fecha_pago: Optional[datetime] = None
     referidor_id: int
     referidor_nombre: Optional[str] = None
     venta_id: Optional[int] = None

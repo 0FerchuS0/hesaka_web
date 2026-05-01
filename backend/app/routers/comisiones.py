@@ -26,12 +26,22 @@ def _query_comision_detallada(session, comision_id: int):
     )
 
 
-def _serializar_comision(comision: Comision) -> ComisionOut:
+def _serializar_comision(session, comision: Comision) -> ComisionOut:
     venta = comision.venta_rel
     cliente = venta.cliente_rel if venta else None
+    fecha_pago = None
+
+    if comision.movimiento_caja_id:
+        movimiento_caja = session.query(MovimientoCaja).filter(MovimientoCaja.id == comision.movimiento_caja_id).first()
+        fecha_pago = movimiento_caja.fecha if movimiento_caja else None
+    elif comision.movimiento_banco_id:
+        movimiento_banco = session.query(MovimientoBanco).filter(MovimientoBanco.id == comision.movimiento_banco_id).first()
+        fecha_pago = movimiento_banco.fecha if movimiento_banco else None
+
     return ComisionOut(
         id=comision.id,
         fecha=comision.fecha,
+        fecha_pago=fecha_pago,
         referidor_id=comision.referidor_id,
         referidor_nombre=comision.referidor_rel.nombre if comision.referidor_rel else None,
         venta_id=comision.venta_id,
@@ -115,7 +125,7 @@ def listar_comisiones(
             query = query.filter(Comision.estado == estado.upper())
 
         comisiones = query.order_by(Comision.fecha.desc(), Comision.id.desc()).all()
-        return [_serializar_comision(comision) for comision in comisiones]
+        return [_serializar_comision(session, comision) for comision in comisiones]
     finally:
         session.close()
 
@@ -131,7 +141,7 @@ def obtener_comision(
         comision = _query_comision_detallada(session, comision_id)
         if not comision:
             raise HTTPException(status_code=404, detail="Comision no encontrada.")
-        return _serializar_comision(comision)
+        return _serializar_comision(session, comision)
     finally:
         session.close()
 
@@ -210,7 +220,7 @@ def pagar_comision(
 
         session.commit()
         session.refresh(comision)
-        return _serializar_comision(comision)
+        return _serializar_comision(session, comision)
     except HTTPException:
         session.rollback()
         raise
@@ -238,7 +248,7 @@ def volver_comision_pendiente(
 
         session.commit()
         session.refresh(comision)
-        return _serializar_comision(comision)
+        return _serializar_comision(session, comision)
     except HTTPException:
         session.rollback()
         raise

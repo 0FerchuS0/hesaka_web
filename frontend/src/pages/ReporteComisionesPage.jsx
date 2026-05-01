@@ -12,6 +12,8 @@ const fmtDate = value => {
     return date ? date.toLocaleDateString('es-PY') : '?'
 }
 
+const getDisplayDate = item => (item.estado === 'PAGADO' ? (item.fecha_pago || item.fecha) : item.fecha)
+
 function estadoBadge(estado) {
     const map = {
         PAGADO: 'badge-green',
@@ -84,7 +86,7 @@ function PagoComisionModal({ comision, onClose, onSaved }) {
             <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>{comision.referidor_nombre || 'Referidor'}</div>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.45 }}>
-                    Fecha: {fmtDate(comision.fecha)}<br />
+                    Fecha: {fmtDate(getDisplayDate(comision))}<br />
                     Cliente: {comision.cliente_nombre || '—'}<br />
                     Venta: {comision.venta_codigo || '—'}
                 </div>
@@ -431,7 +433,7 @@ export default function ReporteComisionesPage() {
                                 {data.map(item => (
                                     <tr key={item.id}>
                                         <td style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>{item.id}</td>
-                                        <td style={{ whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{fmtDate(item.fecha)}</td>
+                                        <td style={{ whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{fmtDate(getDisplayDate(item))}</td>
                                         <td style={{ fontWeight: 700, lineHeight: 1.35 }}>{item.referidor_nombre || '—'}</td>
                                         <td style={{ lineHeight: 1.35 }}>{item.cliente_nombre || '—'}</td>
                                         <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{item.venta_codigo || '—'}</td>

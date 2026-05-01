@@ -4,15 +4,14 @@ import { CalendarDays, MessageCircle, Search, Gift, Phone } from 'lucide-react'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
+import { todayBusinessInputValue } from '../utils/formatters'
 
 const TEMPLATE_KEY = 'hesaka-cumpleanos-whatsapp-template'
 const DEFAULT_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
 const CUMPLEANOS_TEMPLATE_CODE = 'cumpleanos_cliente'
 
 function todayInputValue() {
-    const now = new Date()
-    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    return localDate.toISOString().slice(0, 10)
+    return todayBusinessInputValue()
 }
 
 function fmt(fecha) {

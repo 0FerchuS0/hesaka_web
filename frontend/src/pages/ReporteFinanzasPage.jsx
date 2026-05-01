@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
+import { parseBackendDateTime } from '../utils/formatters'
 import { exportReportBlob } from '../utils/reportExports'
 
 function fmt(value) {
@@ -9,7 +10,8 @@ function fmt(value) {
 }
 
 function fmtDate(value) {
-    return value ? new Date(value).toLocaleString('es-PY') : '-'
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleString('es-PY') : '-'
 }
 
 export default function ReporteFinanzasPage() {

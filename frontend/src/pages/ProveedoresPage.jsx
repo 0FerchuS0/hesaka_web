@@ -4,6 +4,7 @@ import { Building2, Edit2, Eye, Mail, Phone, Plus, Search } from 'lucide-react'
 
 import Modal from '../components/Modal'
 import { api } from '../context/AuthContext'
+import { parseBackendDateTime } from '../utils/formatters'
 import { exportReportBlob } from '../utils/reportExports'
 
 function ProveedorForm({ initial = {}, onSave, onCancel, loading }) {
@@ -70,7 +71,8 @@ function ProveedorForm({ initial = {}, onSave, onCancel, loading }) {
 }
 
 function fmtFecha(value) {
-    return value ? new Date(value).toLocaleDateString('es-PY') : '-'
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
 
 function ProveedorFichaModal({ proveedorId, onClose }) {

@@ -4,6 +4,11 @@ from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integ
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils.timezone import ahora_desde_config
+
+
+def _business_now() -> datetime:
+    return ahora_desde_config()
 
 
 class Paciente(Base):
@@ -24,7 +29,7 @@ class Paciente(Base):
     direccion = Column(Text)
     antecedentes_oculares = Column(Text)
     notas = Column(Text)
-    fecha_registro = Column(DateTime, default=datetime.now)
+    fecha_registro = Column(DateTime, default=_business_now)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
     referidor_id = Column(Integer, ForeignKey("referidores.id"), nullable=True)
 
@@ -85,7 +90,7 @@ class LugarAtencion(Base):
     email = Column(String(100))
     notas = Column(Text)
     activo = Column(Integer, default=1)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=_business_now)
 
     consultas_oftalmologicas = relationship("ConsultaOftalmologica", back_populates="lugar_atencion_rel", lazy="selectin")
     consultas_contactologia = relationship("ConsultaContactologia", back_populates="lugar_atencion_rel", lazy="selectin")
@@ -103,7 +108,7 @@ class ConsultaOftalmologica(Base):
     paciente_id = Column(Integer, ForeignKey("clinica_pacientes.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("clinica_doctores.id"), nullable=True)
     lugar_atencion_id = Column(Integer, ForeignKey("clinica_lugares_atencion.id"), nullable=True)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     motivo = Column(Text)
     diagnostico = Column(Text)
     plan_tratamiento = Column(Text)
@@ -187,7 +192,7 @@ class ConsultaContactologia(Base):
     paciente_id = Column(Integer, ForeignKey("clinica_pacientes.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("clinica_doctores.id"), nullable=True)
     lugar_atencion_id = Column(Integer, ForeignKey("clinica_lugares_atencion.id"), nullable=True)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     tipo_lente = Column(String(100))
     diseno = Column(String(100))
     diagnostico = Column(Text)
@@ -212,7 +217,7 @@ class Cuestionario(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     paciente_id = Column(Integer, ForeignKey("clinica_pacientes.id"), nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     motivo_principal = Column(Text)
     tiempo_molestias = Column(String(100))
     expectativa = Column(Text)
@@ -266,7 +271,7 @@ class RecetaPDF(Base):
     consulta_oftalmologica_id = Column(Integer, ForeignKey("clinica_consultas_oftalmologicas.id"), nullable=True)
     consulta_contactologia_id = Column(Integer, ForeignKey("clinica_consultas_contactologia.id"), nullable=True)
     tipo = Column(String(50), nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     archivo_pdf_path = Column(String(255))
 
     paciente_rel = relationship("Paciente", back_populates="recetas_pdf", lazy="selectin")
@@ -283,7 +288,7 @@ class RecetaMedicamento(Base):
     paciente_id = Column(Integer, ForeignKey("clinica_pacientes.id"), nullable=False)
     consulta_id = Column(Integer, nullable=True)
     consulta_tipo = Column(String(30), nullable=True)
-    fecha_emision = Column(DateTime, default=datetime.now, nullable=False)
+    fecha_emision = Column(DateTime, default=_business_now, nullable=False)
     doctor_nombre = Column(String(200))
     diagnostico = Column(Text)
     observaciones = Column(Text)
@@ -371,7 +376,7 @@ class TurnoClinico(Base):
     paciente_telefono_libre = Column(String(50), nullable=True)
     doctor_id = Column(Integer, ForeignKey("clinica_doctores.id"), nullable=True)
     lugar_atencion_id = Column(Integer, ForeignKey("clinica_lugares_atencion.id"), nullable=True)
-    fecha_hora = Column(DateTime, default=datetime.now, nullable=False)
+    fecha_hora = Column(DateTime, default=_business_now, nullable=False)
     estado = Column(String(30), default="PENDIENTE", nullable=False)
     es_control = Column(Boolean, default=False, nullable=False)
     recordado_15 = Column(Boolean, default=False, nullable=False)
@@ -381,8 +386,8 @@ class TurnoClinico(Base):
     consulta_tipo = Column(String(30), nullable=True)
     motivo = Column(String(255))
     notas = Column(Text)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=_business_now)
+    updated_at = Column(DateTime, default=_business_now, onupdate=_business_now)
 
     paciente_rel = relationship("Paciente", lazy="selectin")
     doctor_rel = relationship("Doctor", lazy="selectin")

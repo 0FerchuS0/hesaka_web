@@ -1,5 +1,5 @@
 // HESAKA Web — Página: Presupuestos
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
@@ -7,12 +7,16 @@ import Modal from '../components/Modal'
 import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList, Clock } from 'lucide-react'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
+import { nowBusinessDateTimeLocalValue, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
-const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
+const fmtDate = d => {
+    const date = parseBackendDateTime(d)
+    return date ? date.toLocaleDateString('es-PY') : '?'
+}
 const formatDateInputValue = value => {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -20,8 +24,8 @@ const formatDateInputValue = value => {
 }
 const formatDateTimeLocalValue = value => {
     if (!value) return ''
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -44,6 +48,129 @@ const abrirPresupuestoPdf = async presupuestoId => {
 const estadoBadge = e => {
     const m = { PENDIENTE: 'badge-yellow', VENDIDO: 'badge-green', VENCIDO: 'badge-red', CANCELADO: 'badge-gray' }
     return <span className={`badge ${m[e] || 'badge-gray'}`}>{e}</span>
+}
+
+function PresupuestoRowActions({
+    presupuesto,
+    rowBusy,
+    pdfOpening,
+    editing,
+    canceling,
+    deleting,
+    converting,
+    onCorregirFecha,
+    onAbrirPdf,
+    onConvertir,
+    onEditar,
+    onCancelar,
+    onEliminar,
+}) {
+    const [open, setOpen] = useState(false)
+    const [menuPosition, setMenuPosition] = useState(null)
+    const triggerRef = useRef(null)
+
+    useEffect(() => {
+        if (!open || !triggerRef.current) return
+
+        const updatePosition = () => {
+            if (!triggerRef.current) return
+            const rect = triggerRef.current.getBoundingClientRect()
+            const viewportHeight = window.innerHeight
+            const menuHeight = 240
+            const spaceBelow = viewportHeight - rect.bottom - 8
+            const openUpward = spaceBelow < menuHeight
+            const top = openUpward ? Math.max(8, rect.top - 6) : rect.bottom + 6
+
+            setMenuPosition({
+                top,
+                left: Math.max(8, rect.right),
+                openUpward,
+            })
+        }
+
+        updatePosition()
+        window.addEventListener('resize', updatePosition)
+        window.addEventListener('scroll', updatePosition, true)
+        return () => {
+            window.removeEventListener('resize', updatePosition)
+            window.removeEventListener('scroll', updatePosition, true)
+        }
+    }, [open])
+
+    const handleAction = cb => {
+        setOpen(false)
+        window.setTimeout(() => {
+            cb()
+        }, 0)
+    }
+
+    const showWorkflowActions = ['PENDIENTE', 'BORRADOR'].includes(presupuesto.estado)
+
+    return (
+        <div style={{ position: 'relative' }}>
+            <button
+                ref={triggerRef}
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: '0.72rem' }}
+                onClick={() => !rowBusy && setOpen(prev => !prev)}
+                disabled={rowBusy}
+            >
+                {rowBusy ? 'Procesando...' : 'Acciones ▾'}
+            </button>
+
+            {open && menuPosition && (
+                <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 119 }} onClick={() => setOpen(false)} />
+                    <div
+                        style={{
+                            position: 'fixed',
+                            top: menuPosition.top,
+                            left: menuPosition.left,
+                            transform: menuPosition.openUpward ? 'translate(-100%, -100%)' : 'translate(-100%, 0)',
+                            minWidth: 220,
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 10,
+                            boxShadow: '0 14px 34px rgba(0,0,0,0.45)',
+                            padding: '6px 0',
+                            zIndex: 120,
+                        }}
+                    >
+                        <button className="dropdown-item" onClick={() => handleAction(onCorregirFecha)} disabled={rowBusy}>
+                            <Clock size={14} style={{ marginRight: 8 }} /> Corregir fecha
+                        </button>
+                        <button className="dropdown-item" onClick={() => handleAction(onAbrirPdf)} disabled={rowBusy}>
+                            <FileText size={14} style={{ marginRight: 8 }} /> {pdfOpening ? 'Abriendo PDF...' : 'Abrir PDF'}
+                        </button>
+
+                        {showWorkflowActions && (
+                            <>
+                                <button className="dropdown-item" onClick={() => handleAction(onConvertir)} disabled={rowBusy}>
+                                    <ShoppingBag size={14} style={{ marginRight: 8 }} /> {converting ? 'Convirtiendo...' : 'Convertir a venta'}
+                                </button>
+                                <button className="dropdown-item" onClick={() => handleAction(onEditar)} disabled={rowBusy}>
+                                    {editing ? 'Cargando...' : 'Editar'}
+                                </button>
+                                <button className="dropdown-item" style={{ color: 'var(--warning)' }} onClick={() => handleAction(onCancelar)} disabled={rowBusy}>
+                                    {canceling ? 'Cancelando...' : 'Cancelar'}
+                                </button>
+                            </>
+                        )}
+
+                        {presupuesto.estado !== 'VENDIDO' && (
+                            <>
+                                <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+                                <button className="dropdown-item" style={{ color: 'var(--danger)' }} onClick={() => handleAction(onEliminar)} disabled={rowBusy}>
+                                    <X size={14} style={{ marginRight: 8 }} /> {deleting ? 'Eliminando...' : 'Eliminar'}
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </>
+            )}
+        </div>
+    )
 }
 
 // Sub-formulario de ítem — con buscador de producto y precio visible
@@ -401,7 +528,7 @@ function AsignacionComercialModal({ presupuesto, onClose, onBusyChange }) {
 
 function CorregirFechaPresupuestoModal({ presupuesto, onClose, onBusyChange }) {
     const qc = useQueryClient()
-    const [fecha, setFecha] = useState(() => formatDateTimeLocalValue(presupuesto?.fecha) || formatDateTimeLocalValue(new Date()))
+    const [fecha, setFecha] = useState(() => formatDateTimeLocalValue(presupuesto?.fecha) || nowBusinessDateTimeLocalValue())
     const [sincronizarVenta, setSincronizarVenta] = useState(presupuesto?.estado === 'VENDIDO')
     const [error, setError] = useState('')
 
@@ -512,7 +639,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const [proximoControl, setProximoControl] = useState(
         presupuesto?.fecha_proximo_control
             ? String(presupuesto.fecha_proximo_control).slice(0, 10)
-            : addMonthsToDateInput(presupuesto?.fecha ? presupuesto.fecha.split('T')[0] : new Date().toISOString().split('T')[0], 12)
+            : addMonthsToDateInput(presupuesto?.fecha ? presupuesto.fecha.split('T')[0] : todayBusinessInputValue(), 12)
     )
     const [noRequiereProximoControl, setNoRequiereProximoControl] = useState(Boolean(presupuesto?.no_requiere_proximo_control))
     const [consultaClinicaVinculada, setConsultaClinicaVinculada] = useState(
@@ -531,7 +658,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const [comisionAlerta, setComisionAlerta] = useState(false)
     const [importandoGraduacion, setImportandoGraduacion] = useState(false)
     const [fecha, setFecha] = useState(
-        presupuesto?.fecha ? presupuesto.fecha.split('T')[0] : new Date().toISOString().split('T')[0]
+        presupuesto?.fecha ? presupuesto.fecha.split('T')[0] : todayBusinessInputValue()
     )
 
     const { data: clientes = [] } = useQuery({ queryKey: ['clientes', buscarCli], queryFn: () => api.get(`/clientes/?buscar=${buscarCli}&limit=20`).then(r => r.data), retry: false, enabled: buscarCli.length >= 1 })
@@ -727,7 +854,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
         }
         crear.mutate({
             cliente_id: parseInt(cliente),
-            fecha: fecha || new Date().toISOString(),
+            fecha: buildDatePatchValue(fecha) || buildDatePatchValue(todayBusinessInputValue()),
             graduacion_od_esfera: grad.od_esfera || null, graduacion_od_cilindro: grad.od_cilindro || null,
             graduacion_od_eje: grad.od_eje || null, graduacion_od_adicion: grad.od_adicion || null,
             graduacion_oi_esfera: grad.oi_esfera || null, graduacion_oi_cilindro: grad.oi_cilindro || null,
@@ -1253,41 +1380,22 @@ export default function PresupuestosPage() {
                                         </td>
                                         <td style={{ fontWeight: 600 }}>Gs. {fmt(p.total)}</td>
                                         <td>{estadoBadge(p.estado)}</td>
-                                        <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                            {['PENDIENTE', 'BORRADOR'].includes(p.estado) && (
-                                                <>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setFechaPre(p)} disabled={rowBusy}>
-                                                        <Clock size={12} /> Fecha
-                                                    </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
-                                                        <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
-                                                    </button>
-                                                    <button className="btn btn-primary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setConvertirPre(p)} disabled={rowBusy}>
-                                                        <ShoppingBag size={12} /> Vender
-                                                    </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleEditar(p.id)} disabled={rowBusy}>
-                                                        {editingId === p.id ? 'Cargando...' : '✏️ Editar'}
-                                                    </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem', color: 'var(--warning)' }} onClick={() => { setCancelingId(p.id); cambiarEstado.mutate({ id: p.id, estado: 'CANCELADO' }) }} disabled={rowBusy}>
-                                                        Cancelar
-                                                    </button>
-                                                </>
-                                            )}
-                                            {p.estado !== 'VENDIDO' && (
-                                                <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleEliminar(p)} title="Eliminar" disabled={rowBusy}>
-                                                    <X size={12} />
-                                                </button>
-                                            )}
-                                            {p.estado === 'VENDIDO' && (
-                                                <>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => setFechaPre(p)} disabled={rowBusy}>
-                                                        <Clock size={12} /> Fecha
-                                                    </button>
-                                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => handleAbrirPdf(p.id)} disabled={rowBusy}>
-                                                        <FileText size={12} /> {pdfOpeningId === p.id ? 'Abriendo PDF...' : 'PDF'}
-                                                    </button>
-                                                </>
-                                            )}
+                                        <td>
+                                            <PresupuestoRowActions
+                                                presupuesto={p}
+                                                rowBusy={rowBusy}
+                                                pdfOpening={pdfOpeningId === p.id}
+                                                editing={editingId === p.id}
+                                                canceling={cancelingId === p.id}
+                                                deleting={deletingId === p.id}
+                                                converting={convertingId === p.id}
+                                                onCorregirFecha={() => setFechaPre(p)}
+                                                onAbrirPdf={() => handleAbrirPdf(p.id)}
+                                                onConvertir={() => setConvertirPre(p)}
+                                                onEditar={() => handleEditar(p.id)}
+                                                onCancelar={() => { setCancelingId(p.id); cambiarEstado.mutate({ id: p.id, estado: 'CANCELADO' }) }}
+                                                onEliminar={() => handleEliminar(p)}
+                                            />
                                         </td>
                                     </tr>
                                     )

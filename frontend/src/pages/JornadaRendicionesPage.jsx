@@ -25,6 +25,7 @@ import {
     useRendicionesJornadaActual,
 } from '../hooks/useFinancialJornada'
 import { requestAndDownloadFile, requestAndOpenPdf } from '../utils/fileDownloads'
+import { parseBackendDateTime } from '../utils/formatters'
 
 /** Marca ms desde t0Ref hasta la primera respuesta OK de una query (para ver cuellos de botella en la carga inicial). */
 function useMarkJornadaBenchRow(show, t0Ref, key, isSuccess, dataUpdatedAt, setMs) {
@@ -69,7 +70,8 @@ function fmtGs(value) {
 
 function toDateTimeLocalValue(value) {
     if (!value) return ''
-    const date = new Date(value)
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const pad = number => String(number).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
@@ -77,8 +79,8 @@ function toDateTimeLocalValue(value) {
 /** Fecha/hora en 24 h (evita confusion 1 vs 11 con formato 12 h del navegador). */
 function fmtDateTime(value) {
     if (!value) return '—'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '—'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return '—'
     return new Intl.DateTimeFormat('es-PY', {
         day: '2-digit',
         month: '2-digit',
@@ -92,7 +94,8 @@ function fmtDateTime(value) {
 
 function toDateInputValue(value) {
     if (!value) return ''
-    const date = new Date(value)
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const pad = number => String(number).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }

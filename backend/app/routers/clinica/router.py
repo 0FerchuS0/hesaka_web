@@ -73,7 +73,7 @@ from app.utils.pdf_receta_medicamento_clinica import (
     generar_pdf_receta_medicamento_compra_clinica,
     generar_pdf_receta_medicamento_indicaciones_clinica,
 )
-from app.utils.timezone import ahora_negocio, fecha_actual_negocio
+from app.utils.timezone import ahora_negocio, fecha_actual_negocio, normalizar_fecha_negocio
 
 router = APIRouter(prefix="/api/clinica", tags=["Clinica"])
 
@@ -521,7 +521,7 @@ def _marcar_turno_atendido_con_consulta(session, turno_id: int | None, consulta_
     turno.paciente_nombre_libre = None
     turno.doctor_id = doctor_id
     turno.lugar_atencion_id = lugar_atencion_id
-    turno.fecha_hora = fecha or turno.fecha_hora
+    turno.fecha_hora = normalizar_fecha_negocio(session, fecha) if fecha else turno.fecha_hora
     turno.estado = "ATENDIDO"
     turno.consulta_id = consulta_id
     turno.consulta_tipo = consulta_tipo
@@ -1378,7 +1378,7 @@ def crear_turno_clinica(
             paciente_telefono_libre=None if paciente else telefono_libre,
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
-            fecha_hora=payload.fecha_hora,
+            fecha_hora=normalizar_fecha_negocio(session, payload.fecha_hora),
             estado=_normalizar_estado_turno(payload.estado),
             motivo=_normalizar_texto(payload.motivo),
             notas=_normalizar_texto(payload.notas),
@@ -1445,7 +1445,7 @@ def editar_turno_clinica(
         turno.paciente_telefono_libre = None if paciente else telefono_libre
         turno.doctor_id = payload.doctor_id
         turno.lugar_atencion_id = payload.lugar_atencion_id
-        turno.fecha_hora = payload.fecha_hora
+        turno.fecha_hora = normalizar_fecha_negocio(session, payload.fecha_hora)
         turno.estado = _normalizar_estado_turno(payload.estado)
         turno.motivo = _normalizar_texto(payload.motivo)
         turno.notas = _normalizar_texto(payload.notas)
@@ -2474,7 +2474,7 @@ def crear_receta_medicamento(
             paciente_id=payload.paciente_id,
             consulta_id=payload.consulta_id,
             consulta_tipo=_normalizar_texto(payload.consulta_tipo),
-            fecha_emision=payload.fecha_emision or ahora_negocio(session),
+            fecha_emision=normalizar_fecha_negocio(session, payload.fecha_emision) if payload.fecha_emision else ahora_negocio(session),
             doctor_nombre=_normalizar_texto(payload.doctor_nombre),
             diagnostico=_normalizar_texto(payload.diagnostico),
             observaciones=_normalizar_texto(payload.observaciones),
@@ -2517,7 +2517,7 @@ def editar_receta_medicamento(
         receta.paciente_id = payload.paciente_id
         receta.consulta_id = payload.consulta_id
         receta.consulta_tipo = _normalizar_texto(payload.consulta_tipo)
-        receta.fecha_emision = payload.fecha_emision or receta.fecha_emision or ahora_negocio(session)
+        receta.fecha_emision = normalizar_fecha_negocio(session, payload.fecha_emision) if payload.fecha_emision else (receta.fecha_emision or ahora_negocio(session))
         receta.doctor_nombre = _normalizar_texto(payload.doctor_nombre)
         receta.diagnostico = _normalizar_texto(payload.diagnostico)
         receta.observaciones = _normalizar_texto(payload.observaciones)
@@ -2792,7 +2792,7 @@ def crear_consulta_oftalmologica(
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             agenda_turno_id=payload.agenda_turno_id,
-            fecha=payload.fecha or ahora_negocio(session),
+            fecha=normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else ahora_negocio(session),
             motivo=_normalizar_texto(payload.motivo),
             diagnostico=_normalizar_texto(payload.diagnostico),
             plan_tratamiento=_normalizar_texto(payload.plan_tratamiento),
@@ -2904,7 +2904,7 @@ def editar_consulta_oftalmologica(
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
         consulta.agenda_turno_id = payload.agenda_turno_id
-        consulta.fecha = payload.fecha or consulta.fecha or ahora_negocio(session)
+        consulta.fecha = normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else (consulta.fecha or ahora_negocio(session))
         consulta.motivo = _normalizar_texto(payload.motivo)
         consulta.diagnostico = _normalizar_texto(payload.diagnostico)
         consulta.plan_tratamiento = _normalizar_texto(payload.plan_tratamiento)
@@ -3061,7 +3061,7 @@ def crear_consulta_contactologia(
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             agenda_turno_id=payload.agenda_turno_id,
-            fecha=payload.fecha or ahora_negocio(session),
+            fecha=normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else ahora_negocio(session),
             tipo_lente=_normalizar_texto(payload.tipo_lente),
             diseno=_normalizar_texto(payload.diseno),
             diagnostico=_normalizar_texto(payload.diagnostico),
@@ -3119,7 +3119,7 @@ def editar_consulta_contactologia(
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
         consulta.agenda_turno_id = payload.agenda_turno_id
-        consulta.fecha = payload.fecha or consulta.fecha or ahora_negocio(session)
+        consulta.fecha = normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else (consulta.fecha or ahora_negocio(session))
         consulta.tipo_lente = _normalizar_texto(payload.tipo_lente)
         consulta.diseno = _normalizar_texto(payload.diseno)
         consulta.diagnostico = _normalizar_texto(payload.diagnostico)

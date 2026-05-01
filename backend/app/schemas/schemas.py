@@ -1572,6 +1572,7 @@ class ComisionPagoCreate(BaseModel):
     metodo_pago: str = "EFECTIVO"
     banco_id: Optional[int] = None
     numero_referencia: Optional[str] = None
+    fecha_pago: Optional[date] = None
 
     @field_validator("metodo_pago")
     @classmethod

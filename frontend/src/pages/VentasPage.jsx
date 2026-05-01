@@ -10,21 +10,23 @@ import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
+import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
-const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY') : '—'
-const fmtDateTime = d => d ? new Date(d).toLocaleString('es-PY', { dateStyle: 'short', timeStyle: 'short' }) : '—'
-const toDateTimeLocalValue = value => {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
-    const pad = n => String(n).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+const fmtDate = d => {
+    const date = parseBackendDateTime(d)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
+const fmtDateTime = d => {
+    const date = parseBackendDateTime(d)
+    return date ? date.toLocaleString('es-PY', { dateStyle: 'short', timeStyle: 'short' }) : '-'
+}
+const toDateTimeLocalValue = toBusinessDateTimeLocalValue
 const gs = v => `Gs. ${new Intl.NumberFormat('es-PY').format(v ?? 0)}`
 const formatDateTimeLocalValue = value => {
     if (!value) return ''
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
+    const date = parseBackendDateTime(value)
+    if (!date) return ''
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -1048,7 +1050,12 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onCorregirFec
     const whatsappBusy = whatsappBusyId === venta.id
     const actionBusy = exporting || toggleEntrega.isPending || anularBusy || whatsappBusy
 
-    const handleAction = (cb) => { setOpen(false); cb() }
+    const handleAction = (cb) => {
+        setOpen(false)
+        window.setTimeout(() => {
+            cb()
+        }, 0)
+    }
     const handleExport = async () => {
         if (exporting) return
         setOpen(false)
@@ -1643,3 +1650,4 @@ export default function VentasPage() {
         </div>
     )
 }
+

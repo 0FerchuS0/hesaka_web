@@ -4,6 +4,7 @@ import LoadingButton from '../components/LoadingButton'
 import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api } from '../context/AuthContext'
+import { nowBusinessDateTimeLocalValue, parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
 import { exportReportBlob } from '../utils/reportExports'
 import { CreditCard, Eye, FileText } from 'lucide-react'
 
@@ -12,12 +13,13 @@ function fmt(value) {
 }
 
 function fmtDate(value) {
-    return value ? new Date(value).toLocaleDateString('es-PY') : '-'
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
 
 function formatDateTimeLocalValue(value) {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const pad = number => String(number).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
@@ -58,7 +60,7 @@ function PagoVentaModal({ ventaId, onClose, onSaved }) {
         metodo_pago: 'EFECTIVO',
         banco_id: '',
         nota: '',
-        fecha: formatDateTimeLocalValue(new Date()),
+        fecha: nowBusinessDateTimeLocalValue(),
     })
 
     useEffect(() => {

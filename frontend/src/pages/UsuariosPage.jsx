@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
+import { parseBackendDateTime } from '../utils/formatters'
 import Modal from '../components/Modal'
 import PasswordField from '../components/PasswordField'
 import { KeyRound, Plus, Search, Shield, UserCog } from 'lucide-react'
@@ -8,7 +9,8 @@ import { defaultActionPermissionsForRole, defaultPermissionsForRole, permissionC
 
 function fmtFecha(value) {
     if (!value) return '-'
-    return new Date(value).toLocaleString('es-PY')
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleString('es-PY') : '-'
 }
 
 function rolBadge(rol) {

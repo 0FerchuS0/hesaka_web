@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import LoadingButton from '../components/LoadingButton'
 import { api } from '../context/AuthContext'
+import { parseBackendDateTime } from '../utils/formatters'
 import { exportReportBlob } from '../utils/reportExports'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 
@@ -10,7 +11,8 @@ function fmt(value) {
 }
 
 function fmtDate(value) {
-    return value ? new Date(value).toLocaleDateString('es-PY') : '-'
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
 
 export default function ReporteComprasPage() {

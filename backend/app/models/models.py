@@ -10,6 +10,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
+from app.utils.timezone import ahora_desde_config
+
+
+def _business_now() -> datetime:
+    return ahora_desde_config()
 
 
 class TimestampMixin:
@@ -155,7 +160,7 @@ class Cliente(TimestampMixin, Base):
     email = Column(String(100))
     direccion = Column(Text)
     fecha_nacimiento = Column(Date)
-    fecha_registro = Column(DateTime, default=datetime.now)
+    fecha_registro = Column(DateTime, default=_business_now)
     notas = Column(Text)
     referidor_id = Column(Integer, ForeignKey('referidores.id'), nullable=True)
     referidor_rel = relationship("Referidor", back_populates="clientes", lazy='selectin')
@@ -167,7 +172,7 @@ class PresupuestoGrupo(TimestampMixin, Base):
     __tablename__ = 'presupuesto_grupos'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(100), nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=_business_now)
     estado = Column(String(20), default='PENDIENTE')
     total = Column(Float, default=0.0)
     venta_id = Column(Integer, ForeignKey('ventas.id'), nullable=True)
@@ -186,7 +191,7 @@ class Presupuesto(TimestampMixin, Base):
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     codigo = Column(String(50), unique=True, nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     estado = Column(String(20), default='BORRADOR')
     cliente_id = Column(Integer, ForeignKey('clientes.id'), nullable=False)
     cliente_rel = relationship("Cliente", lazy='selectin')
@@ -249,7 +254,7 @@ class Venta(TimestampMixin, Base):
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     codigo = Column(String(50), unique=True, nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     cliente_id = Column(Integer, ForeignKey('clientes.id'), nullable=False)
     cliente_rel = relationship("Cliente", lazy='selectin')
     presupuesto_id = Column(Integer, ForeignKey('presupuestos.id'), nullable=True)
@@ -283,7 +288,7 @@ class Pago(TimestampMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     venta_id = Column(Integer, ForeignKey('ventas.id'), nullable=False)
     venta_rel = relationship("Venta", back_populates="pagos", lazy='selectin')
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     monto = Column(Float, nullable=False)
     metodo_pago = Column(String(50))
     nota = Column(String(255), nullable=True)
@@ -297,7 +302,7 @@ class AjusteVenta(TimestampMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     venta_id = Column(Integer, ForeignKey('ventas.id'), nullable=False)
     venta_rel = relationship("Venta", back_populates="ajustes", lazy='selectin')
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     monto = Column(Float, nullable=False)
     motivo = Column(Text, nullable=False)
     tipo = Column(String(50), default='DESCUENTO')
@@ -327,7 +332,7 @@ class Comision(TimestampMixin, Base):
     referidor_id = Column(Integer, ForeignKey('referidores.id'), nullable=False)
     referidor_rel = relationship("Referidor", back_populates="comisiones", lazy='selectin')
     monto = Column(Float, nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     estado = Column(String(20), default='PENDIENTE')
     descripcion = Column(Text)
     venta_id = Column(Integer, ForeignKey('ventas.id'), nullable=True)
@@ -363,7 +368,7 @@ class MovimientoBanco(TimestampMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     banco_id = Column(Integer, ForeignKey('bancos.id'), nullable=False)
     banco_rel = relationship("Banco", back_populates="movimientos", lazy='selectin')
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     tipo = Column(String(20), nullable=False)
     monto = Column(Float, nullable=False)
     concepto = Column(String(255))
@@ -399,7 +404,7 @@ class Compra(TimestampMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     proveedor_id = Column(Integer, ForeignKey('proveedores.id'), nullable=True)
     proveedor_rel = relationship("Proveedor", lazy='selectin')
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     tipo_documento = Column(String(50), nullable=False)
     nro_factura = Column(String(50), nullable=True)
     tipo_documento_original = Column(String(50), nullable=True)
@@ -447,7 +452,7 @@ class PagoCompra(TimestampMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     compra_id = Column(Integer, ForeignKey('compras.id'), nullable=False)
     compra_rel = relationship("Compra", back_populates="pagos", lazy='selectin')
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     monto = Column(Float, nullable=False)
     metodo_pago = Column(String(50))
     banco_id = Column(Integer, ForeignKey('bancos.id'), nullable=True)
@@ -477,7 +482,7 @@ class GastoOperativo(TimestampMixin, Base):
         Index('idx_gasto_categoria', 'categoria_id'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     categoria_id = Column(Integer, ForeignKey('categorias_gasto.id'), nullable=False)
     categoria_rel = relationship("CategoriaGasto", back_populates="gastos", lazy='selectin')
     monto = Column(Float, nullable=False)
@@ -499,7 +504,7 @@ class JornadaFinanciera(TimestampMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     fecha = Column(Date, nullable=False, unique=True)
     estado = Column(String(20), nullable=False, default='ABIERTA')
-    fecha_hora_apertura = Column(DateTime, default=datetime.now, nullable=False)
+    fecha_hora_apertura = Column(DateTime, default=_business_now, nullable=False)
     usuario_apertura_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
     usuario_apertura_nombre = Column(String(100), nullable=True)
     observacion_apertura = Column(Text, nullable=True)
@@ -537,7 +542,7 @@ class CorteJornadaFinanciera(TimestampMixin, Base):
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=False)
-    fecha_hora_corte = Column(DateTime, default=datetime.now, nullable=False)
+    fecha_hora_corte = Column(DateTime, default=_business_now, nullable=False)
     usuario_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
     usuario_nombre = Column(String(100), nullable=True)
     ingresos = Column(Float, default=0.0, nullable=False)
@@ -562,7 +567,7 @@ class RendicionJornadaFinanciera(TimestampMixin, Base):
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=False)
-    fecha_hora_rendicion = Column(DateTime, default=datetime.now, nullable=False)
+    fecha_hora_rendicion = Column(DateTime, default=_business_now, nullable=False)
     usuario_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
     usuario_nombre = Column(String(100), nullable=True)
     destinatario_rendicion_id = Column(Integer, ForeignKey('destinatarios_rendicion.id'), nullable=True)
@@ -589,7 +594,7 @@ class MovimientoCaja(TimestampMixin, Base):
         Index('idx_mov_caja_tipo', 'tipo'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=_business_now)
     tipo = Column(String(20), nullable=False)
     monto = Column(Float, nullable=False)
     concepto = Column(String(255))

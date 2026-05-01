@@ -5,9 +5,13 @@ import Modal from '../components/Modal'
 import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { ArrowDownCircle, ArrowUpCircle, CreditCard, DollarSign, Eye, Pencil, Plus, Trash2 } from 'lucide-react'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
+import { parseBackendDateTime } from '../utils/formatters'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
-const fmtDate = d => d ? new Date(d).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
+const fmtDate = d => {
+    const date = parseBackendDateTime(d)
+    return date ? date.toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'
+}
 
 function tipoBadge(tipo) {
     if (['INGRESO', 'VENTA'].includes(tipo)) return <span className="badge badge-green">{tipo}</span>
@@ -576,7 +580,9 @@ function BancoRowActions({ banco, onVerMovimientos, onEditar, onEliminar }) {
 
     const handleAction = callback => {
         setOpen(false)
-        callback()
+        window.setTimeout(() => {
+            callback()
+        }, 0)
     }
 
     const toggleMenu = () => {
@@ -884,3 +890,4 @@ export default function CajaPage() {
         </div>
     )
 }
+

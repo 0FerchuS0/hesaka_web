@@ -152,7 +152,10 @@ def pagar_comision(
             raise HTTPException(status_code=422, detail="La comision ya esta pagada.")
 
         jornada = require_jornada_abierta(session)
-        fecha_mov = ahora_negocio(session)
+        if data.fecha_pago:
+            fecha_mov = datetime.combine(data.fecha_pago, datetime.now().time()).replace(microsecond=0)
+        else:
+            fecha_mov = ahora_negocio(session)
 
         metodo_pago = data.metodo_pago
         banco = None

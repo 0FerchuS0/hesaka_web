@@ -21,6 +21,7 @@ import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api, useAuth } from '../context/AuthContext'
 import { hasActionAccess } from '../utils/roles'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
+import { nowBusinessDateTimeLocalValue, todayBusinessInputValue } from '../utils/formatters'
 
 const CLINICA_PALETTE = {
     accent: '#1dd3c7',
@@ -56,23 +57,46 @@ function formatError(error, fallback = 'Ocurrio un error.') {
     return fallback
 }
 
+function parseBackendDateTime(value) {
+    if (!value) return null
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+
+    const raw = String(value).trim()
+    const localMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?$/)
+    if (localMatch) {
+        const [, y, m, d, hh = '00', mm = '00', ss = '00'] = localMatch
+        const localDate = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss), 0)
+        return Number.isNaN(localDate.getTime()) ? null : localDate
+    }
+
+    const parsed = new Date(raw)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 function fmtDate(value) {
     if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '-'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return '-'
     return date.toLocaleDateString('es-PY')
 }
 
 function fmtDateTime(value) {
     if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '-'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return '-'
     return date.toLocaleString('es-PY')
 }
 
+function fmtTime(value) {
+    if (!value) return 'sin hora'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return 'sin hora'
+    return date.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' })
+}
+
 function formatDateInputValue(value) {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -81,8 +105,8 @@ function formatDateInputValue(value) {
 
 function formatDateTimeLocalValue(value) {
     if (!value) return ''
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -100,8 +124,11 @@ function serializeDateTimeLocalValue(value, originalValue = null, originalLocalV
     const [year, month, day] = datePart.split('-').map(Number)
     const [hours, minutes] = timePart.split(':').map(Number)
     if (!year || !month || !day) return originalValue || null
-    const date = new Date(year, month - 1, day, hours || 0, minutes || 0, 0, 0)
-    return Number.isNaN(date.getTime()) ? (originalValue || null) : date.toISOString()
+    const localDate = new Date(year, month - 1, day, hours || 0, minutes || 0, 0, 0)
+    if (Number.isNaN(localDate.getTime())) return originalValue || null
+    const hh = String(hours || 0).padStart(2, '0')
+    const min = String(minutes || 0).padStart(2, '0')
+    return `${datePart}T${hh}:${min}:00`
 }
 
 function parseDateInputValue(value) {
@@ -112,7 +139,7 @@ function parseDateInputValue(value) {
 }
 
 function addMonthsToDateInput(baseValue, months) {
-    const baseDate = parseDateInputValue(baseValue) || new Date()
+    const baseDate = parseDateInputValue(baseValue) || parseDateInputValue(todayBusinessInputValue())
     const next = new Date(baseDate)
     next.setMonth(next.getMonth() + months)
     return formatDateInputValue(next)
@@ -176,7 +203,7 @@ function applyWhatsappTemplate(template, replacements) {
 function buildWhatsappMessage(item, template = DEFAULT_WHATSAPP_TEMPLATE, empresa = 'HESAKA') {
     const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
     const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
-    const horaTurno = item?.fecha_hora ? new Date(item.fecha_hora).toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' }) : 'sin hora'
+    const horaTurno = fmtTime(item?.fecha_hora)
     return applyWhatsappTemplate(template || DEFAULT_WHATSAPP_TEMPLATE, {
         '{paciente}': item?.paciente_nombre || '',
         '{ultima_consulta}': ultimaConsulta,
@@ -199,7 +226,7 @@ function buildTemplateFromMessage(message, item, empresa = 'HESAKA') {
         [item?.paciente_nombre || '', '{paciente}'],
         [item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro', '{ultima_consulta}'],
         [item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha', '{proxima_consulta}'],
-        [item?.fecha_hora ? new Date(item.fecha_hora).toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' }) : 'sin hora', '{hora_turno}'],
+        [fmtTime(item?.fecha_hora), '{hora_turno}'],
         [empresa, '{empresa}'],
     ]
     replacements.forEach(([value, placeholder]) => {
@@ -211,7 +238,7 @@ function buildTemplateFromMessage(message, item, empresa = 'HESAKA') {
 
 function getDailyReminderStorageKey(user) {
     const userKey = user?.id || user?.email || user?.nombre || 'anon'
-    const dayKey = formatDateInputValue(new Date())
+    const dayKey = todayBusinessInputValue()
     return `hesaka-recordatorios-vistos-${userKey}-${dayKey}`
 }
 
@@ -657,7 +684,9 @@ function TurnoAgendaActions({
 
     const handleAction = callback => {
         setOpen(false)
-        callback()
+        window.setTimeout(() => {
+            callback()
+        }, 0)
     }
 
     const toggleMenu = () => {
@@ -1121,7 +1150,7 @@ function TurnoClinicoForm({
         paciente_telefono_libre: initialData?.paciente_telefono_libre || (!initialData?.paciente_id ? initialData?.paciente_telefono || '' : ''),
         doctor_id: initialData?.doctor_id || '',
         lugar_atencion_id: initialData?.lugar_atencion_id || '',
-        fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : formatDateTimeLocalValue(new Date()),
+        fecha_hora: initialData?.fecha_hora ? formatDateTimeLocalValue(initialData.fecha_hora) : nowBusinessDateTimeLocalValue(),
         estado: initialData?.estado || 'PENDIENTE',
         motivo: initialData?.motivo || '',
         notas: initialData?.notas || '',
@@ -1141,7 +1170,7 @@ function TurnoClinicoForm({
             paciente_telefono_libre: initialData?.paciente_telefono_libre || (!initialData?.paciente_id ? initialData?.paciente_telefono || '' : ''),
             doctor_id: initialData?.doctor_id || '',
             lugar_atencion_id: initialData?.lugar_atencion_id || '',
-            fecha_hora: initialData?.fecha_hora ? String(initialData.fecha_hora).slice(0, 16) : formatDateTimeLocalValue(new Date()),
+            fecha_hora: initialData?.fecha_hora ? formatDateTimeLocalValue(initialData.fecha_hora) : nowBusinessDateTimeLocalValue(),
             estado: initialData?.estado || 'PENDIENTE',
             motivo: initialData?.motivo || '',
             notas: initialData?.notas || '',
@@ -1160,7 +1189,11 @@ function TurnoClinicoForm({
             paciente_telefono_libre: form.paciente?.id ? null : (form.paciente_telefono_libre.trim() || null),
             doctor_id: form.doctor_id === '' ? null : Number(form.doctor_id),
             lugar_atencion_id: form.lugar_atencion_id === '' ? null : Number(form.lugar_atencion_id),
-            fecha_hora: new Date(form.fecha_hora).toISOString(),
+            fecha_hora: serializeDateTimeLocalValue(
+                form.fecha_hora,
+                initialData?.fecha_hora || null,
+                initialData?.fecha_hora ? formatDateTimeLocalValue(initialData.fecha_hora) : '',
+            ),
             estado: form.estado,
             motivo: form.motivo.trim() || null,
             notas: form.notas.trim() || null,
@@ -1720,8 +1753,8 @@ function PacienteForm({ initialData, referidorOptions, onSearchReferidor, referi
 
 function ConsultaClinicaForm({ type, initialData, pacienteId, doctores, lugares, onSave, onCancel, saving, savingText = 'Guardando...', readOnly = false, saved = false }) {
     const buildFormState = useMemo(() => {
-        const fechaBase = initialData?.fecha ? formatDateTimeLocalValue(initialData.fecha) : formatDateTimeLocalValue(new Date())
-        const fechaBaseControl = fechaBase ? fechaBase.slice(0, 10) : formatDateInputValue(new Date())
+        const fechaBase = initialData?.fecha ? formatDateTimeLocalValue(initialData.fecha) : nowBusinessDateTimeLocalValue()
+        const fechaBaseControl = fechaBase ? fechaBase.slice(0, 10) : todayBusinessInputValue()
         return ({
         fecha: fechaBase,
         doctor_id: initialData?.doctor_id || '',
@@ -3047,7 +3080,7 @@ function RecetaMedicamentoForm({
 }) {
     const recipeAlreadySaved = Boolean(savedReceta?.id)
     const [form, setForm] = useState(() => ({
-        fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : formatDateTimeLocalValue(new Date()),
+        fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : nowBusinessDateTimeLocalValue(),
         doctor_nombre: initialData?.doctor_nombre || '',
         diagnostico: initialData?.diagnostico || '',
         observaciones: initialData?.observaciones || '',
@@ -3063,7 +3096,7 @@ function RecetaMedicamentoForm({
 
     useEffect(() => {
         setForm({
-            fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : formatDateTimeLocalValue(new Date()),
+            fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : nowBusinessDateTimeLocalValue(),
             doctor_nombre: initialData?.doctor_nombre || '',
             diagnostico: initialData?.diagnostico || '',
             observaciones: initialData?.observaciones || '',
@@ -3159,7 +3192,7 @@ function RecetaMedicamentoForm({
             paciente_id: pacienteId,
             consulta_id: consultaId,
             consulta_tipo: consultaTipo,
-            fecha_emision: form.fecha_emision ? new Date(form.fecha_emision).toISOString() : null,
+            fecha_emision: serializeDateTimeLocalValue(form.fecha_emision),
             doctor_nombre: form.doctor_nombre.trim() || null,
             diagnostico: form.diagnostico.trim() || null,
             observaciones: form.observaciones.trim() || null,
@@ -3687,7 +3720,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                             consultaId: selectedId,
                                             consultaTipo: tab === 'oftalmologia' ? 'OFTALMOLOGIA' : 'CONTACTOLOGIA',
                                             initialData: {
-                                                fecha_emision: new Date().toISOString(),
+                                                fecha_emision: nowBusinessDateTimeLocalValue(),
                                                 doctor_nombre: selectedItem?.doctor_nombre || detalleQuery.data?.doctor_nombre || '',
                                                 diagnostico: detalleQuery.data?.diagnostico || selectedItem?.diagnostico || '',
                                                 observaciones: detalleQuery.data?.plan_tratamiento || selectedItem?.plan_tratamiento || '',
@@ -4881,7 +4914,7 @@ function NuevaConsultaSection() {
                     type: tipo,
                     patientId: selectedPatient.id,
                     recetaInicial: {
-                        fecha_emision: new Date().toISOString(),
+                        fecha_emision: nowBusinessDateTimeLocalValue(),
                         doctor_nombre: result?.recetaSugerida?.doctor_nombre || data?.doctor_nombre || '',
                         diagnostico: result?.recetaSugerida?.diagnostico || data?.diagnostico || '',
                         observaciones: result?.recetaSugerida?.observaciones || data?.plan_tratamiento || '',
@@ -5103,7 +5136,7 @@ function NuevaConsultaSection() {
                         consultaId: lastCreated?.id || null,
                         consultaTipo: tipo,
                         initialData: postSaveActions?.recetaInicial || {
-                            fecha_emision: new Date().toISOString(),
+                            fecha_emision: nowBusinessDateTimeLocalValue(),
                             doctor_nombre: lastCreated?.doctor_nombre || '',
                             diagnostico: lastCreated?.diagnostico || '',
                             observaciones: lastCreated?.plan_tratamiento || '',

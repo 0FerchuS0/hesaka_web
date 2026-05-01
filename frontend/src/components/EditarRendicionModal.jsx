@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import Modal from './Modal'
+import { parseBackendDateTime } from '../utils/formatters'
 import { useDestinatariosRendicionCatalog, useEditarRendicionJornada } from '../hooks/useFinancialJornada'
 
 function fmtGs(value) {
@@ -9,8 +10,8 @@ function fmtGs(value) {
 
 function fmtDateTime(value) {
     if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '-'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return '-'
     return new Intl.DateTimeFormat('es-PY', {
         day: '2-digit',
         month: '2-digit',
@@ -24,7 +25,8 @@ function fmtDateTime(value) {
 
 function toDateTimeLocalValue(value) {
     if (!value) return ''
-    const date = new Date(value)
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return ''
     const pad = number => String(number).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }

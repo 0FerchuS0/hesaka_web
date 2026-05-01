@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
+import { parseBackendDateTime } from '../utils/formatters'
 import Modal from '../components/Modal'
 import { Users, Plus, Search, Edit2, Phone, User, Eye } from 'lucide-react'
 import { exportReportBlob } from '../utils/reportExports'
 
 function fmt(fecha) {
     if (!fecha) return '-'
-    return new Date(fecha).toLocaleDateString('es-PY')
+    const date = parseBackendDateTime(fecha)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
 
 function gs(monto) {

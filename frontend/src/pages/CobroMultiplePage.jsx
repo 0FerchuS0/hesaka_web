@@ -1,14 +1,10 @@
 import { useState, useEffect } from 'react'
 import { api } from '../context/AuthContext'
-import { formatCurrency, formatDate } from '../utils/formatters'
+import { formatCurrency, formatDate, todayBusinessInputValue } from '../utils/formatters'
 import { CheckCircle, AlertCircle, Save, Loader2, ArrowRight } from 'lucide-react'
 import Modal from '../components/Modal'
 
-const todayInputValue = () => {
-    const date = new Date()
-    const pad = n => String(n).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
+const todayInputValue = () => todayBusinessInputValue()
 
 export default function CobroMultiplePage() {
     const [loading, setLoading] = useState(true)

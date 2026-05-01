@@ -8,15 +8,14 @@ import { api, useAuth } from '../context/AuthContext'
 import { invalidateJornadaLiveData } from '../hooks/useFinancialJornada'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
+import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
-const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
-const toDateTimeLocalValue = value => {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
-    const pad = n => String(n).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+const fmtDate = value => {
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
+const toDateTimeLocalValue = toBusinessDateTimeLocalValue
 
 function estadoBadge(estado) {
     const map = {
@@ -809,7 +808,9 @@ function HistorialPagoActions({ item, onEditar, onPDF, onRevertir, isRevirtiendo
 
     const handleAction = callback => {
         setOpen(false)
-        callback()
+        window.setTimeout(() => {
+            callback()
+        }, 0)
     }
 
     const toggleMenu = () => {
@@ -1362,4 +1363,3 @@ export default function CuentasPorPagarPage() {
         </div>
     )
 }
-

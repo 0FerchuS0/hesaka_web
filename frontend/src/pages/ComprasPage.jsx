@@ -10,16 +10,18 @@ import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
+import { parseBackendDateTime, toDateInputValue } from '../utils/formatters'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
-const fmtDate = value => value ? new Date(value).toLocaleDateString('es-PY') : '-'
-const fmtDateTime = value => value ? new Date(value).toLocaleString('es-PY') : '-'
-const formatDateInputValue = value => {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
-    const pad = number => String(number).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+const fmtDate = value => {
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleDateString('es-PY') : '-'
 }
+const fmtDateTime = value => {
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleString('es-PY') : '-'
+}
+const formatDateInputValue = toDateInputValue
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
 const RETIRO_TEMPLATE_CODE = 'venta_aviso_retiro'
@@ -1087,7 +1089,9 @@ function CompraRowActions({ compra, onVer, onEditar, onEntrega, onPDF, onElimina
 
     const handleAction = callback => {
         setOpen(false)
-        callback()
+        window.setTimeout(() => {
+            callback()
+        }, 0)
     }
     const pdfBusy = pdfOpeningId === compra.id
     const deletingBusy = deletingId === compra.id

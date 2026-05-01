@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react'
 import { api } from '../context/AuthContext'
-import { formatCurrency, formatDate } from '../utils/formatters'
+import { formatCurrency, formatDate, parseBackendDateTime } from '../utils/formatters'
 import { Trash2, AlertCircle, Loader2, Info, Download } from 'lucide-react'
+
+function formatTime(value) {
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' }) : '-'
+}
 
 export default function HistorialCobrosMultiplesPage() {
     const [loading, setLoading] = useState(true)
@@ -134,7 +139,7 @@ export default function HistorialCobrosMultiplesPage() {
                                 <tr key={item.grupo_id} className="hover:bg-white/5 transition-colors">
                                     <td className="p-4">
                                         <div className="text-white font-medium">{formatDate(item.fecha)}</div>
-                                        <div className="text-xs text-text-secondary">{new Date(item.fecha).toLocaleTimeString()}</div>
+                                        <div className="text-xs text-text-secondary">{formatTime(item.fecha)}</div>
                                     </td>
                                     <td className="p-4">
                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${item.metodo === 'EFECTIVO' ? 'bg-green-500/10 text-green-500' : 'bg-blue-500/10 text-blue-500'

@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import Modal from '../components/Modal'
 import { getWhatsappTemplateByCode, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
+import { formatCurrentBusinessDate, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
 
 const DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.'
 const DEFAULT_CUMPLEANOS_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
@@ -26,9 +27,7 @@ function fmt(value) {
 }
 
 function todayInputValue() {
-    const now = new Date()
-    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    return localDate.toISOString().slice(0, 10)
+    return todayBusinessInputValue()
 }
 
 function fmtShortRange(desde, hasta) {
@@ -65,15 +64,15 @@ function ComparisonCard({ color, title, value, range }) {
 
 function fmtDate(value) {
     if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '-'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return '-'
     return date.toLocaleDateString('es-PY')
 }
 
 function fmtDateTime(value) {
     if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '-'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return '-'
     return date.toLocaleString('es-PY')
 }
 
@@ -269,7 +268,7 @@ export default function Dashboard() {
                         Buenos dias, {user?.nombre?.split(' ')[0]} 👋
                     </h2>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginTop: 4 }}>
-                        {new Date().toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'long' })}
+                            {formatCurrentBusinessDate('es-PY', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </p>
                 </div>
             </div>
@@ -493,7 +492,7 @@ export default function Dashboard() {
                             <tbody>
                                 {dashboard.compras_pendientes.map(compra => (
                                     <tr key={compra.id}>
-                                        <td>{new Date(compra.fecha).toLocaleDateString('es-PY')}</td>
+                                        <td>{parseBackendDateTime(compra.fecha)?.toLocaleDateString('es-PY') || '-'}</td>
                                         <td>{compra.proveedor_nombre || '—'}</td>
                                         <td><span className="badge badge-blue">{compra.tipo_documento}</span></td>
                                         <td>{fmt(compra.total)}</td>

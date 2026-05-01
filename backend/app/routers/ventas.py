@@ -51,6 +51,13 @@ def _get_siguiente_codigo(session, modelo, prefijo: str) -> str:
     return f"{prefijo}{str(count + 1).zfill(4)}"
 
 
+def _resolver_fecha_operacion(session, value: Optional[datetime] = None) -> datetime:
+    """Usa la hora del negocio cuando no llega una fecha explicita."""
+    if value is None:
+        return ahora_negocio(session)
+    return normalizar_fecha_negocio(session, value)
+
+
 # ─── Helpers financieros ───────────────────────────────────────────────────────
 
 def _registrar_en_caja(
@@ -494,8 +501,11 @@ def convertir_presupuesto_a_venta(
         canal_default = _obtener_canal_venta_default(session)
         canal_venta_id = pre.canal_venta_id or (canal_default.id if canal_default else None)
 
+        fecha_venta = _resolver_fecha_operacion(session)
+
         venta = Venta(
             codigo=codigo,
+            fecha=fecha_venta,
             cliente_id=pre.cliente_id,
             presupuesto_id=pre.id,
             total=pre.total,
@@ -525,7 +535,9 @@ def convertir_presupuesto_a_venta(
             session.add(comision)
 
         for pago_d in pagos:
-            pago = Pago(venta_id=venta.id, **pago_d.model_dump())
+            pago_dict = pago_d.model_dump()
+            pago_dict["fecha"] = _resolver_fecha_operacion(session, pago_dict.get("fecha"))
+            pago = Pago(venta_id=venta.id, **pago_dict)
             session.add(pago)
             session.flush()
             _procesar_pago(session, pago, codigo)
@@ -574,6 +586,7 @@ def crear_presupuesto(data: PresupuestoCreate, tenant_slug: str = Depends(get_te
             pres_data["fecha_proximo_control"] = None
             pres_data["consulta_clinica_id"] = None
             pres_data["consulta_clinica_tipo"] = None
+        pres_data["fecha"] = _resolver_fecha_operacion(session, pres_data.get("fecha"))
         if not pres_data.get("canal_venta_id"):
             canal_default = _obtener_canal_venta_default(session)
             if canal_default:
@@ -659,6 +672,7 @@ def editar_presupuesto(pre_id: int, data: PresupuestoCreate, tenant_slug: str = 
             pres_dict["fecha_proximo_control"] = None
             pres_dict["consulta_clinica_id"] = None
             pres_dict["consulta_clinica_tipo"] = None
+        pres_dict["fecha"] = _resolver_fecha_operacion(session, pres_dict.get("fecha"))
         for k, v in pres_dict.items():
             setattr(p, k, v)
 
@@ -794,12 +808,13 @@ def corregir_fecha_venta(
         if not venta:
             raise HTTPException(status_code=404, detail="Venta no encontrada.")
 
-        venta.fecha = data.fecha
+        fecha_actualizada = _resolver_fecha_operacion(session, data.fecha)
+        venta.fecha = fecha_actualizada
 
         if data.actualizar_presupuesto_relacionado and venta.presupuesto_id:
             presupuesto_relacionado = session.query(Presupuesto).filter(Presupuesto.id == venta.presupuesto_id).first()
             if presupuesto_relacionado:
-                presupuesto_relacionado.fecha = data.fecha
+                presupuesto_relacionado.fecha = fecha_actualizada
 
         session.commit()
         session.refresh(venta)
@@ -970,12 +985,13 @@ def corregir_fecha_presupuesto(
         if not presupuesto:
             raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
 
-        presupuesto.fecha = data.fecha
+        fecha_actualizada = _resolver_fecha_operacion(session, data.fecha)
+        presupuesto.fecha = fecha_actualizada
 
         if data.actualizar_venta_relacionada:
             venta_relacionada = session.query(Venta).filter(Venta.presupuesto_id == presupuesto.id).first()
             if venta_relacionada:
-                venta_relacionada.fecha = data.fecha
+                venta_relacionada.fecha = fecha_actualizada
 
         session.commit()
         session.refresh(presupuesto)
@@ -1154,6 +1170,8 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
         if not vendedor:
             raise HTTPException(status_code=404, detail="Vendedor no encontrado.")
 
+        venta_data["fecha"] = _resolver_fecha_operacion(session, venta_data.get("fecha"))
+
         venta = Venta(
             codigo=codigo,
             estado_entrega="EN_LABORATORIO",  # Estado inicial siempre
@@ -1184,7 +1202,9 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
 
         # 3. Procesar pagos iniciales con efectos financieros
         for pago_d in pagos_data:
-            pago = Pago(venta_id=venta.id, **pago_d.model_dump())
+            pago_dict = pago_d.model_dump()
+            pago_dict["fecha"] = _resolver_fecha_operacion(session, pago_dict.get("fecha"))
+            pago = Pago(venta_id=venta.id, **pago_dict)
             session.add(pago)
             session.flush()  # Necesario para tener pago.id
             _procesar_pago(session, pago, codigo)
@@ -1232,7 +1252,9 @@ def registrar_pago(
 
         pago_dict = pago_data.model_dump(exclude_unset=True)
         if pago_dict.get("fecha") is None:
-            pago_dict.pop("fecha", None)
+            pago_dict["fecha"] = _resolver_fecha_operacion(session)
+        else:
+            pago_dict["fecha"] = _resolver_fecha_operacion(session, pago_dict["fecha"])
 
         pago = Pago(venta_id=venta_id, **pago_dict)
         session.add(pago)

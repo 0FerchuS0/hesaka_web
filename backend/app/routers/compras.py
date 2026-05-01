@@ -52,6 +52,7 @@ from app.utils.filename_utils import sanitize_filename_component
 from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta
 from app.utils.pdf_compra import generar_pdf_compra
 from app.utils.pdf_pago_proveedor import generar_pdf_pago_proveedor
+from app.utils.timezone import ahora_negocio
 
 router = APIRouter(prefix="/api/compras", tags=["Compras"])
 
@@ -1364,6 +1365,7 @@ def crear_compra(
             raise HTTPException(status_code=422, detail="Debes seleccionar un proveedor para compras asociadas a ventas.")
 
         compra = Compra(
+            fecha=ahora_negocio(session),
             proveedor_id=data.proveedor_id,
             tipo_documento=data.tipo_documento,
             nro_factura=data.nro_factura,

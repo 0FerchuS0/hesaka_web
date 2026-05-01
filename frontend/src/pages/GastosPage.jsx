@@ -7,27 +7,23 @@ import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api } from '../context/AuthContext'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
+import { parseBackendDateTime, toDateInputValue as toBusinessDateInputValue, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
 
 function fmt(value) {
     return new Intl.NumberFormat('es-PY').format(value ?? 0)
 }
 
 function fmtDate(value) {
-    return value ? new Date(value).toLocaleString('es-PY') : '-'
+    const date = parseBackendDateTime(value)
+    return date ? date.toLocaleString('es-PY') : '-'
 }
 
 function toDateInputValue(value) {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
-    const pad = n => String(n).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    return toBusinessDateInputValue(value)
 }
 
 function toDateTimeLocalValue(value) {
-    const date = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
-    const pad = n => String(n).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    return toBusinessDateTimeLocalValue(value)
 }
 
 function orderCategorias(categories, parentId = null, level = 0) {

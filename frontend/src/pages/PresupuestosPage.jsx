@@ -8,6 +8,7 @@ import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList, Clo
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { nowBusinessDateTimeLocalValue, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
+import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => {
@@ -38,6 +39,20 @@ const addMonthsToDateInput = (baseValue, months) => {
     const next = new Date(baseDate)
     next.setMonth(next.getMonth() + months)
     return formatDateInputValue(next)
+}
+const calculateItemGross = item => Math.max(0, (Number(item?.precio_unitario || 0) * Number(item?.cantidad || 0)))
+const sanitizeItemFinancials = item => {
+    const cantidad = Math.max(1, parseInt(item?.cantidad, 10) || 1)
+    const precioUnitario = Math.max(0, Math.trunc(Number(item?.precio_unitario || 0)))
+    const bruto = precioUnitario * cantidad
+    const descuento = Math.min(Math.max(0, Math.trunc(Number(item?.descuento || 0))), bruto)
+    return {
+        ...item,
+        cantidad,
+        precio_unitario: precioUnitario,
+        descuento,
+        subtotal: bruto - descuento,
+    }
 }
 const abrirPresupuestoPdf = async presupuestoId => {
     await requestAndOpenPdf(
@@ -179,6 +194,7 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
     const [showList, setShowList] = useState(false)
     const upd = (k, v) => onUpdate(idx, { ...item, [k]: v })
     const p = { nombre: item.busq || buscarProd || '' }
+    const brutoLinea = calculateItemGross(item)
     const { data: filtrados = [] } = useQuery({
         queryKey: ['productos-select', buscarProd],
         queryFn: () => {
@@ -210,13 +226,14 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
             }
         }
         onUpdate(idx, {
-            ...item,
-            busq: prod.nombre,
-            producto_id: prod.id,
-            precio_unitario: prod.precio_venta,
-            costo_unitario: costoUnitario,
-            costo_variable: Boolean(prod.costo_variable),
-            subtotal: prod.precio_venta * item.cantidad - item.descuento,
+            ...sanitizeItemFinancials({
+                ...item,
+                busq: prod.nombre,
+                producto_id: prod.id,
+                precio_unitario: prod.precio_venta,
+                costo_unitario: costoUnitario,
+                costo_variable: Boolean(prod.costo_variable),
+            }),
         })
     }
 
@@ -282,11 +299,32 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                 )}
             </td>
             <td><input type="number" className="form-input" style={{ width: 70, padding: '6px 8px' }} value={item.cantidad} min={1}
-                onChange={e => { const q = parseInt(e.target.value) || 1; onUpdate(idx, { ...item, cantidad: q, subtotal: item.precio_unitario * q - item.descuento }) }} /></td>
-            <td><input type="number" className="form-input" style={{ width: 110, padding: '6px 8px' }} value={item.precio_unitario}
-                onChange={e => { const pr = parseFloat(e.target.value) || 0; onUpdate(idx, { ...item, precio_unitario: pr, subtotal: pr * item.cantidad - item.descuento }) }} /></td>
-            <td><input type="number" className="form-input" style={{ width: 90, padding: '6px 8px' }} value={item.descuento}
-                onChange={e => { const d = parseFloat(e.target.value) || 0; onUpdate(idx, { ...item, descuento: d, subtotal: item.precio_unitario * item.cantidad - d }) }} /></td>
+                onChange={e => {
+                    const q = parseInt(e.target.value, 10) || 1
+                    onUpdate(idx, sanitizeItemFinancials({ ...item, cantidad: q }))
+                }} /></td>
+            <td><input
+                type="text"
+                inputMode="numeric"
+                className="form-input"
+                style={{ width: 110, padding: '6px 8px' }}
+                value={formatGsAmount(item.precio_unitario)}
+                onChange={e => {
+                    const precioUnitario = normalizeGsInput(e.target.value).amount
+                    onUpdate(idx, sanitizeItemFinancials({ ...item, precio_unitario: precioUnitario }))
+                }}
+            /></td>
+            <td><input
+                type="text"
+                inputMode="numeric"
+                className="form-input"
+                style={{ width: 90, padding: '6px 8px' }}
+                value={formatGsAmount(item.descuento)}
+                onChange={e => {
+                    const descuento = normalizeGsInput(e.target.value, brutoLinea).amount
+                    onUpdate(idx, sanitizeItemFinancials({ ...item, descuento }))
+                }}
+            /></td>
             <td style={{ fontWeight: 600, color: 'var(--primary-light)', whiteSpace: 'nowrap' }}>Gs. {fmt(item.subtotal)}</td>
             <td><button type="button" className="btn btn-danger btn-sm btn-icon" onClick={() => onRemove(idx)}><X size={13} /></button></td>
         </tr>
@@ -303,6 +341,8 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
     const [pagoInicial, setPagoInicial] = useState(false)
 
     const { data: bancos = [] } = useQuery({ queryKey: ['bancos'], queryFn: () => api.get('/bancos/').then(r => r.data) })
+    const montoMaximo = Math.max(0, Math.trunc(Number(presupuesto?.total || 0)))
+    const montoCobrado = parseGsInput(monto)
 
     const removerPresupuestoDeCache = presupuestoId => {
         const queries = qc.getQueriesData({ queryKey: ['presupuestos'] })
@@ -357,19 +397,33 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
             ]).catch(() => {})
         }
     })
-    const confirmNavigation = usePendingNavigationGuard(convertir.isPending, 'La conversion a venta aun se esta procesando. ¿Seguro que desea salir de esta vista?')
+    const confirmNavigation = usePendingNavigationGuard(
+        convertir.isPending || pagoInicial,
+        convertir.isPending
+            ? 'La conversion a venta aun se esta procesando. ¿Seguro que desea salir de esta vista?'
+            : 'Hay un cobro inicial abierto en este presupuesto. Si sales ahora, puedes perder los datos cargados. ¿Deseas continuar?'
+    )
 
     useEffect(() => {
         onBusyChange?.(convertir.isPending)
         return () => onBusyChange?.(false)
     }, [convertir.isPending, onBusyChange])
 
+    useEffect(() => {
+        if (!pagoInicial || monto) return
+        setMonto(formatGsAmount(montoMaximo))
+    }, [monto, montoMaximo, pagoInicial])
+
     const handleSubmit = e => {
         e.preventDefault()
+        if (pagoInicial && montoCobrado > montoMaximo) {
+            window.alert('El monto cobrado no puede superar el total pendiente del presupuesto.')
+            return
+        }
         const pagos = []
-        if (pagoInicial && parseFloat(monto) > 0) {
+        if (pagoInicial && montoCobrado > 0) {
             pagos.push({
-                monto: parseFloat(monto),
+                monto: montoCobrado,
                 metodo_pago: metodo,
                 banco_id: bancoId ? parseInt(bancoId) : null,
                 nota: nota || null
@@ -399,7 +453,18 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                     <div className="grid-2 mb-16">
                         <div className="form-group">
                             <label className="form-label">Monto cobrado (Gs.)</label>
-                            <input className="form-input" type="number" value={monto} onChange={e => setMonto(e.target.value)} placeholder="0" max={presupuesto.total} min={0} step="any" disabled={convertir.isPending} />
+                            <input
+                                className="form-input"
+                                type="text"
+                                inputMode="numeric"
+                                value={monto}
+                                onChange={e => setMonto(normalizeGsInput(e.target.value, montoMaximo).formatted)}
+                                placeholder="0"
+                                disabled={convertir.isPending}
+                            />
+                            <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                                Sugerido: Gs. {fmt(montoMaximo)}. No se permite cargar más que el saldo pendiente.
+                            </div>
                         </div>
                         <div className="form-group">
                             <label className="form-label">Método</label>
@@ -848,6 +913,14 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             window.alert('Debes seleccionar un vendedor antes de guardar el presupuesto.')
             return
         }
+        const itemsSanitizados = items
+            .filter(i => i.producto_id)
+            .map(i => sanitizeItemFinancials(i))
+        const itemInvalido = itemsSanitizados.find(i => i.descuento > calculateItemGross(i))
+        if (itemInvalido) {
+            window.alert('Uno de los descuentos supera el valor total de su item. Revisa los importes antes de guardar.')
+            return
+        }
         // Alerta si hay referidor pero sin comisión
         if (referidor && (!comision || parseFloat(comision) === 0)) {
             if (!window.confirm('El referidor seleccionado no tiene comisión asignada. ¿Desea guardar el presupuesto igual?')) return
@@ -868,7 +941,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             vendedor_id: parseInt(vendedor, 10),
             canal_venta_id: canalVenta ? parseInt(canalVenta) : null,
             comision_monto: parseFloat(comision) || 0,
-            items: items.filter(i => i.producto_id).map(i => ({
+            items: itemsSanitizados.map(i => ({
                 id: i.id || null,
                 producto_id: parseInt(i.producto_id), cantidad: i.cantidad,
                 precio_unitario: i.precio_unitario, costo_unitario: i.costo_unitario || 0,
@@ -1214,7 +1287,13 @@ export default function PresupuestosPage() {
     const [asignacionModalBusy, setAsignacionModalBusy] = useState(false)
     const [fechaModalBusy, setFechaModalBusy] = useState(false)
     const hasPendingNavigation = Boolean(pdfOpeningId || cancelingId || deletingId)
-    const confirmNavigation = usePendingNavigationGuard(hasPendingNavigation, 'Hay una accion de presupuesto aun en proceso. ¿Seguro que desea salir de esta vista?')
+    const hasOpenPresupuesto = Boolean(modal || editarPre)
+    const confirmNavigation = usePendingNavigationGuard(
+        hasPendingNavigation || hasOpenPresupuesto,
+        hasPendingNavigation
+            ? 'Hay una accion de presupuesto aun en proceso. ¿Seguro que desea salir de esta vista?'
+            : 'Hay un presupuesto abierto que todavia podria tener datos sin guardar. ¿Seguro que desea salir de esta vista?'
+    )
 
     const { data: vendedoresFiltro = [] } = useQuery({ queryKey: ['presupuestos-vendedores-filtro'], queryFn: () => api.get('/vendedores/?solo_activos=true&limit=200').then(r => r.data), retry: false })
     const { data: canalesFiltro = [] } = useQuery({ queryKey: ['presupuestos-canales-filtro'], queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data), retry: false })

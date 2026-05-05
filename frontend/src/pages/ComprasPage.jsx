@@ -11,6 +11,7 @@ import { hasActionAccess } from '../utils/roles'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { parseBackendDateTime, toDateInputValue } from '../utils/formatters'
+import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => {
@@ -221,10 +222,11 @@ function createEmptyItem() {
 }
 
 function recalcItem(item) {
-    const cantidad = parseInt(item.cantidad, 10) || 1
-    const costo = parseFloat(item.costo_unitario) || 0
-    const descuento = parseFloat(item.descuento) || 0
-    return { ...item, cantidad, subtotal: Math.max(0, costo * cantidad - descuento) }
+    const cantidad = Math.max(1, parseInt(item.cantidad, 10) || 1)
+    const costo = Math.max(0, Math.trunc(Number(item.costo_unitario || 0)))
+    const bruto = costo * cantidad
+    const descuento = Math.min(Math.max(0, Math.trunc(Number(item.descuento || 0))), bruto)
+    return { ...item, cantidad, costo_unitario: costo, descuento, subtotal: Math.max(0, bruto - descuento) }
 }
 
 function buildImportedItems(ventas) {
@@ -742,12 +744,13 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
         }
         const itemsValidos = items
             .filter(item => item.descripcion && (parseInt(item.cantidad, 10) || 0) > 0)
+            .map(item => recalcItem(item))
             .map(item => ({
                 descripcion: item.descripcion,
-                cantidad: parseInt(item.cantidad, 10) || 1,
-                costo_unitario: parseFloat(item.costo_unitario) || 0,
+                cantidad: item.cantidad,
+                costo_unitario: item.costo_unitario,
                 iva: parseInt(item.iva, 10) || 10,
-                descuento: parseFloat(item.descuento) || 0,
+                descuento: item.descuento || 0,
                 subtotal: item.subtotal || 0,
                 producto_id: item.producto_id || null,
                 presupuesto_item_id: item.presupuesto_item_id || null,
@@ -816,8 +819,22 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                                             <CompraProductoSelect item={item} index={index} onUpdateItem={updateItemObject} />
                                         </td>
                                         <td><input type="number" min="1" className="form-input" style={{ width: 84, padding: '6px 8px' }} value={item.cantidad} onChange={event => updateItem(index, 'cantidad', event.target.value)} /></td>
-                                        <td><input type="number" min="0" className="form-input" style={{ width: 130, padding: '6px 8px' }} value={item.costo_unitario} onChange={event => updateItem(index, 'costo_unitario', event.target.value)} /></td>
-                                        <td><input type="number" min="0" className="form-input" style={{ width: 100, padding: '6px 8px' }} value={item.descuento} onChange={event => updateItem(index, 'descuento', event.target.value)} /></td>
+                                        <td><input
+                                            type="text"
+                                            inputMode="numeric"
+                                            className="form-input"
+                                            style={{ width: 130, padding: '6px 8px' }}
+                                            value={formatGsAmount(item.costo_unitario)}
+                                            onChange={event => updateItem(index, 'costo_unitario', normalizeGsInput(event.target.value).amount)}
+                                        /></td>
+                                        <td><input
+                                            type="text"
+                                            inputMode="numeric"
+                                            className="form-input"
+                                            style={{ width: 100, padding: '6px 8px' }}
+                                            value={formatGsAmount(item.descuento)}
+                                            onChange={event => updateItem(index, 'descuento', normalizeGsInput(event.target.value, Math.max(0, (parseInt(item.cantidad, 10) || 1) * (Number(item.costo_unitario) || 0))).amount)}
+                                        /></td>
                                         <td style={{ fontWeight: 700, color: 'var(--primary-light)' }}>Gs. {fmt(item.subtotal)}</td>
                                         <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>{item.origen || (item.autoImportado ? 'IMPORTADO' : 'MANUAL')}</td>
                                         <td>{items.length > 1 && <ActionButton title="Quitar item" danger onClick={() => setItems(prev => prev.filter((_, currentIndex) => currentIndex !== index))}><X size={13} /></ActionButton>}</td>
@@ -839,12 +856,14 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
 
 function PagoCompraModal({ compra, onClose }) {
     const queryClient = useQueryClient()
-    const [monto, setMonto] = useState(compra.saldo || 0)
+    const [monto, setMonto] = useState(() => formatGsAmount(compra.saldo || 0))
     const [metodoPago, setMetodoPago] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
     const [nroComprobante, setNroComprobante] = useState('')
     const { data: jornadaEstado } = useFinancialJornadaStatus()
     const jornadaAbierta = Boolean(jornadaEstado?.abierta)
+    const saldoPendiente = Math.max(0, Math.trunc(Number(compra?.saldo || 0)))
+    const montoPago = parseGsInput(monto)
 
     const { data: pagos = [], isLoading: pagosLoading } = useQuery({
         queryKey: ['compra-pagos', compra.id],
@@ -886,8 +905,16 @@ function PagoCompraModal({ compra, onClose }) {
     const handleSubmit = event => {
         event.preventDefault()
         if (!jornadaAbierta) return
+        if (montoPago <= 0) {
+            window.alert('Debes indicar un monto mayor a cero.')
+            return
+        }
+        if (montoPago > saldoPendiente) {
+            window.alert('El monto a pagar no puede superar el saldo pendiente de la compra.')
+            return
+        }
         registrarPago.mutate({
-            monto: parseFloat(monto) || 0,
+            monto: montoPago,
             metodo_pago: metodoPago,
             banco_id: metodoPago === 'EFECTIVO' ? null : (bancoId ? parseInt(bancoId, 10) : null),
             nro_comprobante: nroComprobante || null,
@@ -938,7 +965,7 @@ function PagoCompraModal({ compra, onClose }) {
             </div>
 
             <div className="grid-2 mb-16">
-                <div className="form-group"><label className="form-label">Monto a Pagar</label><input type="number" min="0" max={compra.saldo || 0} step="0.01" className="form-input" value={monto} onChange={event => setMonto(event.target.value)} disabled={!jornadaAbierta || registrarPago.isPending} /></div>
+                <div className="form-group"><label className="form-label">Monto a Pagar</label><input type="text" inputMode="numeric" className="form-input" value={monto} onChange={event => setMonto(normalizeGsInput(event.target.value, saldoPendiente).formatted)} disabled={!jornadaAbierta || registrarPago.isPending} /><div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>Sugerido: Gs. {fmt(saldoPendiente)}. No se permite pagar más que el saldo pendiente.</div></div>
                 <div className="form-group"><label className="form-label">Metodo de Pago</label><select className="form-select" value={metodoPago} onChange={event => setMetodoPago(event.target.value)} disabled={!jornadaAbierta || registrarPago.isPending}><option value="EFECTIVO">EFECTIVO</option><option value="TRANSFERENCIA">TRANSFERENCIA</option><option value="TARJETA">TARJETA</option><option value="CHEQUE">CHEQUE</option></select></div>
                 <div className="form-group"><label className="form-label">Banco</label><select className="form-select" value={bancoId} onChange={event => setBancoId(event.target.value)} disabled={!jornadaAbierta || metodoPago === 'EFECTIVO' || registrarPago.isPending}><option value="">Seleccionar banco</option>{bancos.map(banco => <option key={banco.id} value={banco.id}>{banco.nombre_banco}</option>)}</select></div>
                 <div className="form-group"><label className="form-label">Nro. Comprobante</label><input className="form-input" value={nroComprobante} onChange={event => setNroComprobante(event.target.value)} placeholder="Opcional" disabled={!jornadaAbierta || registrarPago.isPending} /></div>

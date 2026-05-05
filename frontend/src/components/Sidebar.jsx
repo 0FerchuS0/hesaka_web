@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { getNavigationControlState } from '../utils/navigationControl'
 import { hasModuleAccess, normalizeRole } from '../utils/roles'
 import {
     LayoutDashboard,
@@ -199,6 +200,11 @@ export default function Sidebar({ collapsed = false, onToggle }) {
     }
 
     const handleLogout = () => {
+        const navigationState = getNavigationControlState()
+        if (navigationState.hasBlockers) {
+            const shouldLogout = window.confirm(`${navigationState.message || 'Hay datos u operaciones pendientes en esta pantalla.'}\n\nSi cierras sesion ahora, puedes perder cambios no guardados. ¿Deseas continuar?`)
+            if (!shouldLogout) return
+        }
         logout()
         navigate('/login')
     }

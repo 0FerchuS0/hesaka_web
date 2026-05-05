@@ -11,6 +11,7 @@ import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
+import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => {
@@ -653,6 +654,8 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     })
 
     const { data: bancos = [] } = useQuery({ queryKey: ['bancos'], queryFn: () => api.get('/bancos/').then(r => r.data) })
+    const saldoPendiente = Math.max(0, Math.trunc(Number(venta?.saldo || 0)))
+    const montoCobrado = parseGsInput(monto)
 
     const actualizarVentaEnCache = updater => {
         qc.setQueryData(['venta', ventaId], current => {
@@ -691,11 +694,13 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
         mutationFn: d => api.post(`/ventas/${ventaId}/pagos`, d),
         onSuccess: response => {
             const nuevoPago = response?.data
+            let siguienteMontoSugerido = ''
             if (nuevoPago) {
                 actualizarVentaEnCache(current => {
                     const saldoActual = Number(current.saldo || 0)
                     const montoPago = Number(nuevoPago.monto || 0)
                     const nuevoSaldo = Math.max(0, saldoActual - montoPago)
+                    siguienteMontoSugerido = formatGsAmount(nuevoSaldo)
                     return {
                         ...current,
                         saldo: nuevoSaldo,
@@ -704,7 +709,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                     }
                 })
             }
-            setMonto('')
+            setMonto(siguienteMontoSugerido)
             setNota('')
             refrescarEnSegundoPlano()
         }
@@ -723,13 +728,19 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                 estado: saldoRestante > 0 ? 'PENDIENTE' : 'PAGADO',
                 pagos: (current.pagos || []).filter(pago => pago.id !== pagoId),
             }))
+            setMonto(formatGsAmount(saldoRestante))
             refrescarEnSegundoPlano()
         },
         onSettled: () => {
             setDeletingPagoId(null)
         }
     })
-    const confirmNavigation = usePendingNavigationGuard(Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId), 'La gestion de pagos aun se esta procesando. ¿Seguro que desea salir de esta vista?')
+    const confirmNavigation = usePendingNavigationGuard(
+        Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId || monto || nota),
+        cobrar.isPending || deletingPagoId || pdfOpeningPagoId
+            ? 'La gestion de pagos aun se esta procesando. ¿Seguro que desea salir de esta vista?'
+            : 'Hay datos de cobro sin confirmar. Si sales ahora, puedes perder lo cargado. ¿Deseas continuar?'
+    )
 
     useEffect(() => {
         const busy = Boolean(cobrar.isPending || deletingPagoId || pdfOpeningPagoId)
@@ -737,13 +748,26 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
         return () => onBusyChange?.(false)
     }, [cobrar.isPending, deletingPagoId, onBusyChange, pdfOpeningPagoId])
 
+    useEffect(() => {
+        if (!venta?.saldo || monto) return
+        setMonto(formatGsAmount(venta.saldo))
+    }, [monto, venta?.saldo])
+
     if (isLoading || !venta) return <div className="flex-center p-20"><div className="spinner"></div></div>
 
     const handleSubmit = e => {
         e.preventDefault()
         if (cobrar.isPending || !jornadaAbierta) return
+        if (montoCobrado <= 0) {
+            window.alert('Debes indicar un monto mayor a cero.')
+            return
+        }
+        if (montoCobrado > saldoPendiente) {
+            window.alert('El monto cobrado no puede superar el saldo pendiente de la venta.')
+            return
+        }
         cobrar.mutate({
-            monto: parseFloat(monto),
+            monto: montoCobrado,
             metodo_pago: metodo,
             banco_id: bancoId ? parseInt(bancoId) : null,
             nota: nota || null,
@@ -827,7 +851,19 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                     <div className="grid-2 mb-12">
                         <div className="form-group">
                             <label className="form-label">Monto (Gs.)</label>
-                            <input className="form-input" type="number" value={monto} onChange={e => setMonto(e.target.value)} required placeholder="0" max={venta.saldo} min={0} step="any" disabled={cobrar.isPending || !jornadaAbierta} />
+                            <input
+                                className="form-input"
+                                type="text"
+                                inputMode="numeric"
+                                value={monto}
+                                onChange={e => setMonto(normalizeGsInput(e.target.value, saldoPendiente).formatted)}
+                                required
+                                placeholder="0"
+                                disabled={cobrar.isPending || !jornadaAbierta}
+                            />
+                            <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                                Sugerido: Gs. {fmt(saldoPendiente)}. No se permite cobrar más que el saldo pendiente.
+                            </div>
                         </div>
                         <div className="form-group">
                             <label className="form-label">Método</label>

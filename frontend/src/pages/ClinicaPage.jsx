@@ -20,6 +20,7 @@ import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api, useAuth } from '../context/AuthContext'
 import { hasActionAccess } from '../utils/roles'
+import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { nowBusinessDateTimeLocalValue, todayBusinessInputValue } from '../utils/formatters'
 
@@ -245,8 +246,7 @@ function getDailyReminderStorageKey(user) {
 function flattenReminderBuckets(reminderBuckets) {
     return [
         ...(reminderBuckets?.hoy || []),
-        ...(reminderBuckets?.ocho_dias || []),
-        ...(reminderBuckets?.quince_dias || []),
+        ...(reminderBuckets?.tres_dias || []),
     ]
 }
 
@@ -277,8 +277,8 @@ function ReminderCards({ items, onMarkRemembered, onOpenWhatsappEditor = null, a
                                     </div>
                                 ) : null}
                             </div>
-                            <span className={`badge ${item.recordatorio_categoria === 'hoy' ? 'badge-red' : item.recordatorio_categoria === '8_dias' ? 'badge-yellow' : 'badge-blue'}`}>
-                                {item.recordatorio_categoria === 'hoy' ? 'Hoy' : item.recordatorio_categoria === '8_dias' ? '8 dias' : '15 dias'}
+                            <span className={`badge ${item.recordatorio_categoria === 'hoy' ? 'badge-red' : 'badge-yellow'}`}>
+                                {item.recordatorio_categoria === 'hoy' ? 'Hoy' : '3 dias'}
                             </span>
                         </div>
                         <div className="flex gap-12" style={{ marginTop: 12, flexWrap: 'wrap' }}>
@@ -1093,7 +1093,7 @@ function DashboardClinicoSection() {
                                     <div>
                                         <div style={{ fontWeight: 700, color: '#38bdf8' }}>Recordatorios clinicos pendientes</div>
                                         <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
-                                            Tienes {reminderItems.length} recordatorio(s) pendientes entre hoy, 8 dias y 15 dias.
+                                            Tienes {reminderItems.length} recordatorio(s) pendientes entre hoy y 3 dias para la agenda clinica.
                                         </div>
                                     </div>
                                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowReminderModal(true)}>
@@ -1428,7 +1428,7 @@ function AgendaClinicaSection() {
     }
 
     const items = agendaQuery.data?.items || []
-    const reminderBuckets = reminderQuery.data || { hoy: [], ocho_dias: [], quince_dias: [] }
+    const reminderBuckets = reminderQuery.data || { hoy: [], tres_dias: [] }
     const aplicarFiltroRapido = tipo => {
         const base = new Date()
         const from = new Date(base)
@@ -1460,10 +1460,9 @@ function AgendaClinicaSection() {
                     subtitle="Base operativa de turnos por paciente, doctor, lugar, fecha y estado."
                     actions={hasActionAccess(user, 'clinica.consultas_crear', 'clinica') ? <button className="btn btn-primary" onClick={() => setModalTurno({ mode: 'create', data: null })}><Plus size={16} /> Nuevo turno</button> : null}
                 />
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, marginBottom: 18 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginBottom: 18 }}>
                     {[
-                        { key: '15', title: 'Recordar en 15 dias', items: reminderBuckets.quince_dias || [], color: '#a78bfa' },
-                        { key: '8', title: 'Recordar en 8 dias', items: reminderBuckets.ocho_dias || [], color: '#f59e0b' },
+                        { key: '3', title: 'Recordar en 3 dias', items: reminderBuckets.tres_dias || [], color: '#f59e0b' },
                         { key: 'hoy', title: 'Recordar hoy', items: reminderBuckets.hoy || [], color: '#38bdf8' },
                     ].map(bucket => (
                         <div key={bucket.key} className="card" style={{ padding: 14, background: `${bucket.color}12`, border: `1px solid ${bucket.color}44` }}>
@@ -1524,8 +1523,7 @@ function AgendaClinicaSection() {
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('hoy')}>Hoy</button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('manana')}>Manana</button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRapido('semana')}>Prox. 7 dias</button>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('15')}>Recordatorios 15 dias</button>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('8')}>Recordatorios 8 dias</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('3')}>Recordatorios 3 dias</button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => aplicarFiltroRecordatorio('hoy')}>Recordatorios hoy</button>
                     {recordatorioFiltro ? (
                         <button
@@ -1544,7 +1542,7 @@ function AgendaClinicaSection() {
                 </div>
                 {recordatorioFiltro ? (
                     <div className="alert alert-info" style={{ marginBottom: 18 }}>
-                        Mostrando bandeja interna de recordatorios para {recordatorioFiltro === '15' ? '15 dias' : recordatorioFiltro === '8' ? '8 dias' : 'hoy'}.
+                        Mostrando bandeja interna de recordatorios para {recordatorioFiltro === '3' ? '3 dias' : 'hoy'}.
                     </div>
                 ) : null}
 
@@ -2777,6 +2775,13 @@ function ConsultaIntegralModal({
             window.clearTimeout(revealDocuments)
         }
     }, [successData?.id])
+
+    usePendingNavigationGuard(
+        open,
+        successData?.id
+            ? 'Hay una consulta abierta. Si cierras sesion ahora, la ventana se cerrara.'
+            : 'Hay una consulta abierta que aun no fue guardada. Si cierras sesion o sales de esta vista, perderas los datos cargados. ¿Deseas continuar?'
+    )
 
     const handleCloseRequest = () => {
         if (!successData?.id) {

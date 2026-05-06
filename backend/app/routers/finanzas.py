@@ -79,6 +79,7 @@ from app.utils.jornada import (
     hoy_jornada,
     normalizar_fecha_negocio,
     require_jornada_abierta,
+    require_jornada_abierta_para_fecha,
     serializar_movimiento_jornada,
     serializar_corte,
     serializar_cortes_jornada_lista,
@@ -207,7 +208,7 @@ def _revertir_impacto_gasto(session, gasto: GastoOperativo):
 
 
 def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaGasto):
-    jornada = require_jornada_abierta(session)
+    jornada = require_jornada_abierta_para_fecha(session, gasto.fecha, accion="registrar un gasto")
     if gasto.metodo_pago == "EFECTIVO":
         caja = session.query(ConfiguracionCaja).first()
         if not caja:
@@ -1524,6 +1525,7 @@ def registrar_gasto(
 
         payload = data.model_dump()
         payload["fecha"] = normalizar_fecha_negocio(session, payload["fecha"])
+        require_jornada_abierta_para_fecha(session, payload["fecha"], accion="registrar un gasto")
         gasto = GastoOperativo(**payload)
         session.add(gasto)
         session.flush()
@@ -1567,6 +1569,7 @@ def editar_gasto(
 
         payload = data.model_dump()
         payload["fecha"] = normalizar_fecha_negocio(session, payload["fecha"] or gasto.fecha)
+        require_jornada_abierta_para_fecha(session, payload["fecha"], accion="registrar un gasto")
         for key, value in payload.items():
             setattr(gasto, key, value)
 

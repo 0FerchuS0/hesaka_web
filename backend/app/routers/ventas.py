@@ -33,7 +33,7 @@ from app.utils.pdf_recibos_venta import (
 )
 from app.utils.pdf_presupuestos import generar_pdf_presupuesto
 from app.utils.filename_utils import sanitize_filename_component
-from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta
+from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta, require_jornada_abierta_para_fecha
 from app.utils.timezone import ahora_negocio
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
@@ -69,7 +69,7 @@ def _registrar_en_caja(
     fecha: Optional[datetime] = None,
 ):
     """Registra un ingreso de efectivo en caja, actualizando el saldo."""
-    jornada = require_jornada_abierta(session)
+    jornada = require_jornada_abierta_para_fecha(session, fecha, accion="registrar un cobro")
     caja = session.query(ConfiguracionCaja).first()
     if not caja:
         caja = ConfiguracionCaja(id=1, saldo_actual=0.0)
@@ -102,7 +102,7 @@ def _registrar_en_banco(
     fecha: Optional[datetime] = None,
 ):
     """Registra un movimiento bancario (ingreso o egreso), actualizando el saldo del banco."""
-    jornada = require_jornada_abierta(session)
+    jornada = require_jornada_abierta_para_fecha(session, fecha, accion="registrar un cobro")
     banco = session.query(Banco).filter(Banco.id == banco_id).first()
     if not banco:
         raise HTTPException(status_code=404, detail=f"Banco ID {banco_id} no encontrado.")
@@ -1255,6 +1255,7 @@ def registrar_pago(
             pago_dict["fecha"] = _resolver_fecha_operacion(session)
         else:
             pago_dict["fecha"] = _resolver_fecha_operacion(session, pago_dict["fecha"])
+        require_jornada_abierta_para_fecha(session, pago_dict["fecha"], accion="registrar un cobro")
 
         pago = Pago(venta_id=venta_id, **pago_dict)
         session.add(pago)
@@ -1564,6 +1565,7 @@ def registrar_cobro_multiple(
     try:
         grupo_id = str(uuid.uuid4())
         fecha_pago = normalizar_fecha_negocio(session, data.fecha)
+        require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un cobro")
         pagos_orm = []
         total_acumulado = 0.0
 

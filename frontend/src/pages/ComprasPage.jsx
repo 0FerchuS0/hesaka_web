@@ -826,6 +826,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                                             style={{ width: 130, padding: '6px 8px' }}
                                             value={formatGsAmount(item.costo_unitario)}
                                             onChange={event => updateItem(index, 'costo_unitario', normalizeGsInput(event.target.value).amount)}
+                                            onFocus={event => event.target.select()}
                                         /></td>
                                         <td><input
                                             type="text"
@@ -833,7 +834,8 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                                             className="form-input"
                                             style={{ width: 100, padding: '6px 8px' }}
                                             value={formatGsAmount(item.descuento)}
-                                            onChange={event => updateItem(index, 'descuento', normalizeGsInput(event.target.value, Math.max(0, (parseInt(item.cantidad, 10) || 1) * (Number(item.costo_unitario) || 0))).amount)}
+                                            onChange={event => updateItem(index, 'descuento', normalizeGsInput(event.target.value).amount)}
+                                            onFocus={event => event.target.select()}
                                         /></td>
                                         <td style={{ fontWeight: 700, color: 'var(--primary-light)' }}>Gs. {fmt(item.subtotal)}</td>
                                         <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>{item.origen || (item.autoImportado ? 'IMPORTADO' : 'MANUAL')}</td>
@@ -965,7 +967,7 @@ function PagoCompraModal({ compra, onClose }) {
             </div>
 
             <div className="grid-2 mb-16">
-                <div className="form-group"><label className="form-label">Monto a Pagar</label><input type="text" inputMode="numeric" className="form-input" value={monto} onChange={event => setMonto(normalizeGsInput(event.target.value, saldoPendiente).formatted)} disabled={!jornadaAbierta || registrarPago.isPending} /><div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>Sugerido: Gs. {fmt(saldoPendiente)}. No se permite pagar más que el saldo pendiente.</div></div>
+                <div className="form-group"><label className="form-label">Monto a Pagar</label><input type="text" inputMode="numeric" className="form-input" value={monto} onChange={event => setMonto(normalizeGsInput(event.target.value).formatted)} onFocus={event => event.target.select()} disabled={!jornadaAbierta || registrarPago.isPending} /><div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>Sugerido: Gs. {fmt(saldoPendiente)}. No se permite pagar más que el saldo pendiente.</div></div>
                 <div className="form-group"><label className="form-label">Metodo de Pago</label><select className="form-select" value={metodoPago} onChange={event => setMetodoPago(event.target.value)} disabled={!jornadaAbierta || registrarPago.isPending}><option value="EFECTIVO">EFECTIVO</option><option value="TRANSFERENCIA">TRANSFERENCIA</option><option value="TARJETA">TARJETA</option><option value="CHEQUE">CHEQUE</option></select></div>
                 <div className="form-group"><label className="form-label">Banco</label><select className="form-select" value={bancoId} onChange={event => setBancoId(event.target.value)} disabled={!jornadaAbierta || metodoPago === 'EFECTIVO' || registrarPago.isPending}><option value="">Seleccionar banco</option>{bancos.map(banco => <option key={banco.id} value={banco.id}>{banco.nombre_banco}</option>)}</select></div>
                 <div className="form-group"><label className="form-label">Nro. Comprobante</label><input className="form-input" value={nroComprobante} onChange={event => setNroComprobante(event.target.value)} placeholder="Opcional" disabled={!jornadaAbierta || registrarPago.isPending} /></div>

@@ -136,9 +136,18 @@ function buildBirthdayWhatsappLink(cliente, empresa = 'HESAKA', template = DEFAU
 function flattenReminderBuckets(reminderBuckets) {
     return [
         ...(reminderBuckets?.hoy || []),
-        ...(reminderBuckets?.ocho_dias || []),
-        ...(reminderBuckets?.quince_dias || []),
+        ...(reminderBuckets?.tres_dias || []),
     ]
+}
+
+function getReminderBadgeLabel(categoria) {
+    if (categoria === 'hoy') return 'Hoy'
+    if (categoria === '3_dias') return 'En 3 dias'
+    return 'Pendiente'
+}
+
+function getReminderBadgeClass(categoria) {
+    return categoria === 'hoy' ? 'badge-red' : 'badge-yellow'
 }
 
 function getDailyReminderStorageKey(user) {
@@ -154,10 +163,15 @@ function ReminderCards({ items, onMarkRemembered, actionPendingId = null, empres
                 const isPending = actionPendingId === item.id
                 return (
                     <div key={`${item.id}-${item.recordatorio_categoria || 'sin-categoria'}`} className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
-                        <div style={{ display: 'grid', gap: 6 }}>
-                            <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
-                            <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Ultima consulta: {item.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'Sin registro'}</div>
-                            <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Proxima consulta: {fmtDateTime(item.fecha_hora)}</div>
+                        <div className="flex-between" style={{ gap: 12, alignItems: 'flex-start' }}>
+                            <div style={{ display: 'grid', gap: 6 }}>
+                                <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Ultima consulta: {item.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'Sin registro'}</div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>Proxima consulta: {fmtDateTime(item.fecha_hora)}</div>
+                            </div>
+                            <span className={`badge ${getReminderBadgeClass(item.recordatorio_categoria)}`}>
+                                {getReminderBadgeLabel(item.recordatorio_categoria)}
+                            </span>
                         </div>
                         <div className="flex gap-12" style={{ marginTop: 12, flexWrap: 'wrap' }}>
                             <button type="button" className="btn btn-secondary btn-sm" onClick={() => onMarkRemembered(item)} disabled={isPending}>
@@ -229,6 +243,7 @@ export default function Dashboard() {
     })
 
     const reminderItems = flattenReminderBuckets(reminderQuery.data)
+    const reminderBuckets = reminderQuery.data || { hoy: [], tres_dias: [] }
     const birthdayItems = birthdayQuery.data || []
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
     const reminderTemplate = getWhatsappTemplateByCode(
@@ -312,14 +327,66 @@ export default function Dashboard() {
                     <div className="card-title flex-between">
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <AlertCircle size={18} style={{ color: '#38bdf8' }} />
-                            Recordatorios clinicos pendientes
+                            Agenda clinica por recordar
                         </span>
                         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowReminderModal(true)}>
-                            Ver recordatorios
+                            Ver todos
                         </button>
                     </div>
-                    <div style={{ color: 'var(--text-muted)' }}>
-                        Hay {reminderItems.length} recordatorio(s) pendientes para controles clinicos.
+                    <div style={{ color: 'var(--text-muted)', marginBottom: 14 }}>
+                        Aqui aparecen directamente los turnos o consultas de hoy y los previstos para dentro de 3 dias, con acceso rapido a WhatsApp.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                        {[
+                            { key: 'hoy', title: 'Agenda de hoy', items: reminderBuckets.hoy || [], empty: 'No hay turnos para recordar hoy.' },
+                            { key: '3_dias', title: 'Agenda en 3 dias', items: reminderBuckets.tres_dias || [], empty: 'No hay turnos para recordar en 3 dias.' },
+                        ].map(bucket => (
+                            <div key={bucket.key} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: 12, background: 'rgba(255,255,255,0.04)' }}>
+                                <div className="flex-between" style={{ gap: 10, alignItems: 'center', marginBottom: 10 }}>
+                                    <div style={{ fontWeight: 800 }}>{bucket.title}</div>
+                                    <span className={`badge ${bucket.key === 'hoy' ? 'badge-red' : 'badge-yellow'}`}>{bucket.items.length}</span>
+                                </div>
+                                <div style={{ display: 'grid', gap: 10 }}>
+                                    {bucket.items.length ? bucket.items.map(item => {
+                                        const whatsappLink = buildReminderWhatsappLink(item, empresaNombre, reminderTemplate)
+                                        const isPending = markReminderMutation.isPending && markReminderMutation.variables?.id === item.id
+                                        return (
+                                            <div key={`${bucket.key}-${item.id}`} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 10, background: 'rgba(15,23,42,0.22)' }}>
+                                                <div style={{ fontWeight: 700 }}>{item.paciente_nombre}</div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginTop: 4 }}>
+                                                    {fmtDateTime(item.fecha_hora)}
+                                                </div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginTop: 4 }}>
+                                                    {item.doctor_nombre || 'Sin doctor'} {item.lugar_nombre ? `- ${item.lugar_nombre}` : ''}
+                                                </div>
+                                                <div className="flex gap-12" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+                                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => markReminderMutation.mutate(item)} disabled={isPending}>
+                                                        {isPending ? 'Guardando...' : 'Recordado'}
+                                                    </button>
+                                                    <a
+                                                        href={whatsappLink || undefined}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className={`btn btn-secondary btn-sm ${!whatsappLink ? 'disabled' : ''}`}
+                                                        onClick={event => {
+                                                            if (!whatsappLink) {
+                                                                event.preventDefault()
+                                                                window.alert('Este paciente no tiene telefono cargado para abrir WhatsApp.')
+                                                            }
+                                                        }}
+                                                        style={!whatsappLink ? { pointerEvents: 'auto', opacity: 0.6 } : undefined}
+                                                    >
+                                                        <MessageCircle size={14} /> WhatsApp
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        )
+                                    }) : (
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{bucket.empty}</div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </div>
             ) : null}

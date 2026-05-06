@@ -399,11 +399,9 @@ def _serializar_turno(turno, fecha_referencia: date | None = None) -> ClinicaTur
     recordatorio_categoria = None
     if turno.fecha_hora:
         dias_restantes = (turno.fecha_hora.date() - hoy).days
-        if bool(getattr(turno, "es_control", False)) and turno.estado in ["PENDIENTE", "CONFIRMADO"]:
-            if dias_restantes == 15:
-                recordatorio_categoria = "15_dias"
-            elif dias_restantes == 8:
-                recordatorio_categoria = "8_dias"
+        if turno.estado in ["PENDIENTE", "CONFIRMADO"]:
+            if dias_restantes == 3:
+                recordatorio_categoria = "3_dias"
             elif dias_restantes == 0:
                 recordatorio_categoria = "hoy"
 
@@ -476,10 +474,8 @@ def _rango_recordatorio(recordatorio: str | None, session=None):
         return None
     recordatorio_norm = str(recordatorio).strip().lower()
     hoy = fecha_actual_negocio(session)
-    if recordatorio_norm in {"15", "15_dias", "15dias"}:
-        return (_inicio_dia(hoy + timedelta(days=15)), _inicio_dia(hoy + timedelta(days=16)))
-    if recordatorio_norm in {"8", "8_dias", "8dias"}:
-        return (_inicio_dia(hoy + timedelta(days=8)), _inicio_dia(hoy + timedelta(days=9)))
+    if recordatorio_norm in {"3", "3_dias", "3dias"}:
+        return (_inicio_dia(hoy + timedelta(days=3)), _inicio_dia(hoy + timedelta(days=4)))
     if recordatorio_norm in {"0", "hoy"}:
         return (_inicio_dia(hoy), _inicio_dia(hoy + timedelta(days=1)))
     raise HTTPException(status_code=400, detail="Filtro de recordatorio invalido.")
@@ -487,10 +483,8 @@ def _rango_recordatorio(recordatorio: str | None, session=None):
 
 def _campo_recordado_para_categoria(recordatorio: str | None):
     recordatorio_norm = str(recordatorio or "").strip().lower()
-    if recordatorio_norm in {"15", "15_dias", "15dias"}:
-        return TurnoClinico.recordado_15
-    if recordatorio_norm in {"8", "8_dias", "8dias"}:
-        return TurnoClinico.recordado_8
+    if recordatorio_norm in {"3", "3_dias", "3dias"}:
+        return TurnoClinico.recordado_3
     if recordatorio_norm in {"0", "hoy"}:
         return TurnoClinico.recordado_hoy
     raise HTTPException(status_code=400, detail="Categoria de recordatorio invalida.")
@@ -503,7 +497,6 @@ def _aplicar_filtro_recordatorio(query, recordatorio: str | None, session=None):
     inicio, fin = rango
     campo_recordado = _campo_recordado_para_categoria(recordatorio)
     return query.filter(
-        TurnoClinico.es_control.is_(True),
         TurnoClinico.estado.in_(["PENDIENTE", "CONFIRMADO"]),
         campo_recordado.is_(False),
         TurnoClinico.fecha_hora >= inicio,
@@ -1024,17 +1017,10 @@ def obtener_dashboard_clinico(
                 session,
             )
         )
-        recordatorios_8_dias = _count_rows(
+        recordatorios_3_dias = _count_rows(
             _aplicar_filtro_recordatorio(
                 session.query(func.count(TurnoClinico.id)),
-                "8",
-                session,
-            )
-        )
-        recordatorios_15_dias = _count_rows(
-            _aplicar_filtro_recordatorio(
-                session.query(func.count(TurnoClinico.id)),
-                "15",
+                "3",
                 session,
             )
         )
@@ -1143,22 +1129,12 @@ def obtener_dashboard_clinico(
                 )
             )
 
-        if recordatorios_15_dias > 0:
+        if recordatorios_3_dias > 0:
             alertas.append(
                 ClinicaAlertOut(
                     tipo="SEGUIMIENTO",
-                    titulo="Recordatorios a 15 dias",
-                    mensaje=f"Hay {recordatorios_15_dias} control(es) que deben recordarse 15 dias antes.",
-                    color="#a78bfa",
-                )
-            )
-
-        if recordatorios_8_dias > 0:
-            alertas.append(
-                ClinicaAlertOut(
-                    tipo="SEGUIMIENTO",
-                    titulo="Recordatorios a 8 dias",
-                    mensaje=f"Hay {recordatorios_8_dias} control(es) que deben recordarse 8 dias antes.",
+                    titulo="Recordatorios a 3 dias",
+                    mensaje=f"Hay {recordatorios_3_dias} turno(s) o consulta(s) a recordar 3 dias antes.",
                     color="#f59e0b",
                 )
             )
@@ -1167,8 +1143,8 @@ def obtener_dashboard_clinico(
             alertas.append(
                 ClinicaAlertOut(
                     tipo="SEGUIMIENTO",
-                    titulo="Controles para hoy",
-                    mensaje=f"Hay {recordatorios_hoy} control(es) con recordatorio para hoy.",
+                    titulo="Agenda para hoy",
+                    mensaje=f"Hay {recordatorios_hoy} turno(s) o consulta(s) pendientes para hoy.",
                     color="#a78bfa",
                 )
             )
@@ -1341,8 +1317,9 @@ def listar_recordatorios_clinica(
 
         return ClinicaAgendaRecordatoriosOut(
             hoy=_items_para("hoy"),
-            ocho_dias=_items_para("8"),
-            quince_dias=_items_para("15"),
+            tres_dias=_items_para("3"),
+            ocho_dias=[],
+            quince_dias=[],
         )
     finally:
         session.close()

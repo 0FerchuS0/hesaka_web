@@ -49,7 +49,7 @@ from app.schemas.schemas import (
 from app.utils.auth import get_current_user
 from app.utils.excel_historial_pagos_proveedor import generar_excel_historial_pagos_proveedor
 from app.utils.filename_utils import sanitize_filename_component
-from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta
+from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta, require_jornada_abierta_para_fecha
 from app.utils.pdf_compra import generar_pdf_compra
 from app.utils.pdf_pago_proveedor import generar_pdf_pago_proveedor
 from app.utils.timezone import ahora_negocio
@@ -345,7 +345,7 @@ def _revertir_pago_compra(session, pago: PagoCompra):
 
 
 def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra, monto: float, metodo_pago: str, banco: Optional[Banco], fecha_pago: datetime):
-    jornada = require_jornada_abierta(session)
+    jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago")
     concepto = f"Pago proveedor {compra.proveedor_rel.nombre if compra.proveedor_rel else 'SIN PROVEEDOR'}"
     if compra.nro_factura:
         concepto += f" - {compra.nro_factura}"
@@ -1579,7 +1579,7 @@ def registrar_pago_compra(
                 raise HTTPException(status_code=404, detail="Banco no encontrado.")
 
         fecha_pago = normalizar_fecha_negocio(session, data.fecha)
-        jornada = require_jornada_abierta(session)
+        jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago")
         pago = PagoCompra(
             compra_id=compra_id,
             fecha=fecha_pago,

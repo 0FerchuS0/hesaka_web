@@ -194,7 +194,6 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
     const [showList, setShowList] = useState(false)
     const upd = (k, v) => onUpdate(idx, { ...item, [k]: v })
     const p = { nombre: item.busq || buscarProd || '' }
-    const brutoLinea = calculateItemGross(item)
     const { data: filtrados = [] } = useQuery({
         queryKey: ['productos-select', buscarProd],
         queryFn: () => {
@@ -313,6 +312,7 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                     const precioUnitario = normalizeGsInput(e.target.value).amount
                     onUpdate(idx, sanitizeItemFinancials({ ...item, precio_unitario: precioUnitario }))
                 }}
+                onFocus={e => e.target.select()}
             /></td>
             <td><input
                 type="text"
@@ -321,9 +321,10 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                 style={{ width: 90, padding: '6px 8px' }}
                 value={formatGsAmount(item.descuento)}
                 onChange={e => {
-                    const descuento = normalizeGsInput(e.target.value, brutoLinea).amount
+                    const descuento = normalizeGsInput(e.target.value).amount
                     onUpdate(idx, sanitizeItemFinancials({ ...item, descuento }))
                 }}
+                onFocus={e => e.target.select()}
             /></td>
             <td style={{ fontWeight: 600, color: 'var(--primary-light)', whiteSpace: 'nowrap' }}>Gs. {fmt(item.subtotal)}</td>
             <td><button type="button" className="btn btn-danger btn-sm btn-icon" onClick={() => onRemove(idx)}><X size={13} /></button></td>
@@ -409,11 +410,6 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
         return () => onBusyChange?.(false)
     }, [convertir.isPending, onBusyChange])
 
-    useEffect(() => {
-        if (!pagoInicial || monto) return
-        setMonto(formatGsAmount(montoMaximo))
-    }, [monto, montoMaximo, pagoInicial])
-
     const handleSubmit = e => {
         e.preventDefault()
         if (pagoInicial && montoCobrado > montoMaximo) {
@@ -445,7 +441,11 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                 </div>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, cursor: 'pointer' }}>
-                <input type="checkbox" checked={pagoInicial} onChange={e => setPagoInicial(e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--primary-light)' }} />
+                <input type="checkbox" checked={pagoInicial} onChange={e => {
+                    const nextChecked = e.target.checked
+                    setPagoInicial(nextChecked)
+                    if (nextChecked && !monto) setMonto(formatGsAmount(montoMaximo))
+                }} style={{ width: 16, height: 16, accentColor: 'var(--primary-light)' }} />
                 <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Registrar cobro inicial</span>
             </label>
             {pagoInicial && (
@@ -458,7 +458,8 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                                 type="text"
                                 inputMode="numeric"
                                 value={monto}
-                                onChange={e => setMonto(normalizeGsInput(e.target.value, montoMaximo).formatted)}
+                                onChange={e => setMonto(normalizeGsInput(e.target.value).formatted)}
+                                onFocus={e => e.target.select()}
                                 placeholder="0"
                                 disabled={convertir.isPending}
                             />

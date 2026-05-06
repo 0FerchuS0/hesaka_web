@@ -153,6 +153,14 @@ def obtener_jornada_actual(session, *, incluir_vencida: bool = True):
     return query.first()
 
 
+def obtener_jornada_por_fecha(session, fecha_obj: date, *, incluir_vencida: bool = True):
+    vencer_jornadas_antiguas(session)
+    query = session.query(JornadaFinanciera).filter(JornadaFinanciera.fecha == fecha_obj)
+    if not incluir_vencida:
+        query = query.filter(JornadaFinanciera.estado == "ABIERTA")
+    return query.first()
+
+
 def obtener_ultima_jornada_anterior(session) -> JornadaFinanciera | None:
     vencer_jornadas_antiguas(session)
     return (
@@ -171,6 +179,34 @@ def require_jornada_abierta(session):
             detail="Debes abrir la jornada financiera de hoy antes de registrar movimientos de dinero.",
         )
     return jornada
+
+
+def require_jornada_abierta_para_fecha(session, fecha_movimiento: datetime | date | None, *, accion: str = "registrar movimientos de dinero"):
+    if fecha_movimiento is None:
+        return require_jornada_abierta(session)
+
+    if isinstance(fecha_movimiento, datetime):
+        fecha_normalizada = normalizar_fecha_negocio(session, fecha_movimiento)
+        fecha_obj = fecha_normalizada.date()
+    else:
+        fecha_obj = fecha_movimiento
+
+    jornada = obtener_jornada_por_fecha(session, fecha_obj, incluir_vencida=False)
+    if jornada:
+        return jornada
+
+    fecha_legible = fecha_obj.strftime("%d/%m/%Y")
+    jornada_existente = obtener_jornada_por_fecha(session, fecha_obj, incluir_vencida=True)
+    if jornada_existente:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se puede {accion} con fecha {fecha_legible} porque la jornada financiera de ese dia ya esta cerrada.",
+        )
+
+    raise HTTPException(
+        status_code=409,
+        detail=f"No se puede {accion} con fecha {fecha_legible} porque no existe una jornada financiera abierta para ese dia.",
+    )
 
 
 def abrir_jornada_actual(session, current_user: Usuario, observacion: str | None = None):

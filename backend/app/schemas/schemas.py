@@ -2041,6 +2041,7 @@ class ClinicaTurnosListOut(BaseModel):
 
 class ClinicaAgendaRecordatoriosOut(BaseModel):
     hoy: List[ClinicaTurnoOut] = []
+    tres_dias: List[ClinicaTurnoOut] = []
     ocho_dias: List[ClinicaTurnoOut] = []
     quince_dias: List[ClinicaTurnoOut] = []
 

@@ -9,6 +9,7 @@ import { invalidateJornadaLiveData } from '../hooks/useFinancialJornada'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
 import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
+import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => {
@@ -212,6 +213,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
     const [showSelectorOS, setShowSelectorOS] = useState(false)
     const [errorAgregarMedio, setErrorAgregarMedio] = useState('')
     const [errorConfirmacion, setErrorConfirmacion] = useState('')
+    const [montoEditado, setMontoEditado] = useState(false)
 
     const { data: bancos = [] } = useQuery({
         queryKey: ['bancos'],
@@ -231,6 +233,9 @@ function PagoProveedorModal({ proveedor, onClose }) {
     const totalOSSeleccionadas = osPendientes
         .filter(item => osSeleccionadas.includes(item.compra_id))
         .reduce((sum, item) => sum + (item.saldo || 0), 0)
+    const limiteDisponible = osSeleccionadas.length > 0 ? totalOSSeleccionadas : Number(proveedor.total_deuda || 0)
+    const montoSugerido = Math.max(0, Math.trunc(limiteDisponible - totalAgregado))
+    const montoNum = parseGsInput(monto)
     const restanteOS = Math.max(0, totalOSSeleccionadas - totalAgregado)
     const pagoOSCompleto = osSeleccionadas.length > 0 && totalOSSeleccionadas > 0 && restanteOS === 0 && totalAgregado <= totalOSSeleccionadas
 
@@ -250,9 +255,14 @@ function PagoProveedorModal({ proveedor, onClose }) {
     })
 
     const agregarMetodo = () => {
-        const montoNum = parseFloat(monto) || 0
         if (montoNum <= 0) {
             setErrorAgregarMedio('Debes cargar un monto mayor a cero para agregar el medio de pago.')
+            return
+        }
+        if (montoNum > Math.max(0, limiteDisponible - totalAgregado)) {
+            setErrorAgregarMedio(osSeleccionadas.length > 0
+                ? 'El monto no puede superar el saldo pendiente de las OS seleccionadas.'
+                : 'El monto no puede superar la deuda abierta del proveedor.')
             return
         }
 
@@ -273,10 +283,16 @@ function PagoProveedorModal({ proveedor, onClose }) {
                 nro_comprobante: nroComprobante || null,
             },
         ]))
-        setMonto('')
+        setMonto(formatGsAmount(Math.max(0, limiteDisponible - totalAgregado - montoNum)))
+        setMontoEditado(false)
         setBancoId('')
         setNroComprobante('')
     }
+
+    useEffect(() => {
+        if (montoEditado) return
+        setMonto(formatGsAmount(montoSugerido))
+    }, [montoEditado, montoSugerido])
 
     const confirmarPago = event => {
         event.preventDefault()
@@ -414,7 +430,20 @@ function PagoProveedorModal({ proveedor, onClose }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Monto</label>
-                        <input type="number" min="0" step="0.01" className="form-input" value={monto} onChange={event => setMonto(event.target.value)} />
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            className="form-input"
+                            value={monto}
+                            onChange={event => {
+                                setMontoEditado(true)
+                                setMonto(normalizeGsInput(event.target.value).formatted)
+                            }}
+                            onFocus={event => event.target.select()}
+                        />
+                        <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                            Sugerido: Gs. {fmt(montoSugerido)}. No se permite superar {osSeleccionadas.length > 0 ? 'las OS seleccionadas' : 'la deuda abierta'}.
+                        </div>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Banco</label>
@@ -536,6 +565,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
     const [errorAgregarMedio, setErrorAgregarMedio] = useState('')
     const [errorConfirmacion, setErrorConfirmacion] = useState('')
     const [seeded, setSeeded] = useState(false)
+    const [montoEditado, setMontoEditado] = useState(false)
 
     const { data: bancos = [] } = useQuery({
         queryKey: ['bancos'],
@@ -565,6 +595,8 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
 
     const totalAgregado = metodos.reduce((sum, item) => sum + (Number(item.monto) || 0), 0)
     const totalOriginal = Number(detalle?.total || 0)
+    const montoSugerido = Math.max(0, Math.trunc(totalOriginal - totalAgregado))
+    const montoNum = parseGsInput(monto)
 
     const guardarEdicion = useMutation({
         mutationFn: payload => api.put(`/compras/cuentas-por-pagar/pagos-historial/${encodeURIComponent(grupoId)}`, payload),
@@ -582,9 +614,12 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
     })
 
     const agregarMetodo = () => {
-        const montoNum = parseFloat(monto) || 0
         if (montoNum <= 0) {
             setErrorAgregarMedio('Debes cargar un monto mayor a cero para agregar el medio de pago.')
+            return
+        }
+        if (montoNum > Math.max(0, totalOriginal - totalAgregado)) {
+            setErrorAgregarMedio('El monto no puede superar el saldo pendiente de este pago.')
             return
         }
         if (metodoPago !== 'EFECTIVO' && !bancoId) {
@@ -603,10 +638,16 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
                 nro_comprobante: nroComprobante || null,
             },
         ]))
-        setMonto('')
+        setMonto(formatGsAmount(Math.max(0, totalOriginal - totalAgregado - montoNum)))
+        setMontoEditado(false)
         setBancoId('')
         setNroComprobante('')
     }
+
+    useEffect(() => {
+        if (montoEditado) return
+        setMonto(formatGsAmount(montoSugerido))
+    }, [montoEditado, montoSugerido])
 
     const eliminarMetodo = index => {
         setMetodos(prev => prev.filter((_, idx) => idx !== index))
@@ -715,7 +756,20 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
                 </div>
                 <div className="form-group">
                     <label className="form-label">Monto</label>
-                    <input type="number" min="0" step="0.01" className="form-input" value={monto} onChange={event => setMonto(event.target.value)} />
+                    <input
+                        type="text"
+                        inputMode="numeric"
+                        className="form-input"
+                        value={monto}
+                        onChange={event => {
+                            setMontoEditado(true)
+                            setMonto(normalizeGsInput(event.target.value).formatted)
+                        }}
+                        onFocus={event => event.target.select()}
+                    />
+                    <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                        Sugerido: Gs. {fmt(montoSugerido)}. No se permite superar el saldo pendiente de este pago.
+                    </div>
                 </div>
                 <div className="form-group">
                     <label className="form-label">Banco</label>

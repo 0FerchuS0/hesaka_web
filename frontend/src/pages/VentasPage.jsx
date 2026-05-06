@@ -645,6 +645,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     const [fecha, setFecha] = useState(() => toDateTimeLocalValue(new Date()))
     const [pdfOpeningPagoId, setPdfOpeningPagoId] = useState(null)
     const [deletingPagoId, setDeletingPagoId] = useState(null)
+    const [montoEditado, setMontoEditado] = useState(false)
     const { data: jornadaEstado } = useFinancialJornadaStatus()
     const jornadaAbierta = Boolean(jornadaEstado?.abierta)
 
@@ -710,6 +711,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                 })
             }
             setMonto(siguienteMontoSugerido)
+            setMontoEditado(false)
             setNota('')
             refrescarEnSegundoPlano()
         }
@@ -729,6 +731,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                 pagos: (current.pagos || []).filter(pago => pago.id !== pagoId),
             }))
             setMonto(formatGsAmount(saldoRestante))
+            setMontoEditado(false)
             refrescarEnSegundoPlano()
         },
         onSettled: () => {
@@ -749,9 +752,9 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     }, [cobrar.isPending, deletingPagoId, onBusyChange, pdfOpeningPagoId])
 
     useEffect(() => {
-        if (!venta?.saldo || monto) return
+        if (!venta?.saldo || montoEditado) return
         setMonto(formatGsAmount(venta.saldo))
-    }, [monto, venta?.saldo])
+    }, [montoEditado, venta?.saldo])
 
     if (isLoading || !venta) return <div className="flex-center p-20"><div className="spinner"></div></div>
 
@@ -856,7 +859,11 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
                                 type="text"
                                 inputMode="numeric"
                                 value={monto}
-                                onChange={e => setMonto(normalizeGsInput(e.target.value, saldoPendiente).formatted)}
+                                onChange={e => {
+                                    setMontoEditado(true)
+                                    setMonto(normalizeGsInput(e.target.value).formatted)
+                                }}
+                                onFocus={e => e.target.select()}
                                 required
                                 placeholder="0"
                                 disabled={cobrar.isPending || !jornadaAbierta}

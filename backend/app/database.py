@@ -380,10 +380,8 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN paciente_telefono_libre VARCHAR(50)"))
             if "es_control" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN es_control BOOLEAN DEFAULT FALSE"))
-            if "recordado_15" not in turno_columns:
-                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_15 BOOLEAN DEFAULT FALSE"))
-            if "recordado_8" not in turno_columns:
-                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_8 BOOLEAN DEFAULT FALSE"))
+            if "recordado_3" not in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_3 BOOLEAN DEFAULT FALSE"))
             if "recordado_hoy" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN recordado_hoy BOOLEAN DEFAULT FALSE"))
             if "consulta_id" not in turno_columns:
@@ -394,8 +392,7 @@ def ensure_tenant_schema(engine, tenant_slug: str):
             connection.execute(text(
                 """
                 UPDATE clinica_turnos
-                SET recordado_15 = COALESCE(recordado_15, FALSE),
-                    recordado_8 = COALESCE(recordado_8, FALSE),
+                SET recordado_3 = COALESCE(recordado_3, FALSE),
                     recordado_hoy = COALESCE(recordado_hoy, FALSE)
                 """
             ))

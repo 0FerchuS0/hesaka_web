@@ -9,7 +9,7 @@ from app.middleware.tenant import get_tenant_slug
 from app.models.models import Banco, Comision, ConfiguracionCaja, MovimientoBanco, MovimientoCaja, Venta
 from app.schemas.schemas import ComisionOut, ComisionPagoCreate
 from app.utils.auth import get_current_user, require_roles
-from app.utils.jornada import ahora_negocio, require_jornada_abierta
+from app.utils.jornada import ahora_negocio, require_jornada_abierta, require_jornada_abierta_para_fecha
 
 router = APIRouter(prefix="/api/comisiones", tags=["Comisiones"])
 
@@ -161,11 +161,11 @@ def pagar_comision(
         if (comision.estado or "PENDIENTE") == "PAGADO":
             raise HTTPException(status_code=422, detail="La comision ya esta pagada.")
 
-        jornada = require_jornada_abierta(session)
         if data.fecha_pago:
             fecha_mov = datetime.combine(data.fecha_pago, datetime.now().time()).replace(microsecond=0)
         else:
             fecha_mov = ahora_negocio(session)
+        jornada = require_jornada_abierta_para_fecha(session, fecha_mov, accion="registrar un pago de comision")
 
         metodo_pago = data.metodo_pago
         banco = None

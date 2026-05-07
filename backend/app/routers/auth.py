@@ -39,11 +39,11 @@ def serialize_usuario(usuario: Usuario) -> UsuarioOut:
     return UsuarioOut(
         id=usuario.id,
         email=usuario.email,
-        nombre_completo=usuario.nombre_completo,
-        rol=usuario.rol,
+        nombre_completo=usuario.nombre_completo or "Usuario",
+        rol=usuario.rol or "USUARIO",
         permisos=parse_permisos(usuario),
-        activo=usuario.activo,
-        creado_en=usuario.creado_en,
+        activo=bool(usuario.activo) if usuario.activo is not None else True,
+        creado_en=usuario.creado_en or usuario.created_at or datetime.utcnow(),
         ultimo_acceso=usuario.ultimo_acceso,
     )
 

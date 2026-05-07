@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, available_timezones
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
 from app.database import get_session_for_tenant
@@ -48,6 +48,7 @@ from app.schemas.schemas import (
     CanalVentaOut,
     ClienteCreate,
     ClienteCumpleanosOut,
+    ClienteCumpleanosResumenOut,
     ClienteListItemOut,
     ClienteListResponseOut,
     ClienteOut,
@@ -117,7 +118,7 @@ WHATSAPP_TEMPLATE_DEFAULTS = [
         "codigo": "dashboard_recordatorio",
         "nombre": "Dashboard - Recordatorio rapido",
         "descripcion": "Mensaje rapido desde dashboard para recordar proximas consultas.",
-        "plantilla": "Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.",
+        "plantilla": "Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta} a las {hora_turno}. Quedamos atentos para ayudarte a confirmar tu cita.",
     },
 ]
 
@@ -262,6 +263,61 @@ def _calcular_edad(fecha_nacimiento: date | None, fecha_referencia: date | None 
     return referencia.year - fecha_nacimiento.year - (
         (referencia.month, referencia.day) < (fecha_nacimiento.month, fecha_nacimiento.day)
     )
+
+
+def _listar_cumpleanos_en_fecha(session, fecha_objetivo: date) -> list[ClienteCumpleanosOut]:
+    resultados: list[ClienteCumpleanosOut] = []
+    cliente_ids_cubiertos: set[int] = set()
+
+    pacientes = (
+        session.query(ClinicaPaciente)
+        .filter(
+            ClinicaPaciente.fecha_nacimiento.isnot(None),
+            func.extract("month", ClinicaPaciente.fecha_nacimiento) == fecha_objetivo.month,
+            func.extract("day", ClinicaPaciente.fecha_nacimiento) == fecha_objetivo.day,
+        )
+        .all()
+    )
+    for paciente in pacientes:
+        resultados.append(ClienteCumpleanosOut(
+            id=paciente.id,
+            nombre=paciente.nombre_completo,
+            ci=paciente.ci_pasaporte,
+            telefono=paciente.telefono or (paciente.cliente_rel.telefono if paciente.cliente_rel else None),
+            email=paciente.cliente_rel.email if paciente.cliente_rel else None,
+            fecha_nacimiento=paciente.fecha_nacimiento,
+            edad=_calcular_edad(paciente.fecha_nacimiento, fecha_objetivo),
+            referidor_nombre=paciente.referidor_rel.nombre if paciente.referidor_rel else None,
+        ))
+        if paciente.cliente_id:
+            cliente_ids_cubiertos.add(paciente.cliente_id)
+
+    clientes = (
+        session.query(Cliente)
+        .filter(
+            Cliente.fecha_nacimiento.isnot(None),
+            func.extract("month", Cliente.fecha_nacimiento) == fecha_objetivo.month,
+            func.extract("day", Cliente.fecha_nacimiento) == fecha_objetivo.day,
+        )
+        .all()
+    )
+    for cliente in clientes:
+        if cliente.id in cliente_ids_cubiertos:
+            continue
+        # Se usa id negativo para evitar colision de keys con ids de pacientes en frontend.
+        resultados.append(ClienteCumpleanosOut(
+            id=-cliente.id,
+            nombre=cliente.nombre,
+            ci=cliente.ci,
+            telefono=cliente.telefono,
+            email=cliente.email,
+            fecha_nacimiento=cliente.fecha_nacimiento,
+            edad=_calcular_edad(cliente.fecha_nacimiento, fecha_objetivo),
+            referidor_nombre=cliente.referidor_rel.nombre if cliente.referidor_rel else None,
+        ))
+
+    resultados.sort(key=lambda item: (item.nombre or "").lower())
+    return resultados
 
 
 def _construir_query_proveedores(session, buscar: Optional[str]):
@@ -1045,62 +1101,26 @@ def listar_cumpleanos_clientes(
     session = get_session_for_tenant(tenant_slug)
     try:
         fecha_objetivo = fecha or fecha_actual_negocio(session)
-        resultados: list[ClienteCumpleanosOut] = []
-        cliente_ids_cubiertos: set[int] = set()
+        return _listar_cumpleanos_en_fecha(session, fecha_objetivo)
+    finally:
+        session.close()
 
-        pacientes = (
-            session.query(ClinicaPaciente)
-            .filter(ClinicaPaciente.fecha_nacimiento.isnot(None))
-            .all()
+
+@router.get("/cumpleanos/resumen", response_model=ClienteCumpleanosResumenOut)
+def resumen_cumpleanos_clientes(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    fecha: date | None = Query(default=None),
+    limit: int = Query(default=3, ge=1, le=10),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        fecha_objetivo = fecha or fecha_actual_negocio(session)
+        resultados = _listar_cumpleanos_en_fecha(session, fecha_objetivo)
+        return ClienteCumpleanosResumenOut(
+            total=len(resultados),
+            preview=resultados[:limit],
         )
-        cumpleaneros_pacientes = [
-            paciente for paciente in pacientes
-            if paciente.fecha_nacimiento
-            and paciente.fecha_nacimiento.month == fecha_objetivo.month
-            and paciente.fecha_nacimiento.day == fecha_objetivo.day
-        ]
-        for paciente in cumpleaneros_pacientes:
-            resultados.append(ClienteCumpleanosOut(
-                id=paciente.id,
-                nombre=paciente.nombre_completo,
-                ci=paciente.ci_pasaporte,
-                telefono=paciente.telefono or (paciente.cliente_rel.telefono if paciente.cliente_rel else None),
-                email=paciente.cliente_rel.email if paciente.cliente_rel else None,
-                fecha_nacimiento=paciente.fecha_nacimiento,
-                edad=_calcular_edad(paciente.fecha_nacimiento, fecha_objetivo),
-                referidor_nombre=paciente.referidor_rel.nombre if paciente.referidor_rel else None,
-            ))
-            if paciente.cliente_id:
-                cliente_ids_cubiertos.add(paciente.cliente_id)
-
-        clientes = (
-            session.query(Cliente)
-            .filter(Cliente.fecha_nacimiento.isnot(None))
-            .all()
-        )
-        cumpleaneros_clientes = [
-            cliente for cliente in clientes
-            if cliente.id not in cliente_ids_cubiertos
-            and cliente.fecha_nacimiento
-            and cliente.fecha_nacimiento.month == fecha_objetivo.month
-            and cliente.fecha_nacimiento.day == fecha_objetivo.day
-        ]
-
-        for cliente in cumpleaneros_clientes:
-            # Se usa id negativo para evitar colision de keys con ids de pacientes en frontend.
-            resultados.append(ClienteCumpleanosOut(
-                id=-cliente.id,
-                nombre=cliente.nombre,
-                ci=cliente.ci,
-                telefono=cliente.telefono,
-                email=cliente.email,
-                fecha_nacimiento=cliente.fecha_nacimiento,
-                edad=_calcular_edad(cliente.fecha_nacimiento, fecha_objetivo),
-                referidor_nombre=cliente.referidor_rel.nombre if cliente.referidor_rel else None,
-            ))
-
-        resultados.sort(key=lambda item: (item.nombre or "").lower())
-        return resultados
     finally:
         session.close()
 

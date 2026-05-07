@@ -62,6 +62,7 @@ from app.schemas.schemas import (
     ClinicaVademecumTratamientoOut,
     ClinicaTurnoIn,
     ClinicaAgendaRecordatoriosOut,
+    ClinicaAgendaRecordatoriosResumenOut,
     ClinicaTurnoOut,
     ClinicaTurnosListOut,
 )
@@ -502,6 +503,16 @@ def _aplicar_filtro_recordatorio(query, recordatorio: str | None, session=None):
         TurnoClinico.fecha_hora >= inicio,
         TurnoClinico.fecha_hora < fin,
     )
+
+
+def _obtener_items_recordatorio(session, base_query, recordatorio: str, fecha_referencia: date, limit: int | None = None, include_context: bool = False):
+    query = _aplicar_filtro_recordatorio(base_query, recordatorio, session).order_by(TurnoClinico.fecha_hora.asc())
+    if limit:
+        query = query.limit(limit)
+    items = [_serializar_turno(item, fecha_referencia) for item in query.all()]
+    if include_context:
+        items = _adjuntar_contexto_turnos(session, items)
+    return items
 
 
 def _marcar_turno_atendido_con_consulta(session, turno_id: int | None, consulta_id: int, consulta_tipo: str, paciente_id: int, doctor_id: int | None, lugar_atencion_id: int | None, fecha: datetime, motivo: str | None):
@@ -1306,20 +1317,51 @@ def listar_recordatorios_clinica(
         hoy_negocio = fecha_actual_negocio(session)
 
         def _items_para(recordatorio: str):
-            return _adjuntar_contexto_turnos(session, [
-                _serializar_turno(item, hoy_negocio) for item in (
-                _aplicar_filtro_recordatorio(base_query, recordatorio, session)
-                .order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc())
-                .limit(8)
-                .all()
-                )
-            ])
+            return _obtener_items_recordatorio(
+                session,
+                base_query.order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc()),
+                recordatorio,
+                hoy_negocio,
+                limit=8,
+                include_context=True,
+            )
 
         return ClinicaAgendaRecordatoriosOut(
             hoy=_items_para("hoy"),
             tres_dias=_items_para("3"),
             ocho_dias=[],
             quince_dias=[],
+        )
+    finally:
+        session.close()
+
+
+@router.get("/agenda/recordatorios/resumen", response_model=ClinicaAgendaRecordatoriosResumenOut)
+def resumen_recordatorios_clinica(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.historial", "clinica")),
+    limit_per_bucket: int = Query(default=2, ge=1, le=5),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        base_query = (
+            session.query(TurnoClinico)
+            .options(
+                selectinload(TurnoClinico.paciente_rel),
+                selectinload(TurnoClinico.doctor_rel),
+                selectinload(TurnoClinico.lugar_atencion_rel),
+            )
+            .order_by(TurnoClinico.fecha_hora.asc(), TurnoClinico.id.asc())
+        )
+        hoy_negocio = fecha_actual_negocio(session)
+        hoy_count = _count_rows(_aplicar_filtro_recordatorio(session.query(func.count(TurnoClinico.id)), "hoy", session))
+        tres_dias_count = _count_rows(_aplicar_filtro_recordatorio(session.query(func.count(TurnoClinico.id)), "3", session))
+        return ClinicaAgendaRecordatoriosResumenOut(
+            total=hoy_count + tres_dias_count,
+            hoy_count=hoy_count,
+            tres_dias_count=tres_dias_count,
+            hoy_preview=_obtener_items_recordatorio(session, base_query, "hoy", hoy_negocio, limit=limit_per_bucket),
+            tres_dias_preview=_obtener_items_recordatorio(session, base_query, "3", hoy_negocio, limit=limit_per_bucket),
         )
     finally:
         session.close()

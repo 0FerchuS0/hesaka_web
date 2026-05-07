@@ -277,8 +277,21 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         oft_column_info = {column["name"]: column for column in inspector.get_columns("clinica_consultas_oftalmologicas")}
         oft_columns = set(oft_column_info.keys())
         oft_additions = {
+            "tipo_lente": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN tipo_lente VARCHAR(100)",
+            "material_lente": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN material_lente VARCHAR(100)",
+            "tratamientos": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN tratamientos VARCHAR(200)",
             "av_sc_lejos_od": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN av_sc_lejos_od VARCHAR(50)",
             "av_sc_lejos_oi": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN av_sc_lejos_oi VARCHAR(50)",
+            "av_cc_lejos_od": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN av_cc_lejos_od VARCHAR(50)",
+            "av_cc_lejos_oi": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN av_cc_lejos_oi VARCHAR(50)",
+            "ref_od_esfera": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_od_esfera VARCHAR(50)",
+            "ref_od_cilindro": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_od_cilindro VARCHAR(50)",
+            "ref_od_eje": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_od_eje VARCHAR(50)",
+            "ref_od_adicion": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_od_adicion VARCHAR(50)",
+            "ref_oi_esfera": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_oi_esfera VARCHAR(50)",
+            "ref_oi_cilindro": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_oi_cilindro VARCHAR(50)",
+            "ref_oi_eje": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_oi_eje VARCHAR(50)",
+            "ref_oi_adicion": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN ref_oi_adicion VARCHAR(50)",
             "examen_refraccion": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN examen_refraccion BOOLEAN DEFAULT TRUE",
             "examen_biomicroscopia": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN examen_biomicroscopia BOOLEAN DEFAULT FALSE",
             "examen_oftalmoscopia": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN examen_oftalmoscopia BOOLEAN DEFAULT FALSE",
@@ -422,6 +435,20 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         with engine.begin() as connection:
             if "agenda_turno_id" not in cont_columns:
                 connection.execute(text("ALTER TABLE clinica_consultas_contactologia ADD COLUMN agenda_turno_id INTEGER REFERENCES clinica_turnos(id)"))
+            
+            cont_additions = {
+                "tipo_lente": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN tipo_lente VARCHAR(100)",
+                "diseno": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN diseno VARCHAR(100)",
+                "diagnostico": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN diagnostico TEXT",
+                "plan_tratamiento": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN plan_tratamiento TEXT",
+                "resumen_resultados": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN resumen_resultados TEXT",
+                "marca_recomendada": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN marca_recomendada VARCHAR(200)",
+                "fecha_control": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN fecha_control DATE",
+                "observaciones": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN observaciones TEXT",
+            }
+            for column_name, sql in cont_additions.items():
+                if column_name not in cont_columns:
+                    connection.execute(text(sql))
 
     column_names = {column["name"] for column in inspector.get_columns("productos")}
 
@@ -439,7 +466,9 @@ def ensure_tenant_schema(engine, tenant_slug: str):
 
                         CREATE TABLE public.marcas (
                             id SERIAL PRIMARY KEY,
-                            nombre VARCHAR(100) NOT NULL UNIQUE
+                            nombre VARCHAR(100) NOT NULL UNIQUE,
+                            created_at TIMESTAMP DEFAULT NOW() NOT NULL,
+                            updated_at TIMESTAMP DEFAULT NOW() NOT NULL
                         );
                     END IF;
                 END
@@ -449,6 +478,14 @@ def ensure_tenant_schema(engine, tenant_slug: str):
             connection.execute(text("ALTER TABLE productos ADD COLUMN marca VARCHAR(100)"))
         if "marca_id" not in column_names:
             connection.execute(text("ALTER TABLE productos ADD COLUMN marca_id INTEGER REFERENCES marcas(id)"))
+
+        # Ensure 'marcas' table has timestamp columns if it already existed without them
+        if "marcas" in table_names:
+            marcas_cols = {col["name"] for col in inspector.get_columns("marcas")}
+            if "created_at" not in marcas_cols:
+                connection.execute(text("ALTER TABLE marcas ADD COLUMN created_at TIMESTAMP DEFAULT NOW() NOT NULL"))
+            if "updated_at" not in marcas_cols:
+                connection.execute(text("ALTER TABLE marcas ADD COLUMN updated_at TIMESTAMP DEFAULT NOW() NOT NULL"))
 
         connection.execute(text("""
             INSERT INTO marcas (nombre, created_at, updated_at)

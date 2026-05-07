@@ -275,19 +275,9 @@ function AppLayout() {
     }, [resetIdleTimer])
 
     const role = normalizeRole(user?.rol)
-    const configIncomplete = estadoConfig && !estadoConfig.configuracion_completa
+    const configStatusResolved = !loadingConfig
+    const configIncomplete = configStatusResolved && estadoConfig && !estadoConfig.configuracion_completa
     const inConfigRoute = location.pathname.startsWith('/configuracion-general')
-
-    if (loadingConfig) {
-        return (
-            <div className="app-layout">
-                <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(prev => !prev)} />
-                <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
-                    <RouteLoader />
-                </main>
-            </div>
-        )
-    }
 
     if (configIncomplete && !inConfigRoute && role === 'ADMIN') {
         return <Navigate to="/configuracion-general" replace />

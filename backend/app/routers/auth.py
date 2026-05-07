@@ -38,7 +38,7 @@ def parse_permisos(usuario: Usuario) -> list[str]:
 def serialize_usuario(usuario: Usuario) -> UsuarioOut:
     return UsuarioOut(
         id=usuario.id,
-        email=usuario.email,
+        email=usuario.email or "sin-email@hesaka.com",
         nombre_completo=usuario.nombre_completo or "Usuario",
         rol=usuario.rol or "USUARIO",
         permisos=parse_permisos(usuario),

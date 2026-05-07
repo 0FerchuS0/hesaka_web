@@ -451,8 +451,8 @@ def ensure_tenant_schema(engine, tenant_slug: str):
             connection.execute(text("ALTER TABLE productos ADD COLUMN marca_id INTEGER REFERENCES marcas(id)"))
 
         connection.execute(text("""
-            INSERT INTO marcas (nombre)
-            SELECT DISTINCT UPPER(TRIM(marca))
+            INSERT INTO marcas (nombre, created_at, updated_at)
+            SELECT DISTINCT UPPER(TRIM(marca)), NOW(), NOW()
             FROM productos
             WHERE marca IS NOT NULL AND TRIM(marca) <> ''
             ON CONFLICT (nombre) DO NOTHING

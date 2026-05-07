@@ -1249,6 +1249,12 @@ class JornadaEstadoOut(BaseModel):
     alerta_movimientos_posteriores: Optional["MovimientosPosterioresUltimoCorteResumenOut"] = None
 
 
+class JornadaDetalleOperativoOut(BaseModel):
+    cuentas_por_cobrar_dia: Optional["JornadaCuentasCobrarOut"] = None
+    movimientos_detalle: List[dict] = Field(default_factory=list)
+    ventas_detalle: dict = Field(default_factory=dict)
+
+
 class JornadaAperturaCreate(BaseModel):
     observacion: Optional[str] = None
 

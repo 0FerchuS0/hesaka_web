@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -7,7 +8,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from app.database import get_session_for_tenant
-from app.models.models import Banco, CanalVenta, Categoria, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem, CompraDetalle, Producto
+from app.models.models import Banco, CanalVenta, Categoria, Cliente, ConfiguracionCaja, ConfiguracionEmpresa, DashboardCache, MovimientoBanco, MovimientoCaja, Pago, Vendedor, Venta, Compra, Presupuesto, PresupuestoItem, CompraDetalle, Producto
 from app.utils.auth import get_current_user
 from app.middleware.tenant import get_tenant_slug
 from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
@@ -520,73 +521,32 @@ def _detalle_trabajo_laboratorio(venta: Venta) -> str:
     return " - ".join(detalles) if detalles else "Sin detalles"
 
 
-def _obtener_comparativa_dashboard(session: Session) -> ComparativaVentasDashboardOut:
+def _obtener_comparativa_dashboard(session: Session, historical_cache: dict | None = None) -> ComparativaVentasDashboardOut:
     ahora = ahora_negocio(session)
-
-    inicio_actual = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    fin_actual = ahora.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-    primer_dia_actual = ahora.replace(day=1)
-    ultimo_dia_mes_anterior = primer_dia_actual - timedelta(days=1)
-    inicio_mes_anterior = ultimo_dia_mes_anterior.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-    try:
-        fin_mes_anterior = inicio_mes_anterior.replace(
-            day=ahora.day,
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=999999,
-        )
-    except ValueError:
-        fin_mes_anterior = ultimo_dia_mes_anterior.replace(
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=999999,
-        )
-
-    try:
-        inicio_ano_anterior = inicio_actual.replace(year=ahora.year - 1)
-    except ValueError:
-        inicio_ano_anterior = inicio_actual
-
-    try:
-        fin_ano_anterior = fin_actual.replace(
-            year=ahora.year - 1,
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=999999,
-        )
-    except ValueError:
-        fin_ano_anterior = fin_actual.replace(
-            year=ahora.year - 1,
-            day=28,
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=999999,
-        )
-
+    periodos = _calcular_periodos_comparativa(ahora)
+    cache_comp = (historical_cache or {}).get("comparativa", {})
+    cache_mes_anterior = cache_comp.get("mes_anterior", {})
+    cache_ano_anterior = cache_comp.get("ano_anterior", {})
+    total_mes_anterior = cache_mes_anterior.get("total_ventas")
+    total_ano_anterior = cache_ano_anterior.get("total_ventas")
     return ComparativaVentasDashboardOut(
         actual=PeriodoComparativoVentasOut(
             etiqueta="Ventas Este Periodo",
-            fecha_desde=inicio_actual,
-            fecha_hasta=fin_actual,
-            total_ventas=_sumar_ventas_periodo(session, inicio_actual, fin_actual),
+            fecha_desde=periodos["actual"][0],
+            fecha_hasta=periodos["actual"][1],
+            total_ventas=_sumar_ventas_periodo(session, *periodos["actual"]),
         ),
         mes_anterior=PeriodoComparativoVentasOut(
             etiqueta="Vs Mes Anterior (Mismo Periodo)",
-            fecha_desde=inicio_mes_anterior,
-            fecha_hasta=fin_mes_anterior,
-            total_ventas=_sumar_ventas_periodo(session, inicio_mes_anterior, fin_mes_anterior),
+            fecha_desde=_deserializar_datetime_cache(cache_mes_anterior.get("fecha_desde")) or periodos["mes_anterior"][0],
+            fecha_hasta=_deserializar_datetime_cache(cache_mes_anterior.get("fecha_hasta")) or periodos["mes_anterior"][1],
+            total_ventas=float(total_mes_anterior if total_mes_anterior is not None else _sumar_ventas_periodo(session, *periodos["mes_anterior"])),
         ),
         ano_anterior=PeriodoComparativoVentasOut(
             etiqueta="Vs Ano Anterior (Mismo Periodo)",
-            fecha_desde=inicio_ano_anterior,
-            fecha_hasta=fin_ano_anterior,
-            total_ventas=_sumar_ventas_periodo(session, inicio_ano_anterior, fin_ano_anterior),
+            fecha_desde=_deserializar_datetime_cache(cache_ano_anterior.get("fecha_desde")) or periodos["ano_anterior"][0],
+            fecha_hasta=_deserializar_datetime_cache(cache_ano_anterior.get("fecha_hasta")) or periodos["ano_anterior"][1],
+            total_ventas=float(total_ano_anterior if total_ano_anterior is not None else _sumar_ventas_periodo(session, *periodos["ano_anterior"])),
         ),
     )
 
@@ -760,6 +720,197 @@ def _iterar_ultimos_meses(fecha_referencia: datetime, cantidad: int = 7):
     return list(reversed(meses))
 
 
+_DASHBOARD_HISTORICAL_CACHE_KEY = "dashboard_historical_metrics"
+
+
+def _dashboard_cache_reference_datetime(session: Session, business_date: date | None = None) -> datetime:
+    base_date = business_date or fecha_actual_negocio(session)
+    return datetime.combine(base_date, datetime.max.time())
+
+
+def _serializar_datetime_cache(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _deserializar_datetime_cache(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _calcular_periodos_comparativa(fecha_referencia: datetime) -> dict[str, tuple[datetime, datetime]]:
+    inicio_actual = fecha_referencia.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    fin_actual = fecha_referencia.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    primer_dia_actual = fecha_referencia.replace(day=1)
+    ultimo_dia_mes_anterior = primer_dia_actual - timedelta(days=1)
+    inicio_mes_anterior = ultimo_dia_mes_anterior.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        fin_mes_anterior = inicio_mes_anterior.replace(
+            day=fecha_referencia.day,
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
+    except ValueError:
+        fin_mes_anterior = ultimo_dia_mes_anterior.replace(
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
+
+    try:
+        inicio_ano_anterior = inicio_actual.replace(year=fecha_referencia.year - 1)
+    except ValueError:
+        inicio_ano_anterior = inicio_actual
+
+    try:
+        fin_ano_anterior = fin_actual.replace(
+            year=fecha_referencia.year - 1,
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
+    except ValueError:
+        fin_ano_anterior = fin_actual.replace(
+            year=fecha_referencia.year - 1,
+            day=28,
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
+
+    return {
+        "actual": (inicio_actual, fin_actual),
+        "mes_anterior": (inicio_mes_anterior, fin_mes_anterior),
+        "ano_anterior": (inicio_ano_anterior, fin_ano_anterior),
+    }
+
+
+def _build_dashboard_historical_cache_payload(session: Session, business_date: date | None = None) -> dict:
+    fecha_referencia = _dashboard_cache_reference_datetime(session, business_date)
+    periodos = _calcular_periodos_comparativa(fecha_referencia)
+    meses_historicos = []
+    nombres_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+    for year, month in _iterar_ultimos_meses(fecha_referencia, 7):
+        if year == fecha_referencia.year and month == fecha_referencia.month:
+            continue
+        inicio = datetime(year, month, 1, 0, 0, 0)
+        if month == 12:
+            fin = datetime(year + 1, 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+        else:
+            fin = datetime(year, month + 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+        meses_historicos.append({
+            "year": year,
+            "month": month,
+            "mes": nombres_meses[month - 1],
+            "ventas": float(_sumar_ventas_periodo(session, inicio, fin)),
+        })
+
+    return {
+        "business_date": fecha_referencia.date().isoformat(),
+        "comparativa": {
+            "mes_anterior": {
+                "fecha_desde": _serializar_datetime_cache(periodos["mes_anterior"][0]),
+                "fecha_hasta": _serializar_datetime_cache(periodos["mes_anterior"][1]),
+                "total_ventas": float(_sumar_ventas_periodo(session, *periodos["mes_anterior"])),
+            },
+            "ano_anterior": {
+                "fecha_desde": _serializar_datetime_cache(periodos["ano_anterior"][0]),
+                "fecha_hasta": _serializar_datetime_cache(periodos["ano_anterior"][1]),
+                "total_ventas": float(_sumar_ventas_periodo(session, *periodos["ano_anterior"])),
+            },
+        },
+        "serie_historica": meses_historicos,
+    }
+
+
+def refresh_dashboard_historical_cache(session: Session, business_date: date | None = None) -> dict:
+    target_date = business_date or fecha_actual_negocio(session)
+    payload = _build_dashboard_historical_cache_payload(session, target_date)
+    row = session.query(DashboardCache).filter(DashboardCache.cache_key == _DASHBOARD_HISTORICAL_CACHE_KEY).first()
+    payload_json = json.dumps(payload, ensure_ascii=True)
+    if not row:
+        row = DashboardCache(
+            cache_key=_DASHBOARD_HISTORICAL_CACHE_KEY,
+            business_date=target_date,
+            payload_json=payload_json,
+        )
+        session.add(row)
+    else:
+        row.business_date = target_date
+        row.payload_json = payload_json
+    session.commit()
+    return payload
+
+
+def get_dashboard_historical_cache(session: Session, business_date: date | None = None) -> dict:
+    target_date = business_date or fecha_actual_negocio(session)
+    row = session.query(DashboardCache).filter(DashboardCache.cache_key == _DASHBOARD_HISTORICAL_CACHE_KEY).first()
+    if row and row.business_date == target_date and row.payload_json:
+        try:
+            return json.loads(row.payload_json)
+        except Exception:
+            pass
+    return refresh_dashboard_historical_cache(session, target_date)
+
+
+def ensure_dashboard_historical_cache_for_tenant(tenant_slug: str) -> None:
+    tenant_session = get_session_for_tenant(tenant_slug)
+    try:
+        get_dashboard_historical_cache(tenant_session)
+    finally:
+        tenant_session.close()
+
+
+def refresh_dashboard_historical_cache_for_tenant(tenant_slug: str) -> None:
+    tenant_session = get_session_for_tenant(tenant_slug)
+    try:
+        refresh_dashboard_historical_cache(tenant_session)
+    finally:
+        tenant_session.close()
+
+
+def _build_serie_ventas_dashboard(session: Session, fecha_referencia: datetime, historical_cache: dict | None) -> list[DashboardSerieVentasOut]:
+    nombres_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+    historical_map = {
+        (int(item.get("year")), int(item.get("month"))): float(item.get("ventas") or 0.0)
+        for item in (historical_cache or {}).get("serie_historica", [])
+        if item.get("year") and item.get("month")
+    }
+    serie_ventas: list[DashboardSerieVentasOut] = []
+    for year, month in _iterar_ultimos_meses(fecha_referencia, 7):
+        if year == fecha_referencia.year and month == fecha_referencia.month:
+            inicio = datetime(year, month, 1, 0, 0, 0)
+            fin = fecha_referencia.replace(hour=23, minute=59, second=59, microsecond=999999)
+            total_mes = _sumar_ventas_periodo(session, inicio, fin)
+        else:
+            total_mes = historical_map.get((year, month))
+            if total_mes is None:
+                inicio = datetime(year, month, 1, 0, 0, 0)
+                if month == 12:
+                    fin = datetime(year + 1, 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+                else:
+                    fin = datetime(year, month + 1, 1, 0, 0, 0) - timedelta(microseconds=1)
+                total_mes = _sumar_ventas_periodo(session, inicio, fin)
+        serie_ventas.append(
+            DashboardSerieVentasOut(
+                mes=nombres_meses[month - 1],
+                ventas=float(total_mes or 0.0),
+            )
+        )
+    return serie_ventas
+
+
 def _obtener_resumen_dashboard(session: Session) -> DashboardResumenOut:
     caja = session.query(ConfiguracionCaja).first()
     saldo_caja = caja.saldo_actual if caja else 0.0
@@ -802,31 +953,8 @@ def _obtener_resumen_dashboard(session: Session) -> DashboardResumenOut:
     )
 
     ahora = ahora_negocio(session)
-    serie_ventas = []
-    nombres_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-    for year, month in _iterar_ultimos_meses(ahora, 7):
-        inicio = datetime(year, month, 1, 0, 0, 0)
-        if month == 12:
-            fin = datetime(year + 1, 1, 1, 0, 0, 0) - timedelta(microseconds=1)
-        else:
-            fin = datetime(year, month + 1, 1, 0, 0, 0) - timedelta(microseconds=1)
-
-        total_mes = (
-            session.query(func.sum(Venta.total))
-            .filter(
-                Venta.fecha >= inicio,
-                Venta.fecha <= fin,
-                Venta.estado.notin_(['ANULADO', 'ANULADA'])
-            )
-            .scalar()
-            or 0.0
-        )
-        serie_ventas.append(
-            DashboardSerieVentasOut(
-                mes=nombres_meses[month - 1],
-                ventas=float(total_mes),
-            )
-        )
+    historical_cache = get_dashboard_historical_cache(session, ahora.date())
+    serie_ventas = _build_serie_ventas_dashboard(session, ahora, historical_cache)
 
     return DashboardResumenOut(
         saldo_caja=float(saldo_caja or 0.0),
@@ -855,7 +983,7 @@ def _obtener_resumen_dashboard(session: Session) -> DashboardResumenOut:
             for compra in compras_pendientes_db
         ],
         serie_ventas=serie_ventas,
-        comparativa_ventas=_obtener_comparativa_dashboard(session),
+        comparativa_ventas=_obtener_comparativa_dashboard(session, historical_cache=historical_cache),
     )
 
 def _obtener_datos_reporte_ventas(
@@ -1841,7 +1969,8 @@ def obtener_comparativa_dashboard_ventas(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        return _obtener_comparativa_dashboard(session)
+        historical_cache = get_dashboard_historical_cache(session)
+        return _obtener_comparativa_dashboard(session, historical_cache=historical_cache)
     finally:
         session.close()
 

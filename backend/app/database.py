@@ -485,8 +485,14 @@ def ensure_tenant_schema(engine, tenant_slug: str):
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_pago_venta_fecha ON pagos (venta_id, fecha)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_pago_grupo_fecha ON pagos (grupo_pago_id, fecha)"))
 
+        if "movimientos_caja" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_caja_jornada_id ON movimientos_caja (jornada_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_caja_jornada_fecha ON movimientos_caja (jornada_id, fecha)"))
+
         if "movimientos_banco" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_banco_fecha ON movimientos_banco (banco_id, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_jornada_id ON movimientos_banco (jornada_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_jornada_fecha ON movimientos_banco (jornada_id, fecha)"))
 
     inspector = inspect(engine)
     table_names = inspector.get_table_names()

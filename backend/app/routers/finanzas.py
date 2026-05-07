@@ -35,6 +35,7 @@ from app.schemas.schemas import (
     GastoCreate,
     GastoOut,
     JornadaAperturaCreate,
+    JornadaDetalleOperativoOut,
     JornadaEstadoOut,
     JornadaPanelInicialOut,
     JornadaHistorialOut,
@@ -42,6 +43,7 @@ from app.schemas.schemas import (
     PendienteRendicionOut,
     MovimientoBancoOut,
     MovimientoCajaOut,
+    MovimientosPosterioresUltimoCorteResumenOut,
     RendicionJornadaCreate,
     RendicionHistorialOut,
     RendicionHistorialListResponseOut,
@@ -94,7 +96,13 @@ banco_router = APIRouter(prefix="/api/bancos", tags=["Bancos"])
 gasto_router = APIRouter(prefix="/api/gastos", tags=["Gastos"])
 
 
-def _serializar_estado_jornada(session, *, movimientos_cache: list | None = None) -> JornadaEstadoOut:
+def _serializar_estado_jornada(
+    session,
+    *,
+    movimientos_cache: list | None = None,
+    include_operational_detail: bool = True,
+    include_alerta_resumen: bool = True,
+) -> JornadaEstadoOut:
     jornada = obtener_jornada_actual(session)
     if movimientos_cache is not None:
         all_movs = list(movimientos_cache)
@@ -148,6 +156,11 @@ def _serializar_estado_jornada(session, *, movimientos_cache: list | None = None
         else None
     )
 
+    cuentas_por_cobrar_dia = construir_cuentas_por_cobrar_dia(session, jornada) if include_operational_detail else None
+    movimientos_detalle = [serializar_movimiento_jornada(mov) for mov in all_movs] if include_operational_detail else []
+    ventas_detalle = construir_detalle_ventas_jornada(session, jornada, all_movs) if include_operational_detail else {}
+    alerta_movimientos_posteriores = construir_alerta_movimientos_posteriores(session) if include_alerta_resumen else None
+
     return JornadaEstadoOut(
         jornada_id=jornada.id if jornada else None,
         fecha=hoy_jornada(session),
@@ -164,11 +177,43 @@ def _serializar_estado_jornada(session, *, movimientos_cache: list | None = None
             session,
             jornada,
             movimientos_dia_cache=all_movs if jornada else None,
+            include_items=include_operational_detail,
         ),
+        cuentas_por_cobrar_dia=cuentas_por_cobrar_dia,
+        movimientos_detalle=movimientos_detalle,
+        ventas_detalle=ventas_detalle,
+        alerta_movimientos_posteriores=alerta_movimientos_posteriores,
+    )
+
+
+def _serializar_detalle_operativo_jornada(session, jornada: JornadaFinanciera | None, *, movimientos_cache: list | None = None) -> JornadaDetalleOperativoOut:
+    if not jornada:
+        return JornadaDetalleOperativoOut(
+            cuentas_por_cobrar_dia={
+                "total_pendiente": 0.0,
+                "cantidad_ventas": 0,
+                "total_ventas": 0.0,
+                "total_cobrado": 0.0,
+            },
+            movimientos_detalle=[],
+            ventas_detalle={
+                "items": [],
+                "cantidad_ventas": 0,
+                "total_ventas": 0.0,
+                "total_efectivo": 0.0,
+                "total_transferencia": 0.0,
+                "total_tarjeta": 0.0,
+                "total_otros": 0.0,
+                "total_cobrado": 0.0,
+                "total_pendiente": 0.0,
+            },
+        )
+
+    all_movs = list(movimientos_cache) if movimientos_cache is not None else cargar_movimientos_jornada_normalizados(session, jornada)
+    return JornadaDetalleOperativoOut(
         cuentas_por_cobrar_dia=construir_cuentas_por_cobrar_dia(session, jornada),
         movimientos_detalle=[serializar_movimiento_jornada(mov) for mov in all_movs],
         ventas_detalle=construir_detalle_ventas_jornada(session, jornada, all_movs),
-        alerta_movimientos_posteriores=construir_alerta_movimientos_posteriores(session),
     )
 
 
@@ -317,10 +362,20 @@ def obtener_panel_inicial_jornada(
     try:
         jornada = obtener_jornada_actual(session)
         if not jornada:
-            estado = _serializar_estado_jornada(session, movimientos_cache=None)
+            estado = _serializar_estado_jornada(
+                session,
+                movimientos_cache=None,
+                include_operational_detail=False,
+                include_alerta_resumen=False,
+            )
             return JornadaPanelInicialOut(estado=estado, cortes=[])
         all_movs = cargar_movimientos_jornada_normalizados(session, jornada)
-        estado = _serializar_estado_jornada(session, movimientos_cache=all_movs)
+        estado = _serializar_estado_jornada(
+            session,
+            movimientos_cache=all_movs,
+            include_operational_detail=False,
+            include_alerta_resumen=False,
+        )
         cortes = (
             session.query(CorteJornadaFinanciera)
             .filter(CorteJornadaFinanciera.jornada_id == jornada.id)
@@ -330,6 +385,24 @@ def obtener_panel_inicial_jornada(
         )
         cortes_out = serializar_cortes_jornada_lista(session, jornada, cortes, movimientos_cache=all_movs)
         return JornadaPanelInicialOut(estado=estado, cortes=cortes_out)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/detalle-operativo", response_model=JornadaDetalleOperativoOut)
+def obtener_detalle_operativo_jornada_actual(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornada = obtener_jornada_actual(session)
+        movimientos_cache = cargar_movimientos_jornada_normalizados(session, jornada) if jornada else None
+        return _serializar_detalle_operativo_jornada(session, jornada, movimientos_cache=movimientos_cache)
     except HTTPException:
         raise
     except Exception as exc:
@@ -928,6 +1001,18 @@ def obtener_alerta_post_corte_anterior(
         if not resultado:
             raise HTTPException(status_code=404, detail="No hay movimientos posteriores al ultimo corte.")
         return resultado
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/alerta-post-corte-anterior/resumen", response_model=MovimientosPosterioresUltimoCorteResumenOut | None)
+def obtener_resumen_alerta_post_corte_anterior(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        return construir_alerta_movimientos_posteriores(session)
     finally:
         session.close()
 

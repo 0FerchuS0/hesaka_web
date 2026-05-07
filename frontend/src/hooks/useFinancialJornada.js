@@ -4,11 +4,13 @@ import { api } from '../context/AuthContext'
 
 const JORNADA_LIVE_QUERY_KEYS = [
     ['jornada-panel-inicial'],
+    ['jornada-detalle-operativo'],
     ['jornada-financiera-actual'],
     ['jornada-financiera-cortes'],
     ['jornada-pendiente-rendicion'],
     ['jornada-rendiciones'],
     ['jornada-alerta-post-corte-anterior'],
+    ['jornada-alerta-post-corte-anterior-resumen'],
     ['jornada-historial-jornadas'],
     ['jornada-historial-rendiciones'],
 ]
@@ -44,6 +46,17 @@ export function useJornadaPanelInicial(options = {}) {
     return useQuery({
         queryKey: ['jornada-panel-inicial'],
         queryFn: () => api.get('/caja/jornada/panel-inicial').then(response => response.data),
+        enabled: options.enabled ?? true,
+        retry: false,
+        staleTime: 30000,
+        refetchOnMount: 'always',
+    })
+}
+
+export function useJornadaDetalleOperativo(options = {}) {
+    return useQuery({
+        queryKey: ['jornada-detalle-operativo'],
+        queryFn: () => api.get('/caja/jornada/detalle-operativo').then(response => response.data),
         enabled: options.enabled ?? true,
         retry: false,
         staleTime: 30000,
@@ -98,6 +111,17 @@ export function useMovimientosPosterioresUltimoCorte() {
     return useQuery({
         queryKey: ['jornada-alerta-post-corte-anterior'],
         queryFn: () => api.get('/caja/jornada/alerta-post-corte-anterior').then(response => response.data),
+        retry: false,
+        staleTime: 30000,
+        refetchOnMount: 'always',
+    })
+}
+
+export function useMovimientosPosterioresUltimoCorteResumen(options = {}) {
+    return useQuery({
+        queryKey: ['jornada-alerta-post-corte-anterior-resumen'],
+        queryFn: () => api.get('/caja/jornada/alerta-post-corte-anterior/resumen').then(response => response.data),
+        enabled: options.enabled ?? true,
         retry: false,
         staleTime: 30000,
         refetchOnMount: 'always',

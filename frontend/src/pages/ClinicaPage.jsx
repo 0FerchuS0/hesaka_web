@@ -221,6 +221,44 @@ function buildReminderWhatsappLink(item, message = '', empresa = 'HESAKA', telef
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
 }
 
+function buildAgendaConsultaDraft(turno) {
+    if (!turno) return null
+    return {
+        fecha: turno.fecha_hora || null,
+        doctor_id: turno.doctor_id || '',
+        lugar_atencion_id: turno.lugar_atencion_id || '',
+        motivo: turno.motivo || '',
+    }
+}
+
+function buildAgendaConsultaState(turno, patientOverride = null) {
+    const selectedPatient = patientOverride || (turno?.paciente_id ? {
+        id: turno.paciente_id,
+        nombre_completo: turno.paciente_nombre,
+        ci_pasaporte: turno.paciente_ci || null,
+        telefono: turno.paciente_telefono || turno.paciente_telefono_libre || null,
+        referidor_nombre: turno.referidor_nombre || null,
+        edad_calculada: turno.edad_calculada ?? null,
+        edad_manual: turno.edad_manual ?? null,
+        es_cliente: turno.es_cliente ?? false,
+    } : null)
+    if (!selectedPatient?.id) return null
+    return {
+        selectedPatient,
+        autoOpenConsulta: true,
+        agendaTurnoId: turno?.id || null,
+        initialConsultaData: buildAgendaConsultaDraft(turno),
+    }
+}
+
+function buildAgendaPacienteInitialData(turno) {
+    return {
+        nombre_completo: turno?.paciente_nombre || turno?.paciente_nombre_libre || '',
+        telefono: turno?.paciente_telefono || turno?.paciente_telefono_libre || '',
+        notas: turno?.notas || '',
+    }
+}
+
 function buildTemplateFromMessage(message, item, empresa = 'HESAKA') {
     let template = message || ''
     const replacements = [
@@ -1307,7 +1345,9 @@ function AgendaClinicaSection() {
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
     const [modalTurno, setModalTurno] = useState(null)
+    const [modalPaciente, setModalPaciente] = useState(null)
     const [pacienteSearch, setPacienteSearch] = useState('')
+    const [referidorSearch, setReferidorSearch] = useState('')
     const [whatsappItem, setWhatsappItem] = useState(null)
 
     const agendaQuery = useQuery({
@@ -1336,6 +1376,12 @@ function AgendaClinicaSection() {
         queryFn: async () => (await api.get(`/clinica/pacientes?${queryString({ buscar: pacienteSearch, page: 1, page_size: 12 })}`)).data,
         enabled: Boolean(modalTurno),
         staleTime: 60 * 1000,
+    })
+
+    const referidoresQuery = useQuery({
+        queryKey: ['clinica', 'agenda-referidores', referidorSearch],
+        queryFn: async () => (await api.get(`/referidores/listado-optimizado?${queryString({ buscar: referidorSearch, page: 1, page_size: 12 })}`)).data,
+        enabled: Boolean(modalPaciente?.open),
     })
 
     const doctoresQuery = useQuery({
@@ -1396,31 +1442,50 @@ function AgendaClinicaSection() {
         },
     })
 
+    const savePacienteMutation = useMutation({
+        mutationFn: async payload => (await api.post('/clinica/pacientes', payload)).data,
+        onSuccess: async result => {
+            const sourceAgendaTurno = modalPaciente?.sourceAgendaTurno || null
+            let turnoActualizado = sourceAgendaTurno
+            if (sourceAgendaTurno?.id && result?.id) {
+                turnoActualizado = await api.put(`/clinica/agenda/${sourceAgendaTurno.id}`, {
+                    paciente_id: result.id,
+                    paciente_nombre_libre: null,
+                    paciente_telefono_libre: null,
+                    doctor_id: sourceAgendaTurno.doctor_id || null,
+                    lugar_atencion_id: sourceAgendaTurno.lugar_atencion_id || null,
+                    fecha_hora: sourceAgendaTurno.fecha_hora,
+                    estado: 'ATENDIDO',
+                    motivo: sourceAgendaTurno.motivo || null,
+                    notas: sourceAgendaTurno.notas || null,
+                }).then(response => response.data).catch(() => sourceAgendaTurno)
+            }
+            setModalPaciente(null)
+            setReferidorSearch('')
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] })
+            await queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] })
+            const nextState = buildAgendaConsultaState(turnoActualizado, result)
+            if (nextState) {
+                navigate('/clinica/consulta', { state: nextState })
+            }
+        },
+    })
+
     const atenderTurno = async item => {
         try {
             const actualizado = await cambiarEstadoMutation.mutateAsync({ item, nextEstado: 'ATENDIDO' })
-            if (actualizado?.paciente_id) {
-                navigate('/clinica/consulta', {
-                    state: {
-                        selectedPatient: {
-                            id: actualizado.paciente_id,
-                            nombre_completo: actualizado.paciente_nombre,
-                            ci_pasaporte: actualizado.paciente_ci || null,
-                        },
-                        autoOpenConsulta: true,
-                        agendaTurnoId: actualizado?.id || item.id,
-                    },
-                })
+            const nextState = buildAgendaConsultaState(actualizado || item)
+            if (nextState) {
+                navigate('/clinica/consulta', { state: nextState })
                 return
             }
-            navigate('/clinica/pacientes', {
-                state: {
-                    openNewFromAgenda: {
-                        agendaTurnoId: actualizado?.id || item.id,
-                        nombre_completo: actualizado?.paciente_nombre || item.paciente_nombre || '',
-                        turno: actualizado || { ...item, estado: 'ATENDIDO' },
-                    },
-                },
+            setModalPaciente({
+                open: true,
+                mode: 'create',
+                data: buildAgendaPacienteInitialData(actualizado || item),
+                sourceAgendaTurno: actualizado || { ...item, estado: 'ATENDIDO' },
             })
         } catch (error) {
             window.alert(formatError(error, 'No se pudo marcar el turno como atendido.'))
@@ -1647,12 +1712,26 @@ function AgendaClinicaSection() {
                     />
                 </Modal>
             )}
+            {modalPaciente?.open && (
+                <Modal title="Nuevo paciente desde agenda" onClose={() => setModalPaciente(null)} maxWidth="860px">
+                    <PacienteForm
+                        initialData={modalPaciente.data}
+                        sourceAgendaTurno={modalPaciente.sourceAgendaTurno}
+                        referidorOptions={referidoresQuery.data?.items || []}
+                        onSearchReferidor={setReferidorSearch}
+                        referidorLoading={referidoresQuery.isFetching}
+                        onSave={payload => savePacienteMutation.mutate(payload)}
+                        onCancel={() => setModalPaciente(null)}
+                        saving={savePacienteMutation.isPending}
+                    />
+                </Modal>
+            )}
             {whatsappItem ? <WhatsappMessageModal item={whatsappItem} onClose={() => setWhatsappItem(null)} /> : null}
         </>
     )
 }
 
-function PacienteForm({ initialData, referidorOptions, onSearchReferidor, referidorLoading, onSave, onCancel, saving }) {
+function PacienteForm({ initialData, sourceAgendaTurno = null, referidorOptions, onSearchReferidor, referidorLoading, onSave, onCancel, saving }) {
     const [form, setForm] = useState(() => ({
         nombre_completo: initialData?.nombre_completo || '',
         ci_pasaporte: initialData?.ci_pasaporte || '',
@@ -1694,6 +1773,33 @@ function PacienteForm({ initialData, referidorOptions, onSearchReferidor, referi
 
     return (
         <form onSubmit={submit}>
+            {sourceAgendaTurno ? (
+                <div
+                    className="card"
+                    style={{
+                        padding: 14,
+                        marginBottom: 16,
+                        background: 'rgba(56,189,248,0.08)',
+                        border: '1px solid rgba(56,189,248,0.2)',
+                        display: 'grid',
+                        gap: 6,
+                    }}
+                >
+                    <div style={{ fontWeight: 800 }}>Contexto del turno que se va a atender</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        Fecha y hora: {fmtDateTime(sourceAgendaTurno.fecha_hora)}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        Telefono: {sourceAgendaTurno.paciente_telefono || sourceAgendaTurno.paciente_telefono_libre || 'Sin telefono'}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        Doctor: {sourceAgendaTurno.doctor_nombre || 'Sin doctor'} {sourceAgendaTurno.lugar_nombre ? `- Lugar: ${sourceAgendaTurno.lugar_nombre}` : ''}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                        Al guardar, este mismo contexto pasa directo a la nueva consulta.
+                    </div>
+                </div>
+            ) : null}
             <div className="form-group">
                 <label className="form-label">Nombre completo</label>
                 <input className="form-input" value={form.nombre_completo} onChange={event => setForm(prev => ({ ...prev, nombre_completo: event.target.value }))} required />
@@ -2747,6 +2853,7 @@ function ConsultaIntegralModal({
     onOpenRecetaMedicamentos,
     initialAnamnesis,
     anamnesisLoading,
+    initialConsultaData = null,
 }) {
     const [activeTab, setActiveTab] = useState('anamnesis')
     const [showConsultaSavedNotice, setShowConsultaSavedNotice] = useState(false)
@@ -2987,7 +3094,7 @@ function ConsultaIntegralModal({
                             <ConsultaClinicaForm
                                 key={`${type}-${patient.id}`}
                                 type={type}
-                                initialData={null}
+                                initialData={initialConsultaData}
                                 pacienteId={patient.id}
                                 doctores={doctores}
                                 lugares={lugares}
@@ -3992,9 +4099,7 @@ function PacientesSection() {
         setModalPaciente({
             open: true,
             mode: 'create',
-            data: {
-                nombre_completo: agendaDraft.nombre_completo || '',
-            },
+            data: buildAgendaPacienteInitialData(agendaDraft.turno || agendaDraft),
             sourceAgendaTurno: agendaDraft.turno || null,
         })
         navigate(location.pathname, { replace: true, state: {} })
@@ -4021,6 +4126,7 @@ function PacientesSection() {
                 await api.put(`/clinica/agenda/${modalPaciente.sourceAgendaTurno.id}`, {
                     paciente_id: result.id,
                     paciente_nombre_libre: null,
+                    paciente_telefono_libre: null,
                     doctor_id: modalPaciente.sourceAgendaTurno.doctor_id || null,
                     lugar_atencion_id: modalPaciente.sourceAgendaTurno.lugar_atencion_id || null,
                     fecha_hora: modalPaciente.sourceAgendaTurno.fecha_hora,
@@ -4037,13 +4143,10 @@ function PacientesSection() {
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'agenda-recordatorios'] })
             if (sourceAgendaTurno && result?.id) {
-                navigate('/clinica/consulta', {
-                    state: {
-                        selectedPatient: result,
-                        autoOpenConsulta: true,
-                        agendaTurnoId: sourceAgendaTurno.id,
-                    },
-                })
+                const nextState = buildAgendaConsultaState(sourceAgendaTurno, result)
+                if (nextState) {
+                    navigate('/clinica/consulta', { state: nextState })
+                }
             }
         },
     })
@@ -4240,6 +4343,7 @@ function PacientesSection() {
                 <Modal title={modalPaciente.mode === 'edit' ? 'Editar paciente' : 'Nuevo paciente'} onClose={() => setModalPaciente(null)} maxWidth="860px">
                     <PacienteForm
                         initialData={modalPaciente.data}
+                        sourceAgendaTurno={modalPaciente.sourceAgendaTurno}
                         referidorOptions={referidoresQuery.data?.items || []}
                         onSearchReferidor={setReferidorSearch}
                         referidorLoading={referidoresQuery.isFetching}
@@ -4829,12 +4933,14 @@ function NuevaConsultaSection() {
     const [postSaveActions, setPostSaveActions] = useState(null)
     const [consultaSaveError, setConsultaSaveError] = useState('')
     const [agendaTurnoId, setAgendaTurnoId] = useState(null)
+    const [initialConsultaData, setInitialConsultaData] = useState(null)
 
     useEffect(() => {
         const routePatient = location.state?.selectedPatient
         if (routePatient?.id) {
             setSelectedPatient(prev => (prev?.id === routePatient.id ? prev : routePatient))
             setAgendaTurnoId(location.state?.agendaTurnoId || null)
+            setInitialConsultaData(location.state?.initialConsultaData || null)
             setLastCreated(null)
             setLastRecetaCreated(null)
             setConsultaSaveError('')
@@ -5073,9 +5179,6 @@ function NuevaConsultaSection() {
                                         setSelectorPacienteOpen(true)
                                         return
                                     }
-                                    if (!location.state?.agendaTurnoId) {
-                                        setAgendaTurnoId(null)
-                                    }
                                     setRecentCreatedMedicamento(null)
                                     setLastCreated(null)
                                     setLastRecetaCreated(null)
@@ -5151,6 +5254,7 @@ function NuevaConsultaSection() {
                 }}
                 initialAnamnesis={anamnesisQuery.data || null}
                 anamnesisLoading={anamnesisQuery.isLoading}
+                initialConsultaData={initialConsultaData}
             />
 
             {recetaModal && (
@@ -5240,6 +5344,7 @@ function NuevaConsultaSection() {
                                                     onClick={() => {
                                                         setSelectedPatient(item)
                                                         setAgendaTurnoId(null)
+                                                        setInitialConsultaData(null)
                                                         setLastCreated(null)
                                                         setSelectorPacienteOpen(false)
                                                     }}

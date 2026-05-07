@@ -13,7 +13,7 @@ import Modal from '../components/Modal'
 import { getWhatsappTemplateByCode, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { formatCurrentBusinessDate, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
 
-const DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta}. Quedamos atentos para ayudarte a confirmar tu cita.'
+const DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta} a las {hora_turno}. Quedamos atentos para ayudarte a confirmar tu cita.'
 const DEFAULT_CUMPLEANOS_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
 const DASHBOARD_RECORDATORIO_TEMPLATE_CODE = 'dashboard_recordatorio'
 const CUMPLEANOS_TEMPLATE_CODE = 'cumpleanos_cliente'
@@ -76,6 +76,13 @@ function fmtDateTime(value) {
     return date.toLocaleString('es-PY')
 }
 
+function fmtTime(value) {
+    if (!value) return 'sin hora'
+    const date = parseBackendDateTime(value)
+    if (!date || Number.isNaN(date.getTime())) return 'sin hora'
+    return date.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' })
+}
+
 function normalizarTelefonoWhatsapp(value) {
     let digits = String(value || '').replace(/\D/g, '')
     if (!digits) return ''
@@ -116,10 +123,12 @@ function buildReminderWhatsappLink(item, empresa = 'HESAKA', template = DEFAULT_
     if (!telefono) return ''
     const ultimaConsulta = item?.ultima_consulta_fecha ? fmtDate(item.ultima_consulta_fecha) : 'sin registro'
     const proximaConsulta = item?.fecha_hora ? fmtDate(item.fecha_hora) : 'sin fecha'
+    const horaTurno = fmtTime(item?.fecha_hora)
     const mensaje = (template || DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE)
         .replaceAll('{paciente}', item?.paciente_nombre || '')
         .replaceAll('{ultima_consulta}', ultimaConsulta)
         .replaceAll('{proxima_consulta}', proximaConsulta)
+        .replaceAll('{hora_turno}', horaTurno)
         .replaceAll('{empresa}', empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
 }
@@ -204,6 +213,14 @@ export default function Dashboard() {
     const { user } = useAuth()
     const queryClient = useQueryClient()
     const [showReminderModal, setShowReminderModal] = useState(false)
+    const [loadSecondarySections, setLoadSecondarySections] = useState(false)
+
+    useEffect(() => {
+        const timerId = window.setTimeout(() => {
+            setLoadSecondarySections(true)
+        }, 150)
+        return () => window.clearTimeout(timerId)
+    }, [])
 
     const { data: dashboard } = useQuery({
         queryKey: ['dashboard-resumen'],
@@ -213,21 +230,24 @@ export default function Dashboard() {
     const reminderQuery = useQuery({
         queryKey: ['clinica', 'agenda-recordatorios'],
         queryFn: async () => (await api.get('/clinica/agenda/recordatorios')).data,
+        enabled: loadSecondarySections,
         staleTime: 60 * 1000,
     })
     const birthdayQuery = useQuery({
         queryKey: ['clientes', 'cumpleanos', todayInputValue()],
         queryFn: async () => (await api.get('/clientes/cumpleanos')).data,
+        enabled: loadSecondarySections,
         staleTime: 5 * 60 * 1000,
         retry: false,
     })
     const { data: configPublica } = useQuery({
         queryKey: ['configuracion-general-publica'],
         queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
+        enabled: loadSecondarySections,
         staleTime: 5 * 60 * 1000,
         retry: false,
     })
-    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
+    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog({ enabled: loadSecondarySections })
 
     const markReminderMutation = useMutation({
         mutationFn: async item => {

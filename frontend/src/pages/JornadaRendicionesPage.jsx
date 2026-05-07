@@ -12,6 +12,7 @@ import {
     useCrearCorteJornada,
     useCrearDestinatarioRendicion,
     useEliminarDestinatarioRendicion,
+    useJornadaDetalleOperativo,
     useCrearRendicionJornada,
     useCrearRendicionJornadaHistorial,
     useDestinatariosRendicionCatalog,
@@ -19,6 +20,7 @@ import {
     useHistorialJornadas,
     useHistorialRendiciones,
     useMovimientosPosterioresUltimoCorte,
+    useMovimientosPosterioresUltimoCorteResumen,
     useOpcionesFiltrosRendiciones,
     usePendienteRendicionHistorial,
     useRendicionDetalle,
@@ -1348,6 +1350,39 @@ export default function JornadaRendicionesPage() {
         rendicionesQuery.dataUpdatedAt,
         setJornadaLoadMs,
     )
+
+    const { data: panel, isLoading: isLoadingPanel, isError, error } = panelQuery
+    const data = panel?.estado
+    const detalleOperativoQuery = useJornadaDetalleOperativo({ enabled: Boolean(data?.abierta) })
+    const alertaPosteriorResumenQuery = useMovimientosPosterioresUltimoCorteResumen({ enabled: Boolean(data?.abierta) })
+    const cortes = panel?.cortes ?? []
+    const { data: rendiciones = [], isLoading: isLoadingRendiciones } = rendicionesQuery
+    const pendiente = data?.pendiente_rendicion
+    const isLoading = isLoadingPanel
+    const isLoadingCortes = isLoadingPanel
+    const isLoadingDetalleOperativo = detalleOperativoQuery.isLoading
+    const {
+        data: historialJornadas = [],
+        isLoading: isLoadingHistorialJornadas,
+        isError: isErrorHistorialJornadas,
+        error: errorHistorialJornadas,
+    } = historialJornadasQuery
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/detalle-operativo',
+        detalleOperativoQuery.isSuccess,
+        detalleOperativoQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
+    useMarkJornadaBenchRow(
+        showJornadaLoadBench,
+        jornadaLoadT0,
+        'GET /caja/jornada/alerta-post-corte-anterior/resumen',
+        alertaPosteriorResumenQuery.isSuccess,
+        alertaPosteriorResumenQuery.dataUpdatedAt,
+        setJornadaLoadMs,
+    )
     useMarkJornadaBenchRow(
         showJornadaLoadBench,
         jornadaLoadT0,
@@ -1356,20 +1391,6 @@ export default function JornadaRendicionesPage() {
         historialJornadasQuery.dataUpdatedAt,
         setJornadaLoadMs,
     )
-
-    const { data: panel, isLoading: isLoadingPanel, isError, error } = panelQuery
-    const data = panel?.estado
-    const cortes = panel?.cortes ?? []
-    const { data: rendiciones = [], isLoading: isLoadingRendiciones } = rendicionesQuery
-    const pendiente = data?.pendiente_rendicion
-    const isLoading = isLoadingPanel
-    const isLoadingCortes = isLoadingPanel
-    const {
-        data: historialJornadas = [],
-        isLoading: isLoadingHistorialJornadas,
-        isError: isErrorHistorialJornadas,
-        error: errorHistorialJornadas,
-    } = historialJornadasQuery
     const busquedaRendicionesDiferida = useDeferredValue(busquedaRendiciones)
     const historialRendicionesParams = useMemo(() => ({
         page: paginaRendiciones,
@@ -1448,13 +1469,15 @@ export default function JornadaRendicionesPage() {
     )
     const ultimoCorte = useMemo(() => cortes.find(item => item.es_ultimo) || data?.ultimo_corte || null, [cortes, data])
     const ultimaRendicion = useMemo(() => rendiciones.find(item => item.es_ultima_vigente) || data?.ultima_rendicion || null, [rendiciones, data])
-    const cuentasPorCobrar = data?.cuentas_por_cobrar_dia || {
+    const detalleOperativo = detalleOperativoQuery.data
+    const alertaMovimientosPosteriores = alertaPosteriorResumenQuery.data
+    const cuentasPorCobrar = detalleOperativo?.cuentas_por_cobrar_dia || {
         total_pendiente: 0,
         cantidad_ventas: 0,
         total_ventas: 0,
         total_cobrado: 0,
     }
-    const ventasDetalle = data?.ventas_detalle || {
+    const ventasDetalle = detalleOperativo?.ventas_detalle || {
         items: [],
         cantidad_ventas: 0,
         total_ventas: 0,
@@ -1465,7 +1488,7 @@ export default function JornadaRendicionesPage() {
         total_cobrado: 0,
         total_pendiente: 0,
     }
-    const movimientosDetalle = data?.movimientos_detalle || []
+    const movimientosDetalle = detalleOperativo?.movimientos_detalle || []
     const ventasPendientesJornada = useMemo(() => {
         const porId = new Map()
         ;(ventasDetalle.items || [])
@@ -1592,7 +1615,7 @@ export default function JornadaRendicionesPage() {
                 />
             )}
 
-            {data?.alerta_movimientos_posteriores && (
+            {alertaMovimientosPosteriores && (
                 <div
                     className="card"
                     style={{
@@ -1609,13 +1632,13 @@ export default function JornadaRendicionesPage() {
                             <div style={{ minWidth: 0 }}>
                                 <div style={{ fontWeight: 700, marginBottom: 4 }}>Se detectaron movimientos después del último corte del día anterior.</div>
                                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.45 }}>
-                                    Último corte: <strong>{fmtDateTime(data.alerta_movimientos_posteriores.fecha_ultimo_corte)}</strong>
+                                    Último corte: <strong>{fmtDateTime(alertaMovimientosPosteriores.fecha_ultimo_corte)}</strong>
                                     {' · '}
-                                    movimientos posteriores: <strong>{data.alerta_movimientos_posteriores.cantidad_movimientos}</strong>
+                                    movimientos posteriores: <strong>{alertaMovimientosPosteriores.cantidad_movimientos}</strong>
                                 </div>
                                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                                    <span>Ingresos: {fmtGs(data.alerta_movimientos_posteriores.ingresos)}</span>
-                                    <span>Egresos: {fmtGs(data.alerta_movimientos_posteriores.egresos)}</span>
+                                    <span>Ingresos: {fmtGs(alertaMovimientosPosteriores.ingresos)}</span>
+                                    <span>Egresos: {fmtGs(alertaMovimientosPosteriores.egresos)}</span>
                                 </div>
                             </div>
                         </div>
@@ -1630,11 +1653,11 @@ export default function JornadaRendicionesPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 16 }}>
                 <EstadoCard label="Estado" value={data?.estado || 'SIN_ABRIR'} color={data?.abierta ? 'var(--success)' : 'var(--warning)'} />
                 <EstadoCard label="Neto del día" value={fmtGs(resumen.neto)} color={resumen.neto >= 0 ? 'var(--primary-light)' : 'var(--danger)'} />
-                <EstadoCard label="Ventas del dia" value={ventasDetalle.cantidad_ventas || 0} color="var(--primary-light)" />
+                <EstadoCard label="Ventas del dia" value={isLoadingDetalleOperativo ? '...' : (ventasDetalle.cantidad_ventas || 0)} color="var(--primary-light)" />
                 <EstadoCard label="Movimientos" value={resumen.movimientos_total || 0} color="var(--text-primary)" />
                 <EstadoCard label="Total rendido" value={fmtGs(totalRendido)} color="var(--info)" />
                 <EstadoCard label="Pendiente de rendir" value={fmtGs(pendiente?.monto_sugerido || 0)} color="var(--warning)" />
-                <EstadoCard label="A cobrar hoy" value={fmtGs(cuentasPorCobrar.total_pendiente || 0)} color={(cuentasPorCobrar.total_pendiente || 0) > 0 ? '#f59e0b' : 'var(--success)'} />
+                <EstadoCard label="A cobrar hoy" value={isLoadingDetalleOperativo ? '...' : fmtGs(cuentasPorCobrar.total_pendiente || 0)} color={(cuentasPorCobrar.total_pendiente || 0) > 0 ? '#f59e0b' : 'var(--success)'} />
             </div>
 
             <div className="card" style={{ marginBottom: 16 }}>
@@ -1650,7 +1673,13 @@ export default function JornadaRendicionesPage() {
                         <span>Pendiente: <strong style={{ color: 'var(--warning)' }}>{fmtGs(ventasDetalle.total_pendiente || 0)}</strong></span>
                     </div>
                 </div>
-                <DetalleVentasJornada detalle={ventasDetalle} />
+                {isLoadingDetalleOperativo ? (
+                    <div className="flex-center" style={{ padding: 20 }}>
+                        <div className="spinner" style={{ width: 24, height: 24 }} />
+                    </div>
+                ) : (
+                    <DetalleVentasJornada detalle={ventasDetalle} />
+                )}
             </div>
 
             <div className="card" style={{ marginBottom: 16 }}>
@@ -1686,7 +1715,11 @@ export default function JornadaRendicionesPage() {
                         </button>
                     ))}
                 </div>
-                {filtroMovimientosJornada === 'PENDIENTE' ? (
+                {isLoadingDetalleOperativo ? (
+                    <div className="flex-center" style={{ padding: 20 }}>
+                        <div className="spinner" style={{ width: 24, height: 24 }} />
+                    </div>
+                ) : filtroMovimientosJornada === 'PENDIENTE' ? (
                     <DetallePendientesVentasJornada ventas={ventasPendientesJornada} />
                 ) : (
                     <DetalleMovimientosJornada movimientos={movimientosDetalle} filtro={filtroMovimientosJornada} />

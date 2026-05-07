@@ -2,6 +2,7 @@
 HESAKA Web — Punto de entrada FastAPI
 Multi-tenant SaaS para ópticas
 """
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +11,7 @@ from app.bootstrap import bootstrap_default_tenant
 from app.config import settings
 from app.database import init_admin_db
 from app.middleware.tenant import TenantMiddleware
+from app.services.dashboard_cache_scheduler import dashboard_cache_scheduler_loop
 
 # ─── Routers ───────────────────────────────────────────────────────────────────
 from app.routers.auth import router as auth_router
@@ -31,14 +33,23 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Inicialización al arrancar el servidor."""
     logger.info("🚀 Iniciando HESAKA Web...")
+    dashboard_cache_task = None
     try:
         init_admin_db()
         logger.info("✅ Base de datos admin inicializada.")
         bootstrap_default_tenant()
         logger.info("✅ Tenant por defecto verificado.")
+        dashboard_cache_task = asyncio.create_task(dashboard_cache_scheduler_loop())
+        logger.info("✅ Scheduler de cache historico del dashboard iniciado.")
     except Exception as e:
         logger.error(f"❌ Error al inicializar la base de datos admin: {e}")
     yield
+    if dashboard_cache_task:
+        dashboard_cache_task.cancel()
+        try:
+            await dashboard_cache_task
+        except asyncio.CancelledError:
+            pass
     logger.info("🛑 HESAKA Web detenido.")
 
 

@@ -631,6 +631,14 @@ class ConfiguracionEmpresa(TimestampMixin, Base):
 
 # ─── Usuarios del tenant ───────────────────────────────────────────────────────
 
+class DashboardCache(TimestampMixin, Base):
+    __tablename__ = 'dashboard_cache'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cache_key = Column(String(80), unique=True, nullable=False)
+    business_date = Column(Date, nullable=False)
+    payload_json = Column(Text, nullable=False)
+
+
 class Usuario(TimestampMixin, Base):
     """Usuarios que acceden al sistema web de un cliente específico."""
     __tablename__ = 'usuarios'

@@ -340,6 +340,98 @@ def construir_desglose_por_medio(movimientos: list[MovimientoJornadaNormalizado]
     return sorted(acumulado.values(), key=lambda item: (orden.get(item["medio"], 90), item["medio"]))
 
 
+_ORDEN_DESGLOSE_MEDIOS = {
+    "EFECTIVO": 0,
+    "TARJETA": 1,
+    "TRANSFERENCIA": 2,
+    "CHEQUE": 3,
+    "DEPOSITO": 4,
+    "BANCO": 5,
+    "AJUSTE": 6,
+    "TRANSFERENCIA INTERNA": 7,
+    "OTRO": 99,
+}
+
+
+def _crear_acumuladores_movimientos() -> tuple[dict, dict[str, dict]]:
+    return (
+        {
+            "ingresos": 0.0,
+            "egresos": 0.0,
+            "movimientos_caja": 0,
+            "movimientos_banco": 0,
+        },
+        {},
+    )
+
+
+def _acumular_movimiento_en_resumen(
+    movimiento: MovimientoJornadaNormalizado,
+    totales: dict,
+    desglose: dict[str, dict],
+) -> None:
+    if not movimiento.incluye_en_totales:
+        return
+
+    if movimiento.origen == "CAJA":
+        totales["movimientos_caja"] += 1
+    elif movimiento.origen == "BANCO":
+        totales["movimientos_banco"] += 1
+
+    medio = movimiento.medio or "OTRO"
+    bucket = desglose.setdefault(
+        medio,
+        {
+            "medio": medio,
+            "ingresos": 0.0,
+            "egresos": 0.0,
+            "neto": 0.0,
+            "cantidad_movimientos": 0,
+        },
+    )
+    bucket["cantidad_movimientos"] += 1
+
+    monto = float(movimiento.monto or 0.0)
+    if movimiento.tipo in {"INGRESO", "AJUSTE (+)"}:
+        totales["ingresos"] += monto
+        bucket["ingresos"] += monto
+    elif movimiento.tipo in {"EGRESO", "GASTO", "AJUSTE (-)"}:
+        totales["egresos"] += monto
+        bucket["egresos"] += monto
+
+
+def _snapshot_totales_movimientos(totales: dict) -> dict:
+    ingresos = float(totales["ingresos"])
+    egresos = float(totales["egresos"])
+    movimientos_caja = int(totales["movimientos_caja"])
+    movimientos_banco = int(totales["movimientos_banco"])
+    return {
+        "ingresos": ingresos,
+        "egresos": egresos,
+        "neto": float(ingresos - egresos),
+        "movimientos_caja": movimientos_caja,
+        "movimientos_banco": movimientos_banco,
+        "movimientos_total": movimientos_caja + movimientos_banco,
+    }
+
+
+def _snapshot_desglose_medios(desglose: dict[str, dict]) -> list[dict]:
+    out = []
+    for medio, bucket in desglose.items():
+        ingresos = float(bucket["ingresos"])
+        egresos = float(bucket["egresos"])
+        out.append(
+            {
+                "medio": medio,
+                "ingresos": ingresos,
+                "egresos": egresos,
+                "neto": float(ingresos - egresos),
+                "cantidad_movimientos": int(bucket["cantidad_movimientos"]),
+            }
+        )
+    return sorted(out, key=lambda item: (_ORDEN_DESGLOSE_MEDIOS.get(item["medio"], 90), item["medio"]))
+
+
 def _normalizar_movimientos_caja(movimientos: list[MovimientoCaja], tz: tzinfo) -> list[MovimientoJornadaNormalizado]:
     normalizados: list[MovimientoJornadaNormalizado] = []
     for movimiento in movimientos:
@@ -939,13 +1031,39 @@ def serializar_cortes_jornada_lista(
         if movimientos_cache is not None
         else cargar_movimientos_jornada_normalizados(session, jornada)
     )
+    movs_por_corte = sorted(
+        all_movs,
+        key=lambda item: (
+            item.instante_corte or item.fecha,
+            item.fecha,
+            item.movimiento_id or 0,
+        ),
+    )
+    cortes_ordenados = sorted(
+        cortes,
+        key=lambda item: (
+            item.fecha_hora_corte,
+            item.id,
+        ),
+    )
     fecha_jornada = jornada.fecha
     out: list[dict] = []
-    for corte in cortes:
-        sub = [m for m in all_movs if m.instante_corte <= corte.fecha_hora_corte]
-        desglose = construir_desglose_por_medio(sub)
-        tot = _totales_desde_movimientos_normalizados(sub)
-        out.append(
+    mov_index = 0
+    total_movs = len(movs_por_corte)
+    totales, desglose = _crear_acumuladores_movimientos()
+    cortes_serializados: dict[int, dict] = {}
+    for corte in cortes_ordenados:
+        while mov_index < total_movs:
+            movimiento = movs_por_corte[mov_index]
+            instante_mov = movimiento.instante_corte or movimiento.fecha
+            if instante_mov > corte.fecha_hora_corte:
+                break
+            _acumular_movimiento_en_resumen(movimiento, totales, desglose)
+            mov_index += 1
+
+        tot = _snapshot_totales_movimientos(totales)
+        desglose_snapshot = _snapshot_desglose_medios(desglose)
+        cortes_serializados[corte.id] = (
             {
                 "id": corte.id,
                 "jornada_id": corte.jornada_id,
@@ -962,7 +1080,31 @@ def serializar_cortes_jornada_lista(
                 "saldo_actual_caja": float(corte.saldo_actual_caja or 0.0),
                 "saldo_actual_bancos": float(corte.saldo_actual_bancos or 0.0),
                 "saldo_final_total": float(corte.saldo_final_total or 0.0),
-                "desglose_medios": desglose,
+                "desglose_medios": desglose_snapshot,
+                "es_ultimo": corte.id == ultimo_id,
+            }
+        )
+
+    for corte in cortes:
+        out.append(
+            cortes_serializados.get(corte.id)
+            or {
+                "id": corte.id,
+                "jornada_id": corte.jornada_id,
+                "fecha": fecha_jornada,
+                "fecha_hora_corte": corte.fecha_hora_corte,
+                "usuario_id": corte.usuario_id,
+                "usuario_nombre": corte.usuario_nombre,
+                "ingresos": 0.0,
+                "egresos": 0.0,
+                "neto": 0.0,
+                "movimientos_caja": 0,
+                "movimientos_banco": 0,
+                "movimientos_total": 0,
+                "saldo_actual_caja": float(corte.saldo_actual_caja or 0.0),
+                "saldo_actual_bancos": float(corte.saldo_actual_bancos or 0.0),
+                "saldo_final_total": float(corte.saldo_final_total or 0.0),
+                "desglose_medios": [],
                 "es_ultimo": corte.id == ultimo_id,
             }
         )
@@ -974,6 +1116,7 @@ def construir_pendiente_rendicion(
     jornada: JornadaFinanciera | None,
     *,
     movimientos_dia_cache: list[MovimientoJornadaNormalizado] | None = None,
+    include_items: bool = True,
 ):
     if not jornada:
         return {
@@ -1004,70 +1147,72 @@ def construir_pendiente_rendicion(
     egresos = float(sum(mov.monto for mov in movimientos if mov.incluye_en_totales and mov.tipo in {"EGRESO", "GASTO", "AJUSTE (-)"}))
     monto_sugerido = ingresos - egresos
     cantidad_movimientos = len([mov for mov in movimientos if mov.incluye_en_totales])
-    ventas_detalle = construir_detalle_ventas_jornada(session, jornada, movimientos_dia)
-    ventas_pendientes_por_id = {
-        int(venta["venta_id"]): {
-            "venta_id": venta["venta_id"],
-            "venta_codigo": venta["venta_codigo"],
-            "cliente_nombre": venta["cliente_nombre"],
-            "total": venta["total"],
-            "cobrado": venta["cobrado"],
-            "pendiente": venta["pendiente"],
-            "efectivo": venta["efectivo"],
-            "transferencia": venta["transferencia"],
-            "tarjeta": venta["tarjeta"],
-            "otros": venta["otros"],
-        }
-        for venta in ventas_detalle.get("items", [])
-        if float(venta.get("pendiente") or 0.0) > 0.009
-    }
-
-    venta_ids_en_movimientos = {int(mov.venta_id) for mov in movimientos if mov.venta_id}
-    venta_ids_faltantes = venta_ids_en_movimientos.difference(ventas_pendientes_por_id.keys())
-    if venta_ids_faltantes:
-        ventas_relacionadas = (
-            session.query(Venta)
-            .filter(Venta.id.in_(venta_ids_faltantes))
-            .options(selectinload(Venta.cliente_rel))
-            .all()
-        )
-        movimientos_por_venta: dict[int, list[MovimientoJornadaNormalizado]] = {}
-        for mov in movimientos:
-            if mov.venta_id:
-                movimientos_por_venta.setdefault(int(mov.venta_id), []).append(mov)
-
-        for venta in ventas_relacionadas:
-            pendiente_venta = float(max(0.0, venta.saldo or 0.0))
-            if pendiente_venta <= 0.009:
-                continue
-            pagos = [
-                mov
-                for mov in movimientos_por_venta.get(int(venta.id), [])
-                if mov.incluye_en_totales and mov.tipo in {"INGRESO", "AJUSTE (+)"}
-            ]
-            efectivo = float(sum(m.monto for m in pagos if m.medio == "EFECTIVO"))
-            transferencia = float(sum(m.monto for m in pagos if m.medio in {"TRANSFERENCIA", "BANCO", "DEPOSITO"}))
-            tarjeta = float(sum(m.monto for m in pagos if m.medio == "TARJETA"))
-            otros = float(sum(m.monto for m in pagos if m.medio not in {"EFECTIVO", "TRANSFERENCIA", "BANCO", "DEPOSITO", "TARJETA"}))
-            total_venta = float(venta.total or 0.0)
-            cliente = getattr(venta, "cliente_rel", None)
-            ventas_pendientes_por_id[int(venta.id)] = {
-                "venta_id": venta.id,
-                "venta_codigo": venta.codigo,
-                "cliente_nombre": cliente.nombre if cliente else None,
-                "total": total_venta,
-                "cobrado": float(max(0.0, total_venta - pendiente_venta)),
-                "pendiente": pendiente_venta,
-                "efectivo": efectivo,
-                "transferencia": transferencia,
-                "tarjeta": tarjeta,
-                "otros": otros,
+    ventas_pendientes = []
+    if include_items:
+        ventas_detalle = construir_detalle_ventas_jornada(session, jornada, movimientos_dia)
+        ventas_pendientes_por_id = {
+            int(venta["venta_id"]): {
+                "venta_id": venta["venta_id"],
+                "venta_codigo": venta["venta_codigo"],
+                "cliente_nombre": venta["cliente_nombre"],
+                "total": venta["total"],
+                "cobrado": venta["cobrado"],
+                "pendiente": venta["pendiente"],
+                "efectivo": venta["efectivo"],
+                "transferencia": venta["transferencia"],
+                "tarjeta": venta["tarjeta"],
+                "otros": venta["otros"],
             }
+            for venta in ventas_detalle.get("items", [])
+            if float(venta.get("pendiente") or 0.0) > 0.009
+        }
 
-    ventas_pendientes = sorted(
-        ventas_pendientes_por_id.values(),
-        key=lambda item: (str(item.get("venta_codigo") or ""), int(item.get("venta_id") or 0)),
-    )
+        venta_ids_en_movimientos = {int(mov.venta_id) for mov in movimientos if mov.venta_id}
+        venta_ids_faltantes = venta_ids_en_movimientos.difference(ventas_pendientes_por_id.keys())
+        if venta_ids_faltantes:
+            ventas_relacionadas = (
+                session.query(Venta)
+                .filter(Venta.id.in_(venta_ids_faltantes))
+                .options(selectinload(Venta.cliente_rel))
+                .all()
+            )
+            movimientos_por_venta: dict[int, list[MovimientoJornadaNormalizado]] = {}
+            for mov in movimientos:
+                if mov.venta_id:
+                    movimientos_por_venta.setdefault(int(mov.venta_id), []).append(mov)
+
+            for venta in ventas_relacionadas:
+                pendiente_venta = float(max(0.0, venta.saldo or 0.0))
+                if pendiente_venta <= 0.009:
+                    continue
+                pagos = [
+                    mov
+                    for mov in movimientos_por_venta.get(int(venta.id), [])
+                    if mov.incluye_en_totales and mov.tipo in {"INGRESO", "AJUSTE (+)"}
+                ]
+                efectivo = float(sum(m.monto for m in pagos if m.medio == "EFECTIVO"))
+                transferencia = float(sum(m.monto for m in pagos if m.medio in {"TRANSFERENCIA", "BANCO", "DEPOSITO"}))
+                tarjeta = float(sum(m.monto for m in pagos if m.medio == "TARJETA"))
+                otros = float(sum(m.monto for m in pagos if m.medio not in {"EFECTIVO", "TRANSFERENCIA", "BANCO", "DEPOSITO", "TARJETA"}))
+                total_venta = float(venta.total or 0.0)
+                cliente = getattr(venta, "cliente_rel", None)
+                ventas_pendientes_por_id[int(venta.id)] = {
+                    "venta_id": venta.id,
+                    "venta_codigo": venta.codigo,
+                    "cliente_nombre": cliente.nombre if cliente else None,
+                    "total": total_venta,
+                    "cobrado": float(max(0.0, total_venta - pendiente_venta)),
+                    "pendiente": pendiente_venta,
+                    "efectivo": efectivo,
+                    "transferencia": transferencia,
+                    "tarjeta": tarjeta,
+                    "otros": otros,
+                }
+
+        ventas_pendientes = sorted(
+            ventas_pendientes_por_id.values(),
+            key=lambda item: (str(item.get("venta_codigo") or ""), int(item.get("venta_id") or 0)),
+        )
     return {
         "monto_sugerido": float(monto_sugerido),
         "cantidad_movimientos": cantidad_movimientos,
@@ -1075,7 +1220,7 @@ def construir_pendiente_rendicion(
         "egresos": egresos,
         "fecha_desde": fecha_desde,
         "desglose_medios": construir_desglose_por_medio(movimientos),
-        "movimientos": [serializar_movimiento_jornada(mov) for mov in sorted(movimientos, key=lambda item: item.fecha, reverse=True)],
+        "movimientos": [serializar_movimiento_jornada(mov) for mov in sorted(movimientos, key=lambda item: item.fecha, reverse=True)] if include_items else [],
         "ventas_pendientes": ventas_pendientes,
     }
 

@@ -34,7 +34,7 @@ class UsuarioCreate(BaseModel):
 
 class UsuarioOut(BaseModel):
     id: int
-    email: EmailStr
+    email: str
     nombre_completo: str
     rol: str
     permisos: List[str] = []
@@ -409,6 +409,11 @@ class ClienteCumpleanosOut(BaseModel):
     fecha_nacimiento: date
     edad: Optional[int] = None
     referidor_nombre: Optional[str] = None
+
+
+class ClienteCumpleanosResumenOut(BaseModel):
+    total: int = 0
+    preview: List[ClienteCumpleanosOut] = []
 
 
 # ──────────────────────────────────────────────
@@ -2050,6 +2055,14 @@ class ClinicaAgendaRecordatoriosOut(BaseModel):
     tres_dias: List[ClinicaTurnoOut] = []
     ocho_dias: List[ClinicaTurnoOut] = []
     quince_dias: List[ClinicaTurnoOut] = []
+
+
+class ClinicaAgendaRecordatoriosResumenOut(BaseModel):
+    total: int = 0
+    hoy_count: int = 0
+    tres_dias_count: int = 0
+    hoy_preview: List[ClinicaTurnoOut] = []
+    tres_dias_preview: List[ClinicaTurnoOut] = []
 
 
 class ClinicaLugarIn(BaseModel):

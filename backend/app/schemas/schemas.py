@@ -3,7 +3,7 @@ HESAKA Web — Schemas Pydantic
 Modelos de request/response para la API REST.
 Separados de los modelos SQLAlchemy para mejor control.
 """
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # ──────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 class TokenResponse(BaseModel):
@@ -27,7 +27,7 @@ class TokenResponse(BaseModel):
     tenant_slug: str
 
 class UsuarioCreate(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     nombre_completo: str
     rol: str = "OPERADOR"
@@ -66,7 +66,7 @@ class ConfiguracionGeneralUpdate(BaseModel):
     ruc: Optional[str] = None
     direccion: Optional[str] = None
     telefono: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     logo_path: Optional[str] = None
     business_timezone: Optional[str] = "America/Asuncion"
 
@@ -100,7 +100,7 @@ class ConfiguracionGeneralOut(BaseModel):
     ruc: Optional[str] = None
     direccion: Optional[str] = None
     telefono: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     logo_path: Optional[str] = None
     business_timezone: str = "America/Asuncion"
     canal_principal_nombre: Optional[str] = None

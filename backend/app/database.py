@@ -401,6 +401,8 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN consulta_id INTEGER"))
             if "consulta_tipo" not in turno_columns:
                 connection.execute(text("ALTER TABLE clinica_turnos ADD COLUMN consulta_tipo VARCHAR(30)"))
+            if "recordado_15" in turno_columns:
+                connection.execute(text("ALTER TABLE clinica_turnos DROP COLUMN recordado_15"))
             connection.execute(text("UPDATE clinica_turnos SET es_control = COALESCE(es_control, FALSE)"))
             connection.execute(text(
                 """

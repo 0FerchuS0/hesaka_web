@@ -1442,11 +1442,24 @@ def editar_compra(
 
         session.flush()
 
+        tipo_documento_actual = compra.tipo_documento
+        nro_factura_actual = compra.nro_factura
+        origen_documento = compra.tipo_documento_original or tipo_documento_actual
+        es_origen_os = origen_documento == "ORDEN_SERVICIO"
+
         compra.proveedor_id = data.proveedor_id
         compra.tipo_documento = data.tipo_documento
         compra.nro_factura = data.nro_factura
-        compra.tipo_documento_original = data.tipo_documento
-        compra.nro_documento_original = data.nro_factura
+        if es_origen_os:
+            if data.tipo_documento == "ORDEN_SERVICIO":
+                compra.tipo_documento_original = "ORDEN_SERVICIO"
+                compra.nro_documento_original = data.nro_factura
+            else:
+                compra.tipo_documento_original = compra.tipo_documento_original or tipo_documento_actual
+                compra.nro_documento_original = compra.nro_documento_original or nro_factura_actual
+        else:
+            compra.tipo_documento_original = data.tipo_documento
+            compra.nro_documento_original = data.nro_factura
         compra.total = data.total
         compra.observaciones = data.observaciones
         compra.estado_entrega = estado_entrega

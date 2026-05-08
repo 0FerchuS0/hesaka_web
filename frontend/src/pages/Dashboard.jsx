@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { useAuth, api } from '../context/AuthContext'
 import {
     TrendingUp, ShoppingCart, Package,
@@ -478,9 +479,9 @@ export default function Dashboard() {
                             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowBirthdayModal(true)} disabled={!birthdaySummary.total}>
                                 Abrir saludos
                             </button>
-                            <a href="/clientes/cumpleanos" className="btn btn-secondary btn-sm">
+                            <Link to="/clientes/cumpleanos" className="btn btn-secondary btn-sm">
                                 Ver modulo
-                            </a>
+                            </Link>
                         </div>
                     </div>
                 </div>

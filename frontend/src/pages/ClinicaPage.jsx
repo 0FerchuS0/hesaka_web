@@ -3695,13 +3695,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                             Centro clinico del paciente: consultas, recetas y documentos en un solo lugar.
                                         </div>
                                     </div>
-                                    <div
-                                        style={{
-                                            display: 'grid',
-                                            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-                                            gap: 12,
-                                        }}
-                                    >
+                                    <div className="clinica-history-summary-grid">
                                         <div>
                                             <div className="form-label" style={{ marginBottom: 4 }}>CI / Pasaporte</div>
                                             <div>{paciente?.ci_pasaporte || '-'}</div>
@@ -3746,15 +3740,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                             </div>
                         </div>
 
-                        <div
-                            className="dashboard-stats"
-                            style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                                gap: 12,
-                                alignItems: 'stretch',
-                            }}
-                        >
+                        <div className="dashboard-stats clinica-history-stats-grid">
                             <StatCard label="Oftalmologia" value={oftCount} detail="Consultas registradas" accent={CLINICA_PALETTE.accent} />
                             <StatCard label="Contactologia" value={contCount} detail="Consultas registradas" accent={CLINICA_PALETTE.accentAlt} />
                             <StatCard label="Recetas" value={recetasCount} detail="Medicamentos emitidos" accent="#f59e0b" />
@@ -3765,13 +3751,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                 title="Resumen longitudinal"
                                 subtitle="Vista rapida del ultimo movimiento clinico del paciente."
                             />
-                            <div
-                                style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                                    gap: 12,
-                                }}
-                            >
+                            <div className="clinica-history-longitudinal-grid">
                                 <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
                                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Ultima oftalmologia</div>
                                     <div style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>{fmtDateTime(ultimaOftalmologia?.fecha)}</div>
@@ -3858,8 +3838,9 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
 
                         <div className="grid-2" style={{ alignItems: 'start' }}>
                             <div className="card" style={{ overflow: 'hidden', minWidth: 0 }}>
+                                <div className="clinica-scroll-hint">Desliza la tabla horizontalmente para ver todo el historial.</div>
                                 <div className="table-container">
-                                    <table className="table">
+                                    <table className="table clinica-history-modal-table">
                                         <thead>
                                             <tr>
                                                 <th style={{ width: 54 }}>#</th>
@@ -4222,8 +4203,9 @@ function PacientesSection() {
                     <div className="alert alert-error">{formatError(pacientesQuery.error, 'No se pudo cargar la lista de pacientes.')}</div>
                 ) : (
                     <>
+                        <div className="clinica-scroll-hint">Desliza la tabla horizontalmente para ver todas las columnas.</div>
                         <div className="table-container">
-                            <table className="table">
+                            <table className="table clinica-pacientes-table">
                                 <thead>
                                     <tr>
                                         <th>Paciente</th>
@@ -5864,19 +5846,11 @@ function HistorialClinicoGeneralSection() {
                     <div className="alert alert-error">{formatError(historialQuery.error, 'No se pudo cargar el historial clinico general.')}</div>
                 ) : (
                     <>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.45fr) minmax(320px, 0.95fr)', gap: 16, alignItems: 'stretch' }}>
-                            <div className="card" style={{ overflow: 'hidden', minWidth: 0, height: 'calc(100vh - 265px)', display: 'flex', flexDirection: 'column' }}>
-                                <div
-                                    className="table-container"
-                                    style={{
-                                        width: '100%',
-                                        maxWidth: '100%',
-                                        overflowX: 'hidden',
-                                        height: '100%',
-                                        overflowY: 'auto'
-                                    }}
-                                >
-                                    <table style={{ width: '100%', tableLayout: 'fixed' }}>
+                        <div className="clinica-history-general-layout">
+                            <div className="card clinica-history-panel" style={{ overflow: 'hidden' }}>
+                                <div className="clinica-scroll-hint">Desliza la tabla horizontalmente para ver el historial completo.</div>
+                                <div className="table-container clinica-history-table-shell">
+                                    <table className="table clinica-history-table">
                                         <thead>
                                             <tr>
                                                 <th style={{ width: 120 }}>Fecha</th>
@@ -6016,7 +5990,7 @@ function HistorialClinicoGeneralSection() {
                                 </>
                             )}
 
-                            <div className="card" style={{ minWidth: 0, height: 'calc(100vh - 265px)', display: 'flex', flexDirection: 'column' }}>
+                            <div className="card clinica-history-panel" style={{ minWidth: 0 }}>
                                 {!selectedEntry ? (
                                     <div style={{ color: 'var(--text-muted)' }}>Seleccione un registro para ver su detalle.</div>
                                 ) : detalleQuery.isLoading ? (

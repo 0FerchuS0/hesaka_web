@@ -935,6 +935,64 @@ select:not([class*="react-select"]) {
   gap: 16px;
 }
 
+.clinica-history-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.clinica-history-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.clinica-history-longitudinal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.clinica-history-general-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.clinica-history-panel {
+  min-width: 0;
+  height: calc(100vh - 265px);
+  display: flex;
+  flex-direction: column;
+}
+
+.clinica-history-table-shell {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+.clinica-history-table {
+  width: 100%;
+  min-width: 760px;
+  table-layout: fixed;
+}
+
+.clinica-history-modal-table {
+  min-width: 720px;
+}
+
+.clinica-pacientes-table {
+  min-width: 1080px;
+}
+
+.clinica-scroll-hint {
+  display: none;
+}
+
 .flex {
   display: flex;
 }
@@ -1161,6 +1219,54 @@ select:not([class*="react-select"]) {
   .grid-2,
   .grid-3 {
     grid-template-columns: 1fr;
+  }
+
+  .modal {
+    width: min(100%, calc(100vw - 20px));
+    max-height: 94vh;
+  }
+
+  .modal-header {
+    padding: 18px 18px 16px;
+  }
+
+  .clinica-history-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clinica-history-stats-grid,
+  .clinica-history-longitudinal-grid,
+  .clinica-history-general-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .clinica-history-panel {
+    height: auto;
+    min-height: 0;
+  }
+
+  .clinica-history-table-shell {
+    height: auto;
+    max-height: 60vh;
+  }
+
+  .clinica-history-table {
+    min-width: 780px;
+  }
+
+  .clinica-history-modal-table {
+    min-width: 640px;
+  }
+
+  .clinica-pacientes-table {
+    min-width: 980px;
+  }
+
+  .clinica-scroll-hint {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    font-size: 0.83rem;
   }
 }
 

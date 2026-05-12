@@ -16,7 +16,6 @@ export default function ReporteVentasPage() {
     const [exportingPdf, setExportingPdf] = useState(false)
     const [exportingExcel, setExportingExcel] = useState(false)
     const [data, setData] = useState(null)
-    const [productosData, setProductosData] = useState(null)
     const [error, setError] = useState('')
     const [clientes, setClientes] = useState([])
     const [vendedores, setVendedores] = useState([])
@@ -108,17 +107,12 @@ export default function ReporteVentasPage() {
             if (filtrosActuales.vendedorId) params.append('vendedor_id', filtrosActuales.vendedorId)
             if (filtrosActuales.canalVentaId) params.append('canal_venta_id', filtrosActuales.canalVentaId)
             if (filtrosActuales.estadoPago) params.append('estado_pago', filtrosActuales.estadoPago)
-            const [response, responseProductos] = await Promise.all([
-                api.get(`/reportes/ventas?${params.toString()}`),
-                api.get(`/reportes/ventas-por-producto?${params.toString()}`),
-            ])
+            const response = await api.get(`/reportes/ventas?${params.toString()}`)
             setData(response.data || null)
-            setProductosData(responseProductos.data || null)
         } catch (err) {
             console.error('Error al cargar reporte:', err)
             setError(err?.response?.data?.detail || 'No se pudo cargar el reporte de ventas.')
             setData(null)
-            setProductosData(null)
         } finally {
             setLoading(false)
         }
@@ -271,7 +265,7 @@ export default function ReporteVentasPage() {
                     <div className="kpi-card" style={{ borderLeft: '4px solid #f39c12' }}>
                         <div className="kpi-title">Utilidad bruta</div>
                         <div className="kpi-value db-orange">{formatCurrency(utilidadBrutaTotal)}</div>
-                        <div className="kpi-subtitle">Antes de comisiones · margen prom: {margenPromedio.toFixed(2)}%</div>
+                        <div className="kpi-subtitle">Antes de comisiones · margen bruto prom: {margenPromedio.toFixed(2)}%</div>
                     </div>
                     <div className="kpi-card" style={{ borderLeft: '4px solid #9b59b6' }}>
                         <div className="kpi-title">Comisiones totales</div>
@@ -293,51 +287,7 @@ export default function ReporteVentasPage() {
                 </div>
             )}
 
-            {productosData && (
-                <div className="card" style={{ marginTop: 20 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-                        <h3 style={{ margin: 0 }}>Ventas por producto</h3>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                            {productosData.total_productos || 0} productos · Cantidad: {Number(productosData.total_cantidad || 0).toLocaleString('es-PY')} · Total: {formatCurrency(productosData.total_vendido || 0)}
-                        </div>
-                    </div>
-                    <div className="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Producto</th>
-                                    <th>Codigo</th>
-                                    <th>Categoria</th>
-                                    <th>Cantidad</th>
-                                    <th>Total vendido</th>
-                                    <th>Precio promedio</th>
-                                    <th>Ventas</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(productosData.productos || []).map((item, index) => (
-                                    <tr key={`${item.producto_id || 'no-id'}-${index}`}>
-                                        <td>{item.producto_nombre}</td>
-                                        <td>{item.producto_codigo || '—'}</td>
-                                        <td>{item.categoria_nombre || '—'}</td>
-                                        <td>{Number(item.cantidad_vendida || 0).toLocaleString('es-PY')}</td>
-                                        <td>{formatCurrency(item.total_vendido || 0)}</td>
-                                        <td>{formatCurrency(item.precio_promedio || 0)}</td>
-                                        <td>{item.ventas_count || 0}</td>
-                                    </tr>
-                                ))}
-                                {(!productosData.productos || productosData.productos.length === 0) && (
-                                    <tr>
-                                        <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                                            No hay ventas por producto en el rango seleccionado.
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
+
 
             {data && (
                 <div className="card" style={{ marginBottom: 20, border: '1px solid rgba(59,130,246,0.18)', background: 'linear-gradient(180deg, rgba(15,23,42,0.94) 0%, rgba(17,24,39,0.88) 100%)' }}>
@@ -349,7 +299,7 @@ export default function ReporteVentasPage() {
                             </div>
                         </div>
                         <div style={{ minWidth: 260, color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: 1.55 }}>
-                            <div><strong style={{ color: 'var(--text-primary)' }}>Margen promedio:</strong> {margenPromedio.toFixed(2)}%</div>
+                            <div><strong style={{ color: 'var(--text-primary)' }}>Margen bruto promedio:</strong> {margenPromedio.toFixed(2)}%</div>
                             <div><strong style={{ color: 'var(--text-primary)' }}>Ventas analizadas:</strong> {cantidadVentas}</div>
                             <div><strong style={{ color: 'var(--text-primary)' }}>Periodo:</strong> {filtrosAplicados.fechaDesde || 'Inicio'} a {filtrosAplicados.fechaHasta || 'Hoy'}</div>
                         </div>
@@ -364,7 +314,7 @@ export default function ReporteVentasPage() {
                             <h3 style={{ fontSize: '1rem', margin: 0 }}>Resumen por vendedor</h3>
                             <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>{(data.por_vendedor || []).length} grupo(s)</span>
                         </div>
-                        <div className="table-responsive" style={{ maxHeight: 280, overflow: 'auto' }}>
+                        <div className="table-container" style={{ maxHeight: 280, overflow: 'auto' }}>
                             <table className="table">
                                 <thead>
                                     <tr>
@@ -372,7 +322,7 @@ export default function ReporteVentasPage() {
                                         <th className="text-right">Ventas</th>
                                         <th className="text-right">Cant.</th>
                                         <th className="text-right">U. neta</th>
-                                        <th className="text-center">Margen</th>
+                                        <th className="text-center">Margen neto</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -398,7 +348,7 @@ export default function ReporteVentasPage() {
                             <h3 style={{ fontSize: '1rem', margin: 0 }}>Resumen por canal</h3>
                             <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>{(data.por_canal || []).length} grupo(s)</span>
                         </div>
-                        <div className="table-responsive" style={{ maxHeight: 280, overflow: 'auto' }}>
+                        <div className="table-container" style={{ maxHeight: 280, overflow: 'auto' }}>
                             <table className="table">
                                 <thead>
                                     <tr>
@@ -406,7 +356,7 @@ export default function ReporteVentasPage() {
                                         <th className="text-right">Ventas</th>
                                         <th className="text-right">Cant.</th>
                                         <th className="text-right">U. neta</th>
-                                        <th className="text-center">Margen</th>
+                                        <th className="text-center">Margen neto</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -431,8 +381,19 @@ export default function ReporteVentasPage() {
             )}
 
             <div className="card">
-                <div className="table-responsive">
-                    <table className="table">
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+                    <div>
+                        <h3 style={{ margin: 0, fontSize: '1rem' }}>Detalle por factura</h3>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+                            Cada fila muestra venta, costo, utilidad bruta, comisiones y utilidad neta.
+                        </div>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                        Desliza horizontalmente para ver todas las columnas
+                    </div>
+                </div>
+                <div className="table-container" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden' }}>
+                    <table className="table" style={{ minWidth: 1680 }}>
                         <thead>
                             <tr>
                                 <th>Fecha</th>
@@ -443,25 +404,30 @@ export default function ReporteVentasPage() {
                                 <th className="text-right">Total venta</th>
                                 <th className="text-right">Costo</th>
                                 <th className="text-right">U. bruta</th>
-                                <th className="text-center">Margen</th>
+                                <th className="text-right">Com. ref.</th>
+                                <th className="text-right">Com. banco</th>
+                                <th className="text-right">Com. total</th>
+                                <th className="text-right">U. neta</th>
+                                <th className="text-center">% com.</th>
+                                <th className="text-center">Margen neto</th>
                                 <th className="text-center">Estado</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
                                 <tr>
-                                    <td colSpan="10" className="text-center" style={{ padding: 40 }}>
+                                    <td colSpan="15" className="text-center" style={{ padding: 40 }}>
                                         <div className="spinner" style={{ margin: '0 auto' }} />
                                         <div style={{ marginTop: 10, color: 'var(--text-muted)' }}>Cargando analiticas...</div>
                                     </td>
                                 </tr>
                             ) : error ? (
                                 <tr>
-                                    <td colSpan="10" className="text-center text-danger" style={{ padding: 20 }}>{error}</td>
+                                    <td colSpan="15" className="text-center text-danger" style={{ padding: 20 }}>{error}</td>
                                 </tr>
                             ) : ventas.length === 0 ? (
                                 <tr>
-                                    <td colSpan="10" className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>
+                                    <td colSpan="15" className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>
                                         No se encontraron ventas para este periodo.
                                     </td>
                                 </tr>
@@ -476,9 +442,18 @@ export default function ReporteVentasPage() {
                                         <td className="text-right fw-bold text-success">{formatCurrency(Number(venta.total_venta ?? 0))}</td>
                                         <td className="text-right text-danger">{formatCurrency(Number(venta.costo_total ?? 0))}</td>
                                         <td className="text-right fw-bold" style={{ color: '#f39c12' }}>{formatCurrency(Number(venta.utilidad_bruta ?? 0))}</td>
+                                        <td className="text-right" style={{ color: '#8b5cf6' }}>{formatCurrency(Number(venta.total_comisiones_referidor ?? 0))}</td>
+                                        <td className="text-right" style={{ color: '#ec4899' }}>{formatCurrency(Number(venta.total_comisiones_bancarias ?? 0))}</td>
+                                        <td className="text-right fw-bold" style={{ color: '#f59e0b' }}>{formatCurrency(Number(venta.total_comisiones ?? 0))}</td>
+                                        <td className="text-right fw-bold" style={{ color: '#14b8a6' }}>{formatCurrency(Number(venta.utilidad_neta ?? 0))}</td>
                                         <td className="text-center">
-                                            <span className="badge" style={{ backgroundColor: 'rgba(155, 89, 182, 0.2)', color: '#9b59b6' }}>
-                                                {Number(venta.margen_bruto ?? 0).toFixed(1)}%
+                                            <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.18)', color: '#f59e0b' }}>
+                                                {Number(venta.porcentaje_comision_total ?? 0).toFixed(2)}%
+                                            </span>
+                                        </td>
+                                        <td className="text-center">
+                                            <span className="badge" style={{ backgroundColor: 'rgba(20, 184, 166, 0.18)', color: '#14b8a6' }}>
+                                                {Number(venta.margen_neto ?? 0).toFixed(2)}%
                                             </span>
                                         </td>
                                         <td className="text-center">

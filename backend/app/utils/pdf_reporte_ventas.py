@@ -1,6 +1,6 @@
 import io
 import os
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -17,7 +17,7 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
     buffer = io.BytesIO()
     
     # Create PDF 
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4),
                            rightMargin=2*cm, leftMargin=2*cm,
                            topMargin=0.8*cm, bottomMargin=2*cm)
     
@@ -96,7 +96,7 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
     info_para = Paragraph(info_text, info_style)
     
     header_data = [[logo_img if logo_img else "", info_para]]
-    header_table = Table(header_data, colWidths=[2*cm, 12*cm])
+    header_table = Table(header_data, colWidths=[2*cm, 21*cm])
     header_table.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
@@ -145,7 +145,7 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
         ['Cantidad de Ventas', str(len(ventas_data))]
     ]
     
-    summary_table = Table(summary_data, colWidths=[8*cm, 8*cm])
+    summary_table = Table(summary_data, colWidths=[10*cm, 10*cm])
     summary_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -176,8 +176,13 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
         'Cliente',
         'Venta',
         'Costo',
-        'Utilidad',
-        'Margen',
+        'U. Bruta',
+        'Com. Ref.',
+        'Com. Banc.',
+        'Com. Total',
+        'U. Neta',
+        '% Com.',
+        'Margen Neto',
         'Estado'
     ]]
     
@@ -185,7 +190,12 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
         venta = data['venta']
         costo_total = data['costo_total']
         utilidad_bruta = data['utilidad_bruta']
-        margen_bruto = data['margen_bruto']
+        comision_referidor = data.get('comision_referidor', 0.0)
+        comision_bancaria = data.get('comision_bancaria', 0.0)
+        total_comisiones_venta = data.get('total_comisiones', comision_referidor + comision_bancaria)
+        utilidad_neta = data.get('utilidad_neta', data['utilidad_bruta'] - total_comisiones_venta)
+        porcentaje_comision_total = data.get('porcentaje_comision_total', (total_comisiones_venta / venta.total * 100) if venta.total else 0.0)
+        margen_neto = data.get('margen_neto', (utilidad_neta / venta.total * 100) if venta.total else 0.0)
         
         cliente_nombre = venta.cliente_rel.nombre if venta.cliente_rel else "-"
         
@@ -196,19 +206,29 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
             Paragraph(f"{int(venta.total):,}".replace(",", "."), cell_style),
             Paragraph(f"{int(costo_total):,}".replace(",", "."), cell_style),
             Paragraph(f"{int(utilidad_bruta):,}".replace(",", "."), cell_style),
-            Paragraph(f"{margen_bruto:.1f}%", cell_style),
+            Paragraph(f"{int(comision_referidor):,}".replace(",", "."), cell_style),
+            Paragraph(f"{int(comision_bancaria):,}".replace(",", "."), cell_style),
+            Paragraph(f"{int(total_comisiones_venta):,}".replace(",", "."), cell_style),
+            Paragraph(f"{int(utilidad_neta):,}".replace(",", "."), cell_style),
+            Paragraph(f"{porcentaje_comision_total:.1f}%", cell_style),
+            Paragraph(f"{margen_neto:.1f}%", cell_style),
             Paragraph(venta.estado, cell_style)
         ])
     
     detail_table = Table(table_data, colWidths=[
-        2*cm,   # Fecha
-        2.2*cm, # Factura
-        3.5*cm, # Cliente
-        2.2*cm, # Venta
-        2.2*cm, # Costo
-        2.2*cm, # Utilidad
-        1.8*cm, # Margen
-        1.9*cm  # Estado
+        1.8*cm,  # Fecha
+        2.1*cm,  # Factura
+        4.2*cm,  # Cliente
+        2.0*cm,  # Venta
+        2.0*cm,  # Costo
+        2.0*cm,  # U. Bruta
+        1.8*cm,  # Com. Ref.
+        1.8*cm,  # Com. Banc.
+        1.9*cm,  # Com. Total
+        1.9*cm,  # U. Neta
+        1.4*cm,  # % Com.
+        1.5*cm,  # Margen Neto
+        1.8*cm   # Estado
     ])
     
     detail_table.setStyle(TableStyle([
@@ -221,9 +241,9 @@ def generar_pdf_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_hast
         ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 8),
-        ('ALIGN', (0, 1), (2, -1), 'LEFT'),  
-        ('ALIGN', (3, 1), (6, -1), 'RIGHT'), 
-        ('ALIGN', (7, 1), (7, -1), 'CENTER'),
+        ('ALIGN', (0, 1), (2, -1), 'LEFT'),
+        ('ALIGN', (3, 1), (9, -1), 'RIGHT'),
+        ('ALIGN', (10, 1), (12, -1), 'CENTER'),
         ('VALIGN', (0, 1), (-1, -1), 'MIDDLE'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),

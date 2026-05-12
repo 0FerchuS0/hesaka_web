@@ -38,13 +38,13 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
     
     # Encabezado Empresa
     company_name = config.nombre if (config and config.nombre) else "Mi Empresa"
-    ws.merge_cells('A1:H1')
+    ws.merge_cells('A1:M1')
     ws['A1'] = company_name
     ws['A1'].font = font_title
     ws['A1'].alignment = align_center
     
     # Titulo de reporte
-    ws.merge_cells('A2:H2')
+    ws.merge_cells('A2:M2')
     ws['A2'] = "REPORTE DE VENTAS Y RENTABILIDAD"
     ws['A2'].font = Font(name='Arial', size=14, bold=True, color="34495E")
     ws['A2'].alignment = align_center
@@ -55,13 +55,13 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
     else:
         period_text = "Período: Todas las ventas"
     
-    ws.merge_cells('A3:H3')
+    ws.merge_cells('A3:M3')
     ws['A3'] = period_text
     ws['A3'].font = font_subtitle
     ws['A3'].alignment = align_center
     
     gen_date = f"Generado: {ahora_desde_config(config).strftime('%d/%m/%Y %H:%M')}"
-    ws.merge_cells('A4:H4')
+    ws.merge_cells('A4:M4')
     ws['A4'] = gen_date
     ws['A4'].font = font_normal
     ws['A4'].alignment = align_right
@@ -129,12 +129,12 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
     row_idx += 2
     
     # Detalle de Ventas
-    ws.merge_cells(f'A{row_idx}:H{row_idx}')
+    ws.merge_cells(f'A{row_idx}:M{row_idx}')
     ws[f'A{row_idx}'] = "DETALLE DE VENTAS"
     ws[f'A{row_idx}'].font = Font(name='Arial', size=12, bold=True, color="3498DB")
     row_idx += 1
     
-    headers = ['Fecha', 'Factura', 'Cliente', 'Estado', 'Venta', 'Costo', 'Utilid.', 'Margen']
+    headers = ['Fecha', 'Factura', 'Cliente', 'Estado', 'Venta', 'Costo', 'U. Bruta', 'Com. Ref.', 'Com. Banc.', 'Com. Total', 'U. Neta', '% Com.', 'Margen Neto']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=row_idx, column=col_num)
         cell.value = header
@@ -149,7 +149,12 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
         venta = data['venta']
         costo_total = data['costo_total']
         utilidad_bruta = data['utilidad_bruta']
-        margen_bruto = data['margen_bruto']
+        comision_referidor = data.get('comision_referidor', 0.0)
+        comision_bancaria = data.get('comision_bancaria', 0.0)
+        total_comisiones = data.get('total_comisiones', comision_referidor + comision_bancaria)
+        utilidad_neta = data.get('utilidad_neta', data['utilidad_bruta'] - total_comisiones)
+        porcentaje_comision_total = data.get('porcentaje_comision_total', (total_comisiones / venta.total * 100) if venta.total else 0.0)
+        margen_neto = data.get('margen_neto', (utilidad_neta / venta.total * 100) if venta.total else 0.0)
         
         cliente_nombre = venta.cliente_rel.nombre if venta.cliente_rel else "-"
         
@@ -161,7 +166,12 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
             venta.total,
             costo_total,
             utilidad_bruta,
-            f"{margen_bruto:.1f}%"
+            comision_referidor,
+            comision_bancaria,
+            total_comisiones,
+            utilidad_neta,
+            f"{porcentaje_comision_total:.1f}%",
+            f"{margen_neto:.1f}%"
         ]
         
         for col_num, val in enumerate(row_data, 1):
@@ -170,19 +180,22 @@ def generar_excel_reporte_ventas(ventas_data, config, fecha_desde=None, fecha_ha
             cell.font = font_normal
             cell.border = border_thin
             
-            if col_num in [1, 2, 4, 8]:
+            if col_num in [1, 2, 4, 12, 13]:
                 cell.alignment = align_center
             elif col_num == 3:
                 cell.alignment = align_left
             else:
-                cell.alignment = align_right
-                cell.number_format = '#,##0'
+                if col_num in [5, 6, 7, 8, 9, 10, 11]:
+                    cell.alignment = align_right
+                    cell.number_format = '#,##0'
+                else:
+                    cell.alignment = align_right
                 
         row_idx += 1
         
     # Ajustar anchos de columna
     col_widths = {
-        'A': 12, 'B': 15, 'C': 35, 'D': 12, 'E': 15, 'F': 15, 'G': 15, 'H': 12
+        'A': 12, 'B': 15, 'C': 28, 'D': 12, 'E': 15, 'F': 15, 'G': 15, 'H': 15, 'I': 15, 'J': 16, 'K': 15, 'L': 12, 'M': 12
     }
     for col, width in col_widths.items():
         ws.column_dimensions[col].width = width

@@ -47,6 +47,10 @@ class ReporteVentaOut(BaseModel):
     margen_bruto: float
     total_comisiones_referidor: float
     total_comisiones_bancarias: float
+    total_comisiones: float
+    utilidad_neta: float
+    porcentaje_comision_total: float
+    margen_neto: float
 
 class ResumenReporteVentasOut(BaseModel):
     ventas: List[ReporteVentaOut]
@@ -1071,6 +1075,10 @@ def _obtener_datos_reporte_ventas(
         margen_bruto = (utilidad_bruta / total_venta * 100) if total_venta > 0 else 0.0
         com_ref = float(row.comision_monto or 0.0)
         com_ban = float(row.comision_bancaria or 0.0)
+        total_comisiones_venta = com_ref + com_ban
+        utilidad_neta_venta = utilidad_bruta - total_comisiones_venta
+        porcentaje_comision_total = (total_comisiones_venta / total_venta * 100) if total_venta > 0 else 0.0
+        margen_neto = (utilidad_neta_venta / total_venta * 100) if total_venta > 0 else 0.0
         
         # Sumar a totales
         suma_ventas += total_venta
@@ -1094,10 +1102,13 @@ def _obtener_datos_reporte_ventas(
             utilidad_bruta=utilidad_bruta,
             margen_bruto=margen_bruto,
             total_comisiones_referidor=com_ref,
-            total_comisiones_bancarias=com_ban
+            total_comisiones_bancarias=com_ban,
+            total_comisiones=total_comisiones_venta,
+            utilidad_neta=utilidad_neta_venta,
+            porcentaje_comision_total=porcentaje_comision_total,
+            margen_neto=margen_neto,
         ))
 
-        utilidad_neta_venta = utilidad_bruta - (com_ref + com_ban)
         etiqueta_vendedor = row.vendedor_nombre or 'Sin vendedor'
         clave_vendedor = f"vendedor:{row.vendedor_id or 0}"
         bucket_vendedor = resumen_vendedores.setdefault(
@@ -1180,6 +1191,12 @@ def _obtener_datos_reporte_ventas(
                 "costo_total": float(row.costo_total or 0.0),
                 "utilidad_bruta": float((row.total or 0.0) - (row.costo_total or 0.0)),
                 "margen_bruto": float((((row.total or 0.0) - (row.costo_total or 0.0)) / row.total) * 100.0) if (row.total or 0.0) > 0 else 0.0,
+                "comision_referidor": float(row.comision_monto or 0.0),
+                "comision_bancaria": float(row.comision_bancaria or 0.0),
+                "total_comisiones": float((row.comision_monto or 0.0) + (row.comision_bancaria or 0.0)),
+                "utilidad_neta": float(((row.total or 0.0) - (row.costo_total or 0.0)) - ((row.comision_monto or 0.0) + (row.comision_bancaria or 0.0))),
+                "porcentaje_comision_total": float((((row.comision_monto or 0.0) + (row.comision_bancaria or 0.0)) / row.total) * 100.0) if (row.total or 0.0) > 0 else 0.0,
+                "margen_neto": float(((((row.total or 0.0) - (row.costo_total or 0.0)) - ((row.comision_monto or 0.0) + (row.comision_bancaria or 0.0))) / row.total) * 100.0) if (row.total or 0.0) > 0 else 0.0,
             }
             for row in ventas_rows
         }
@@ -1189,6 +1206,12 @@ def _obtener_datos_reporte_ventas(
                 "costo_total": metricas_por_venta.get(venta.id, {}).get("costo_total", 0.0),
                 "utilidad_bruta": metricas_por_venta.get(venta.id, {}).get("utilidad_bruta", 0.0),
                 "margen_bruto": metricas_por_venta.get(venta.id, {}).get("margen_bruto", 0.0),
+                "comision_referidor": metricas_por_venta.get(venta.id, {}).get("comision_referidor", 0.0),
+                "comision_bancaria": metricas_por_venta.get(venta.id, {}).get("comision_bancaria", 0.0),
+                "total_comisiones": metricas_por_venta.get(venta.id, {}).get("total_comisiones", 0.0),
+                "utilidad_neta": metricas_por_venta.get(venta.id, {}).get("utilidad_neta", 0.0),
+                "porcentaje_comision_total": metricas_por_venta.get(venta.id, {}).get("porcentaje_comision_total", 0.0),
+                "margen_neto": metricas_por_venta.get(venta.id, {}).get("margen_neto", 0.0),
             }
             for venta in ventas_export
         ]

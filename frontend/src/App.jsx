@@ -107,6 +107,7 @@ function HomeRoute() {
 function AppLayout() {
     const { user, logout } = useAuth()
     const location = useLocation()
+    const [isMobileSidebarViewport, setIsMobileSidebarViewport] = useState(() => window.innerWidth <= 768)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
         const saved = window.localStorage.getItem('hesaka-sidebar-collapsed')
         return saved === 'true'
@@ -164,6 +165,23 @@ function AppLayout() {
     useEffect(() => {
         window.localStorage.setItem('hesaka-sidebar-collapsed', String(sidebarCollapsed))
     }, [sidebarCollapsed])
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia('(max-width: 768px)')
+        const syncViewport = event => {
+            setIsMobileSidebarViewport(event.matches)
+        }
+
+        setIsMobileSidebarViewport(mediaQuery.matches)
+
+        if (typeof mediaQuery.addEventListener === 'function') {
+            mediaQuery.addEventListener('change', syncViewport)
+            return () => mediaQuery.removeEventListener('change', syncViewport)
+        }
+
+        mediaQuery.addListener(syncViewport)
+        return () => mediaQuery.removeListener(syncViewport)
+    }, [])
 
     useEffect(() => {
         setMobileSidebarOpen(false)
@@ -293,12 +311,13 @@ function AppLayout() {
         return (
             <div className="app-layout">
                 <Sidebar
-                    collapsed={sidebarCollapsed}
+                    collapsed={isMobileSidebarViewport ? false : sidebarCollapsed}
                     onToggle={() => setSidebarCollapsed(prev => !prev)}
                     mobileOpen={mobileSidebarOpen}
                     onMobileClose={() => setMobileSidebarOpen(false)}
+                    isMobileViewport={isMobileSidebarViewport}
                 />
-                <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
+                <main className={`main-content ${!isMobileSidebarViewport && sidebarCollapsed ? 'main-content--expanded' : ''}`}>
                     <button
                         type="button"
                         className="mobile-sidebar-trigger"
@@ -326,12 +345,13 @@ function AppLayout() {
         <>
             <div className="app-layout">
                 <Sidebar
-                    collapsed={sidebarCollapsed}
+                    collapsed={isMobileSidebarViewport ? false : sidebarCollapsed}
                     onToggle={() => setSidebarCollapsed(prev => !prev)}
                     mobileOpen={mobileSidebarOpen}
                     onMobileClose={() => setMobileSidebarOpen(false)}
+                    isMobileViewport={isMobileSidebarViewport}
                 />
-                <main className={`main-content ${sidebarCollapsed ? 'main-content--expanded' : ''}`}>
+                <main className={`main-content ${!isMobileSidebarViewport && sidebarCollapsed ? 'main-content--expanded' : ''}`}>
                     <button
                         type="button"
                         className="mobile-sidebar-trigger"

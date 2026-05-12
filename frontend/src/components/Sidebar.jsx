@@ -158,7 +158,7 @@ const navGroups = [
     },
 ]
 
-export default function Sidebar({ collapsed = false, onToggle, mobileOpen = false, onMobileClose }) {
+export default function Sidebar({ collapsed = false, onToggle, mobileOpen = false, onMobileClose, isMobileViewport = false }) {
     const { user, logout } = useAuth()
     const navigate = useNavigate()
     const location = useLocation()
@@ -315,6 +315,14 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen = fals
         }
     }
 
+    const handleSidebarToggle = () => {
+        if (isMobileViewport) {
+            onMobileClose?.()
+            return
+        }
+        onToggle?.()
+    }
+
     return (
         <>
         <button
@@ -335,10 +343,10 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen = fals
                 <button
                     type="button"
                     className="sidebar-toggle"
-                    onClick={onToggle}
-                    title={collapsed ? 'Mostrar menu lateral' : 'Ocultar menu lateral'}
+                    onClick={handleSidebarToggle}
+                    title={isMobileViewport ? 'Cerrar menu lateral' : (collapsed ? 'Mostrar menu lateral' : 'Ocultar menu lateral')}
                 >
-                    {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                    {isMobileViewport ? <PanelLeftClose size={16} /> : (collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />)}
                 </button>
             </div>
 

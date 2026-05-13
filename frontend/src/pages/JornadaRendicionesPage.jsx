@@ -24,6 +24,7 @@ import {
     useOpcionesFiltrosRendiciones,
     usePendienteRendicionHistorial,
     useRendicionDetalle,
+    useRendicionesJornadaHistorica,
     useRendicionesJornadaActual,
 } from '../hooks/useFinancialJornada'
 import { requestAndDownloadFile, requestAndOpenPdf } from '../utils/fileDownloads'
@@ -1428,14 +1429,7 @@ export default function JornadaRendicionesPage() {
     const {
         data: rendicionesJornadaData,
         isLoading: isLoadingRendicionesJornadaModal,
-    } = useHistorialRendiciones(
-        {
-            page: 1,
-            page_size: 100,
-            jornada_fecha: jornadaVerRendiciones?.fecha,
-        },
-        { enabled: !!jornadaVerRendiciones?.fecha },
-    )
+    } = useRendicionesJornadaHistorica(jornadaVerRendiciones?.jornada_id, { enabled: !!jornadaVerRendiciones?.jornada_id })
     const crearCorte = useCrearCorteJornada()
     const puedeCortar = hasActionAccess(user, 'finanzas.jornada_corte', 'finanzas')
     const puedeRendir = hasActionAccess(user, 'finanzas.jornada_rendir', 'finanzas')
@@ -1526,7 +1520,7 @@ export default function JornadaRendicionesPage() {
         return base
     }, [movimientosDetalle, ventasPendientesJornada.length])
     const historialRendicionesFiltradas = historialRendiciones
-    const rendicionesDeJornadaSeleccionada = rendicionesJornadaData?.items || []
+    const rendicionesDeJornadaSeleccionada = rendicionesJornadaData || []
 
     const handleCrearCorte = () => {
         crearCorte.mutate()

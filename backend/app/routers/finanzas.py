@@ -1,5 +1,7 @@
 """HESAKA Web - Router: Caja, Bancos y Gastos"""
+import logging
 from datetime import date, datetime, time
+from time import perf_counter
 from uuid import uuid4
 from typing import List, Optional
 
@@ -94,6 +96,7 @@ from app.utils.pdf_rendicion_jornada import generar_pdf_rendicion_jornada
 caja_router = APIRouter(prefix="/api/caja", tags=["Caja"])
 banco_router = APIRouter(prefix="/api/bancos", tags=["Bancos"])
 gasto_router = APIRouter(prefix="/api/gastos", tags=["Gastos"])
+logger = logging.getLogger(__name__)
 
 
 def _serializar_estado_jornada(
@@ -359,6 +362,7 @@ def obtener_panel_inicial_jornada(
 ):
     """Estado del día + cortes con una sola carga de movimientos (evita triplicar trabajo vs GETs en paralelo)."""
     session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
     try:
         jornada = obtener_jornada_actual(session)
         if not jornada:
@@ -368,7 +372,9 @@ def obtener_panel_inicial_jornada(
                 include_operational_detail=False,
                 include_alerta_resumen=False,
             )
-            return JornadaPanelInicialOut(estado=estado, cortes=[])
+            resultado = JornadaPanelInicialOut(estado=estado, cortes=[])
+            logger.info("jornada_panel_inicial_ok tenant=%s abierta=%s cortes=%s elapsed_ms=%.2f", tenant_slug, False, 0, (perf_counter() - started_at) * 1000)
+            return resultado
         all_movs = cargar_movimientos_jornada_normalizados(session, jornada)
         estado = _serializar_estado_jornada(
             session,
@@ -384,7 +390,16 @@ def obtener_panel_inicial_jornada(
             .all()
         )
         cortes_out = serializar_cortes_jornada_lista(session, jornada, cortes, movimientos_cache=all_movs)
-        return JornadaPanelInicialOut(estado=estado, cortes=cortes_out)
+        resultado = JornadaPanelInicialOut(estado=estado, cortes=cortes_out)
+        logger.info(
+            "jornada_panel_inicial_ok tenant=%s abierta=%s cortes=%s movs=%s elapsed_ms=%.2f",
+            tenant_slug,
+            True,
+            len(cortes_out),
+            len(all_movs),
+            (perf_counter() - started_at) * 1000,
+        )
+        return resultado
     except HTTPException:
         raise
     except Exception as exc:
@@ -399,10 +414,20 @@ def obtener_detalle_operativo_jornada_actual(
     current_user=Depends(get_current_user),
 ):
     session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
     try:
         jornada = obtener_jornada_actual(session)
         movimientos_cache = cargar_movimientos_jornada_normalizados(session, jornada) if jornada else None
-        return _serializar_detalle_operativo_jornada(session, jornada, movimientos_cache=movimientos_cache)
+        resultado = _serializar_detalle_operativo_jornada(session, jornada, movimientos_cache=movimientos_cache)
+        logger.info(
+            "jornada_detalle_operativo_ok tenant=%s abierta=%s movs=%s ventas=%s elapsed_ms=%.2f",
+            tenant_slug,
+            bool(jornada and jornada.estado == "ABIERTA"),
+            len(resultado.movimientos_detalle or []),
+            resultado.ventas_detalle.get("cantidad_ventas", 0) if isinstance(resultado.ventas_detalle, dict) else 0,
+            (perf_counter() - started_at) * 1000,
+        )
+        return resultado
     except HTTPException:
         raise
     except Exception as exc:
@@ -684,6 +709,7 @@ def listar_historial_jornadas(
     fecha_hasta: Optional[date] = Query(None),
 ):
     session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
     try:
         query = session.query(JornadaFinanciera)
         if fecha:
@@ -694,7 +720,46 @@ def listar_historial_jornadas(
             if fecha_hasta:
                 query = query.filter(JornadaFinanciera.fecha <= fecha_hasta)
         jornadas = query.order_by(JornadaFinanciera.fecha.desc(), JornadaFinanciera.id.desc()).limit(limit).all()
-        return construir_filas_historial_jornadas(session, jornadas)
+        resultado = construir_filas_historial_jornadas(session, jornadas)
+        logger.info(
+            "jornada_historial_jornadas_ok tenant=%s rows=%s limit=%s elapsed_ms=%.2f",
+            tenant_slug,
+            len(resultado),
+            limit,
+            (perf_counter() - started_at) * 1000,
+        )
+        return resultado
+    finally:
+        session.close()
+
+
+@caja_router.get("/jornada/historial/jornadas/{jornada_id}/rendiciones", response_model=List[RendicionJornadaOut])
+def listar_rendiciones_por_jornada_historica(
+    jornada_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
+    try:
+        jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == jornada_id).first()
+        if not jornada:
+            raise HTTPException(status_code=404, detail="Jornada no encontrada.")
+        rendiciones = (
+            session.query(RendicionJornadaFinanciera)
+            .filter(RendicionJornadaFinanciera.jornada_id == jornada.id)
+            .order_by(RendicionJornadaFinanciera.fecha_hora_rendicion.desc(), RendicionJornadaFinanciera.id.desc())
+            .all()
+        )
+        resultado = [serializar_rendicion(session, rendicion) for rendicion in rendiciones]
+        logger.info(
+            "jornada_historial_rendiciones_jornada_ok tenant=%s jornada_id=%s rows=%s elapsed_ms=%.2f",
+            tenant_slug,
+            jornada_id,
+            len(resultado),
+            (perf_counter() - started_at) * 1000,
+        )
+        return resultado
     finally:
         session.close()
 
@@ -906,6 +971,7 @@ def listar_historial_rendiciones(
     fecha_hasta: Optional[date] = Query(None),
 ):
     session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
     try:
         query = (
             session.query(RendicionJornadaFinanciera, JornadaFinanciera.fecha.label("jornada_fecha"))
@@ -979,13 +1045,23 @@ def listar_historial_rendiciones(
                 "motivo_ajuste": rendicion.motivo_ajuste,
             })
 
-        return {
+        resultado = {
             "items": items,
             "page": page,
             "page_size": page_size,
             "total": total,
             "total_pages": total_pages,
         }
+        logger.info(
+            "jornada_historial_rendiciones_ok tenant=%s page=%s size=%s total=%s items=%s elapsed_ms=%.2f",
+            tenant_slug,
+            page,
+            page_size,
+            total,
+            len(items),
+            (perf_counter() - started_at) * 1000,
+        )
+        return resultado
     finally:
         session.close()
 

@@ -160,6 +160,7 @@ export function useCrearRendicionJornada() {
             queryClient.invalidateQueries({ queryKey: ['jornada-pendiente-rendicion'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-jornadas'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones'] })
+            queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones-jornada'] })
         },
     })
 }
@@ -176,6 +177,7 @@ export function useCrearRendicionJornadaHistorial(jornadaId) {
             queryClient.invalidateQueries({ queryKey: ['jornada-pendiente-rendicion'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-jornadas'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones'] })
+            queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones-jornada'] })
         },
     })
 }
@@ -202,6 +204,7 @@ export function useEditarRendicionJornada() {
             queryClient.invalidateQueries({ queryKey: ['jornada-pendiente-rendicion'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-jornadas'] })
             queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones'] })
+            queryClient.invalidateQueries({ queryKey: ['jornada-historial-rendiciones-jornada'] })
         },
     })
 }
@@ -235,6 +238,16 @@ export function useRendicionDetalle(rendicionId) {
         queryKey: ['jornada-rendicion-detalle', rendicionId],
         queryFn: () => api.get(`/caja/jornada/rendiciones/${rendicionId}`).then(response => response.data),
         enabled: !!rendicionId,
+        retry: false,
+        staleTime: 30000,
+    })
+}
+
+export function useRendicionesJornadaHistorica(jornadaId, options = {}) {
+    return useQuery({
+        queryKey: ['jornada-historial-rendiciones-jornada', jornadaId],
+        queryFn: () => api.get(`/caja/jornada/historial/jornadas/${jornadaId}/rendiciones`).then(response => response.data),
+        enabled: (options.enabled ?? true) && !!jornadaId,
         retry: false,
         staleTime: 30000,
     })

@@ -603,7 +603,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['cxp-resumen'] })
             queryClient.invalidateQueries({ queryKey: ['cxp-contados-pendientes'] })
-            queryClient.invalidateQueries({ queryKey: ['cxp-historial-pagos'] })
+            queryClient.invalidateQueries({ queryKey: ['cxp-historial-pagos-listado'] })
             queryClient.invalidateQueries({ queryKey: ['compras'] })
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
@@ -968,6 +968,8 @@ export default function CuentasPorPagarPage() {
     const [historialCliente, setHistorialCliente] = useState('')
     const [historialFechaDesde, setHistorialFechaDesde] = useState('')
     const [historialFechaHasta, setHistorialFechaHasta] = useState('')
+    const [historialPage, setHistorialPage] = useState(1)
+    const historialPageSize = 25
     const [historialProveedores, setHistorialProveedores] = useState([])
     const [historialProveedoresLoading, setHistorialProveedoresLoading] = useState(false)
     const [historialProveedorBusqueda, setHistorialProveedorBusqueda] = useState('')
@@ -979,17 +981,24 @@ export default function CuentasPorPagarPage() {
     const { data: resumen = [], isLoading: loadingResumen, isError: errorResumen, error: resumenError } = useQuery({
         queryKey: ['cxp-resumen'],
         queryFn: () => api.get('/compras/cuentas-por-pagar/resumen').then(response => response.data),
+        enabled: tab === 'creditos',
         retry: false,
     })
 
     const { data: contados = [], isLoading: loadingContados, isError: errorContados, error: contadosError } = useQuery({
         queryKey: ['cxp-contados-pendientes'],
         queryFn: () => api.get('/compras/cuentas-por-pagar/contados-pendientes').then(response => response.data),
+        enabled: tab === 'contados',
         retry: false,
     })
-    const { data: historialPagos = [], isLoading: loadingHistorial } = useQuery({
-        queryKey: ['cxp-historial-pagos', historialProveedorId, historialOS, historialFactura, historialCliente, historialFechaDesde, historialFechaHasta],
-        queryFn: () => api.get('/compras/cuentas-por-pagar/pagos-historial', {
+    const {
+        data: historialData = { items: [], page: 1, page_size: historialPageSize, total: 0, total_pages: 1 },
+        isLoading: loadingHistorial,
+        isError: errorHistorial,
+        error: historialError,
+    } = useQuery({
+        queryKey: ['cxp-historial-pagos-listado', historialProveedorId, historialOS, historialFactura, historialCliente, historialFechaDesde, historialFechaHasta, historialPage, historialPageSize],
+        queryFn: () => api.get('/compras/cuentas-por-pagar/pagos-historial-paginado', {
             params: {
                 proveedor_id: historialProveedorId || undefined,
                 buscar_os: historialOS || undefined,
@@ -997,10 +1006,22 @@ export default function CuentasPorPagarPage() {
                 buscar_cliente: historialCliente || undefined,
                 fecha_desde: historialFechaDesde || undefined,
                 fecha_hasta: historialFechaHasta || undefined,
+                page: historialPage,
+                page_size: historialPageSize,
             },
-        }).then(response => response.data),
+        }).then(response => response.data || { items: [], page: 1, page_size: historialPageSize, total: 0, total_pages: 1 }),
+        enabled: tab === 'historial',
         retry: false,
     })
+
+    const historialPagos = historialData.items || []
+    const historialTotal = Number(historialData.total || 0)
+    const historialTotalPages = Number(historialData.total_pages || 1)
+    const historialCurrentPage = Number(historialData.page || 1)
+
+    useEffect(() => {
+        setHistorialPage(1)
+    }, [historialProveedorId, historialOS, historialFactura, historialCliente, historialFechaDesde, historialFechaHasta])
 
     useEffect(() => {
         if (!historialProveedorBusqueda.trim()) {
@@ -1028,7 +1049,7 @@ export default function CuentasPorPagarPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['cxp-resumen'] })
             queryClient.invalidateQueries({ queryKey: ['cxp-contados-pendientes'] })
-            queryClient.invalidateQueries({ queryKey: ['cxp-historial-pagos'] })
+            queryClient.invalidateQueries({ queryKey: ['cxp-historial-pagos-listado'] })
             queryClient.invalidateQueries({ queryKey: ['compras'] })
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
             queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
@@ -1308,6 +1329,7 @@ export default function CuentasPorPagarPage() {
                                     setHistorialOS('')
                                     setHistorialFactura('')
                                     setHistorialCliente('')
+                                    setHistorialPage(1)
                                 }}
                             >
                                 Limpiar
@@ -1329,59 +1351,82 @@ export default function CuentasPorPagarPage() {
                         <div className="flex-center" style={{ padding: 60 }}>
                             <div className="spinner" style={{ width: 32, height: 32 }} />
                         </div>
+                    ) : errorHistorial ? (
+                        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: '12px 14px', margin: 16, color: '#fca5a5', fontSize: '0.82rem', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                            <AlertCircle size={16} style={{ marginTop: 2 }} />
+                            <div>
+                                <div style={{ fontWeight: 700, marginBottom: 4 }}>No se pudo cargar el historial de pagos.</div>
+                                <div>{historialError?.response?.data?.detail || 'Verifica backend y vuelve a intentar.'}</div>
+                            </div>
+                        </div>
                     ) : historialPagos.length === 0 ? (
                         <div className="empty-state">
                             <ReceiptText size={40} />
                             <p>No hay pagos a proveedores para mostrar.</p>
                         </div>
                     ) : (
-                        <div className="table-container">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Fecha</th>
-                                        <th>Proveedor</th>
-                                        <th>OS</th>
-                                        <th>Factura</th>
-                                        <th>Clientes</th>
-                                        <th>Metodos</th>
-                                        <th>Comprobantes</th>
-                                        <th>Total</th>
-                                        <th style={{ width: 120 }}>Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {historialPagos.map(item => (
-                                        <tr key={item.grupo_id}>
-                                            <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{fmtDate(item.fecha)}</td>
-                                            <td style={{ fontWeight: 700 }}>{item.proveedor_nombre || '-'}</td>
-                                            <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.os_origen?.length ? item.os_origen.join(', ') : '-'}</td>
-                                            <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.facturas?.length ? item.facturas.join(', ') : '-'}</td>
-                                            <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.clientes?.length ? item.clientes.join(', ') : '-'}</td>
-                                            <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.metodos?.length ? item.metodos.join(', ') : '-'}</td>
-                                            <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.comprobantes?.length ? item.comprobantes.join(', ') : '-'}</td>
-                                            <td style={{ fontWeight: 800, color: 'var(--success)' }}>Gs. {fmt(item.total)}</td>
-                                            <td>
-                                                <HistorialPagoActions
-                                                    item={item}
-                                                    isRevirtiendo={revertirPago.isPending}
-                                                    onEditar={selected => setEditarPagoGrupo(selected)}
-                                                    onPDF={abrirHistorialPagoPDF}
-                                                    onRevertir={selected => {
-                                                        if (confirm('Ã‚Â¿Revertir este pago? Esto restaurarÃƒÂ¡ los saldos y devolverÃƒÂ¡ fondos a caja o banco.')) {
-                                                            setHistorialRevertingGroupId(selected.grupo_id)
-                                                            revertirPago.mutate(selected.grupo_id)
-                                                        }
-                                                    }}
-                                                    user={user}
-                                                    pdfOpeningGroupId={historialPdfGroupId}
-                                                    revertingGroupId={historialRevertingGroupId}
-                                                />
-                                            </td>
+                        <div>
+                            <div className="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Fecha</th>
+                                            <th>Proveedor</th>
+                                            <th>OS</th>
+                                            <th>Factura</th>
+                                            <th>Clientes</th>
+                                            <th>Metodos</th>
+                                            <th>Comprobantes</th>
+                                            <th>Total</th>
+                                            <th style={{ width: 120 }}>Acciones</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        {historialPagos.map(item => (
+                                            <tr key={item.grupo_id}>
+                                                <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{fmtDate(item.fecha)}</td>
+                                                <td style={{ fontWeight: 700 }}>{item.proveedor_nombre || '-'}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.os_origen?.length ? item.os_origen.join(', ') : '-'}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.facturas?.length ? item.facturas.join(', ') : '-'}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.clientes?.length ? item.clientes.join(', ') : '-'}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.metodos?.length ? item.metodos.join(', ') : '-'}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.comprobantes?.length ? item.comprobantes.join(', ') : '-'}</td>
+                                                <td style={{ fontWeight: 800, color: 'var(--success)' }}>Gs. {fmt(item.total)}</td>
+                                                <td>
+                                                    <HistorialPagoActions
+                                                        item={item}
+                                                        isRevirtiendo={revertirPago.isPending}
+                                                        onEditar={selected => setEditarPagoGrupo(selected)}
+                                                        onPDF={abrirHistorialPagoPDF}
+                                                        onRevertir={selected => {
+                                                            if (confirm('Ã‚Â¿Revertir este pago? Esto restaurarÃƒÂ¡ los saldos y devolverÃƒÂ¡ fondos a caja o banco.')) {
+                                                                setHistorialRevertingGroupId(selected.grupo_id)
+                                                                revertirPago.mutate(selected.grupo_id)
+                                                            }
+                                                        }}
+                                                        user={user}
+                                                        pdfOpeningGroupId={historialPdfGroupId}
+                                                        revertingGroupId={historialRevertingGroupId}
+                                                    />
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                                    Mostrando pagina {historialCurrentPage} de {historialTotalPages} · {historialTotal} registros
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button type="button" className="btn btn-secondary btn-sm" disabled={historialCurrentPage <= 1} onClick={() => setHistorialPage(prev => Math.max(1, prev - 1))}>
+                                        Anterior
+                                    </button>
+                                    <button type="button" className="btn btn-secondary btn-sm" disabled={historialCurrentPage >= historialTotalPages} onClick={() => setHistorialPage(prev => Math.min(historialTotalPages, prev + 1))}>
+                                        Siguiente
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>

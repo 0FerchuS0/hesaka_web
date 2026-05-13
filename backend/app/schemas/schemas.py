@@ -1123,6 +1123,14 @@ class HistorialPagoProveedorOut(BaseModel):
     estado: str = "ACTIVO"
 
 
+class HistorialPagoProveedorListResponseOut(BaseModel):
+    items: List[HistorialPagoProveedorOut]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class HistorialPagoProveedorDetalleOut(BaseModel):
     grupo_id: str
     lote_pago_id: Optional[str] = None

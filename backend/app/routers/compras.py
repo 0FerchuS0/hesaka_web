@@ -1,12 +1,14 @@
 """HESAKA Web - Router: Compras a Proveedores"""
+import logging
 from datetime import datetime
 from math import ceil
+from time import perf_counter
 from uuid import uuid4
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_
+from sqlalchemy import String, cast, func, literal, or_
 from sqlalchemy.orm import selectinload
 
 from app.database import get_session_for_tenant
@@ -36,6 +38,7 @@ from app.schemas.schemas import (
     CuentaPorPagarDocumentoOut,
     CuentaPorPagarProveedorResumenOut,
     HistorialPagoProveedorDetalleOut,
+    HistorialPagoProveedorListResponseOut,
     HistorialPagoProveedorOut,
     PagoCompraCreate,
     PagoCompraOut,
@@ -55,6 +58,7 @@ from app.utils.pdf_pago_proveedor import generar_pdf_pago_proveedor
 from app.utils.timezone import ahora_negocio
 
 router = APIRouter(prefix="/api/compras", tags=["Compras"])
+logger = logging.getLogger(__name__)
 
 
 def _query_compra_detallada(session, compra_id: int) -> Optional[Compra]:
@@ -686,6 +690,7 @@ def obtener_resumen_cuentas_por_pagar(
     current_user=Depends(get_current_user),
 ):
     session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
     try:
         compras = (
             session.query(Compra)
@@ -728,7 +733,10 @@ def obtener_resumen_cuentas_por_pagar(
             if (compra.tipo_documento_original or compra.tipo_documento) == "ORDEN_SERVICIO":
                 resumen["total_os"] += saldo
 
-        return [CuentaPorPagarProveedorResumenOut(**item) for item in resumen_map.values()]
+        resultado = [CuentaPorPagarProveedorResumenOut(**item) for item in resumen_map.values()]
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        logger.info("cxp_resumen_ok tenant=%s rows=%s elapsed_ms=%.2f", tenant_slug, len(resultado), elapsed_ms)
+        return resultado
     finally:
         session.close()
 
@@ -739,6 +747,7 @@ def obtener_contados_pendientes(
     current_user=Depends(get_current_user),
 ):
     session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
     try:
         compras = (
             session.query(Compra)
@@ -753,7 +762,10 @@ def obtener_contados_pendientes(
             .order_by(Compra.fecha.desc())
             .all()
         )
-        return [_serializar_documento_cxp(session, compra) for compra in compras]
+        resultado = [_serializar_documento_cxp(session, compra) for compra in compras]
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        logger.info("cxp_contados_ok tenant=%s rows=%s elapsed_ms=%.2f", tenant_slug, len(resultado), elapsed_ms)
+        return resultado
     finally:
         session.close()
 
@@ -1091,6 +1103,113 @@ def _construir_grupos_historial_pago(session, pagos: List[PagoCompra]):
     return grupos
 
 
+def _normalizar_rango_historial(
+    fecha_desde: Optional[datetime],
+    fecha_hasta: Optional[datetime],
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    if fecha_desde and fecha_desde.hour == 0 and fecha_desde.minute == 0 and fecha_desde.second == 0:
+        fecha_desde = fecha_desde.replace(hour=0, minute=0, second=0, microsecond=0)
+    if fecha_hasta and fecha_hasta.hour == 0 and fecha_hasta.minute == 0 and fecha_hasta.second == 0:
+        fecha_hasta = fecha_hasta.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return fecha_desde, fecha_hasta
+
+
+def _historial_grupo_id_expression():
+    return func.coalesce(PagoCompra.lote_pago_id, literal("IND-") + cast(PagoCompra.id, String))
+
+
+def _construir_query_historial_pagos(
+    session,
+    proveedor_id: Optional[int] = None,
+    buscar_os: Optional[str] = None,
+    buscar_factura: Optional[str] = None,
+    buscar_cliente: Optional[str] = None,
+    fecha_desde: Optional[datetime] = None,
+    fecha_hasta: Optional[datetime] = None,
+    include_options: bool = True,
+):
+    buscar_os_norm = buscar_os.strip().upper() if buscar_os else None
+    buscar_factura_norm = buscar_factura.strip().upper() if buscar_factura else None
+    buscar_cliente_norm = buscar_cliente.strip().upper() if buscar_cliente else None
+    fecha_desde, fecha_hasta = _normalizar_rango_historial(fecha_desde, fecha_hasta)
+
+    query = (
+        session.query(PagoCompra)
+        .join(Compra, PagoCompra.compra_id == Compra.id)
+        .filter(PagoCompra.estado == "ACTIVO")
+    )
+
+    if include_options:
+        query = query.options(
+            selectinload(PagoCompra.compra_rel).selectinload(Compra.proveedor_rel),
+            selectinload(PagoCompra.compra_rel).selectinload(Compra.cliente_rel),
+            selectinload(PagoCompra.compra_rel).selectinload(Compra.venta_rel).selectinload(Venta.cliente_rel),
+            selectinload(PagoCompra.compra_rel)
+            .selectinload(Compra.ventas_asociadas)
+            .selectinload(CompraVenta.venta_rel)
+            .selectinload(Venta.cliente_rel),
+        )
+
+    if proveedor_id:
+        query = query.filter(Compra.proveedor_id == proveedor_id)
+    if fecha_desde:
+        query = query.filter(PagoCompra.fecha >= fecha_desde)
+    if fecha_hasta:
+        query = query.filter(PagoCompra.fecha <= fecha_hasta)
+    if buscar_os_norm:
+        os_term = f"%{buscar_os_norm}%"
+        query = query.filter(
+            Compra.nro_documento_original.isnot(None),
+            Compra.nro_documento_original.ilike(os_term),
+            or_(
+                func.upper(func.coalesce(Compra.tipo_documento_original, "")) == "ORDEN_SERVICIO",
+                (
+                    func.upper(func.coalesce(Compra.tipo_documento_original, "")) == ""
+                ) & (
+                    func.upper(func.coalesce(Compra.tipo_documento, "")).in_(["FACTURA", "SIN_FACTURA"])
+                ),
+            ),
+        )
+    if buscar_factura_norm:
+        factura_term = f"%{buscar_factura_norm}%"
+        query = query.filter(
+            Compra.nro_factura.isnot(None),
+            Compra.nro_factura.ilike(factura_term),
+            func.upper(func.coalesce(Compra.tipo_documento, "")).in_(["FACTURA", "SIN_FACTURA"]),
+        )
+    if buscar_cliente_norm:
+        cliente_term = f"%{buscar_cliente_norm}%"
+        query = query.filter(
+            or_(
+                Compra.cliente_rel.has(Cliente.nombre.ilike(cliente_term)),
+                Compra.venta_rel.has(Venta.cliente_rel.has(Cliente.nombre.ilike(cliente_term))),
+                Compra.ventas_asociadas.any(
+                    CompraVenta.venta_rel.has(Venta.cliente_rel.has(Cliente.nombre.ilike(cliente_term)))
+                ),
+            )
+        )
+    return query
+
+
+def _serializar_grupo_historial(grupo: dict) -> HistorialPagoProveedorOut:
+    return HistorialPagoProveedorOut(
+        grupo_id=grupo["grupo_id"],
+        lote_pago_id=grupo["lote_pago_id"],
+        fecha=grupo["fecha"],
+        proveedor_id=grupo["proveedor_id"],
+        proveedor_nombre=grupo["proveedor_nombre"],
+        total=grupo["total"],
+        cantidad_documentos=grupo["cantidad_documentos"],
+        documentos=sorted(grupo["documentos"]),
+        os_origen=sorted(grupo["os_origen"]),
+        facturas=sorted(grupo["facturas"]),
+        clientes=sorted(grupo["clientes"]),
+        metodos=sorted(grupo["metodos"]),
+        comprobantes=sorted(grupo["comprobantes"]),
+        estado=grupo["estado"],
+    )
+
+
 def _obtener_historial_pagos_proveedores(
     session,
     proveedor_id: Optional[int] = None,
@@ -1100,87 +1219,166 @@ def _obtener_historial_pagos_proveedores(
     fecha_desde: Optional[datetime] = None,
     fecha_hasta: Optional[datetime] = None,
 ) -> List[HistorialPagoProveedorOut]:
-    if fecha_desde and fecha_desde.hour == 0 and fecha_desde.minute == 0 and fecha_desde.second == 0:
-        fecha_desde = fecha_desde.replace(hour=0, minute=0, second=0, microsecond=0)
-    if fecha_hasta and fecha_hasta.hour == 0 and fecha_hasta.minute == 0 and fecha_hasta.second == 0:
-        fecha_hasta = fecha_hasta.replace(hour=23, minute=59, second=59, microsecond=999999)
+    pagos_filtrados = _construir_query_historial_pagos(
+        session,
+        proveedor_id=proveedor_id,
+        buscar_os=buscar_os,
+        buscar_factura=buscar_factura,
+        buscar_cliente=buscar_cliente,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        include_options=True,
+    ).order_by(PagoCompra.fecha.desc(), PagoCompra.id.desc()).all()
 
-    pagos = (
-        session.query(PagoCompra)
-        .options(
-            selectinload(PagoCompra.compra_rel).selectinload(Compra.proveedor_rel),
-            selectinload(PagoCompra.banco_rel),
-            selectinload(PagoCompra.compra_rel).selectinload(Compra.cliente_rel),
-            selectinload(PagoCompra.compra_rel).selectinload(Compra.venta_rel).selectinload(Venta.cliente_rel),
-            selectinload(PagoCompra.compra_rel)
-            .selectinload(Compra.items)
-            .selectinload(CompraDetalle.presupuesto_item_rel)
-            .selectinload(PresupuestoItem.presupuesto_rel)
-            .selectinload(Presupuesto.cliente_rel),
-            selectinload(PagoCompra.compra_rel)
-            .selectinload(Compra.items)
-            .selectinload(CompraDetalle.presupuesto_item_rel)
-            .selectinload(PresupuestoItem.presupuesto_rel)
-            .selectinload(Presupuesto.venta_rel),
-            selectinload(PagoCompra.compra_rel)
-            .selectinload(Compra.ventas_asociadas)
-            .selectinload(CompraVenta.venta_rel)
-            .selectinload(Venta.cliente_rel),
+    grupos = _construir_grupos_historial_pago(session, pagos_filtrados)
+    historial = [_serializar_grupo_historial(grupo) for grupo in grupos.values()]
+    historial.sort(key=lambda item: item.fecha, reverse=True)
+    return historial
+
+
+def _obtener_historial_pagos_proveedores_paginado(
+    session,
+    proveedor_id: Optional[int] = None,
+    buscar_os: Optional[str] = None,
+    buscar_factura: Optional[str] = None,
+    buscar_cliente: Optional[str] = None,
+    fecha_desde: Optional[datetime] = None,
+    fecha_hasta: Optional[datetime] = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> HistorialPagoProveedorListResponseOut:
+    page_normalizada = max(1, page)
+    page_size_normalizada = max(1, page_size)
+
+    query_base = _construir_query_historial_pagos(
+        session,
+        proveedor_id=proveedor_id,
+        buscar_os=buscar_os,
+        buscar_factura=buscar_factura,
+        buscar_cliente=buscar_cliente,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        include_options=False,
+    )
+
+    grupo_expr = _historial_grupo_id_expression().label("grupo_id")
+    grupos_subquery = (
+        query_base
+        .with_entities(
+            grupo_expr,
+            func.max(PagoCompra.fecha).label("fecha_max"),
         )
-        .filter(PagoCompra.estado == "ACTIVO")
-        .order_by(PagoCompra.fecha.desc(), PagoCompra.id.desc())
+        .group_by(grupo_expr)
+        .subquery()
+    )
+
+    total = session.query(func.count()).select_from(grupos_subquery).scalar() or 0
+    total_pages = max(1, ceil(total / page_size_normalizada))
+    page_ajustada = max(1, min(page_normalizada, total_pages))
+    offset = (page_ajustada - 1) * page_size_normalizada
+
+    grupos_pagina = (
+        session.query(grupos_subquery.c.grupo_id, grupos_subquery.c.fecha_max)
+        .order_by(grupos_subquery.c.fecha_max.desc(), grupos_subquery.c.grupo_id.desc())
+        .offset(offset)
+        .limit(page_size_normalizada)
         .all()
     )
 
-    buscar_os_norm = buscar_os.strip().upper() if buscar_os else None
-    buscar_factura_norm = buscar_factura.strip().upper() if buscar_factura else None
-    buscar_cliente_norm = buscar_cliente.strip().upper() if buscar_cliente else None
+    if not grupos_pagina:
+        return HistorialPagoProveedorListResponseOut(
+            items=[],
+            page=page_ajustada,
+            page_size=page_size_normalizada,
+            total=total,
+            total_pages=total_pages,
+        )
 
-    pagos_filtrados = []
-    for pago in pagos:
-        compra = pago.compra_rel
-        if proveedor_id and (not compra or compra.proveedor_id != proveedor_id):
-            continue
-        if fecha_desde and pago.fecha and pago.fecha < fecha_desde:
-            continue
-        if fecha_hasta and pago.fecha and pago.fecha > fecha_hasta:
-            continue
+    grupo_ids_ordenados = [str(row.grupo_id) for row in grupos_pagina]
+    lote_ids = [gid for gid in grupo_ids_ordenados if gid and not gid.startswith("IND-")]
+    pago_ids_individuales = []
+    for gid in grupo_ids_ordenados:
+        if gid.startswith("IND-"):
+            try:
+                pago_ids_individuales.append(int(gid.replace("IND-", "", 1)))
+            except ValueError:
+                continue
 
-        clientes, _ventas = _obtener_clientes_y_ventas(compra) if compra else ([], [])
-        tipo_doc_origen = (compra.tipo_documento_original or "").upper() if compra else ""
-        tipo_doc_actual = (compra.tipo_documento or "").upper() if compra else ""
-        os_origen = compra.nro_documento_original if compra and compra.nro_documento_original and (tipo_doc_origen == "ORDEN_SERVICIO" or (not tipo_doc_origen and tipo_doc_actual in {"FACTURA", "SIN_FACTURA"})) else ""
-        factura_actual = compra.nro_factura if compra and compra.nro_factura and tipo_doc_actual in {"FACTURA", "SIN_FACTURA"} else ""
+    detalle_query = _construir_query_historial_pagos(
+        session,
+        proveedor_id=proveedor_id,
+        buscar_os=buscar_os,
+        buscar_factura=buscar_factura,
+        buscar_cliente=buscar_cliente,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        include_options=True,
+    )
+    filtros_grupo = []
+    if lote_ids:
+        filtros_grupo.append(PagoCompra.lote_pago_id.in_(lote_ids))
+    if pago_ids_individuales:
+        filtros_grupo.append(PagoCompra.id.in_(pago_ids_individuales))
+    if filtros_grupo:
+        detalle_query = detalle_query.filter(or_(*filtros_grupo))
+    pagos_filtrados = detalle_query.order_by(PagoCompra.fecha.desc(), PagoCompra.id.desc()).all()
 
-        if buscar_os_norm and buscar_os_norm not in os_origen.upper():
-            continue
-        if buscar_factura_norm and buscar_factura_norm not in factura_actual.upper():
-            continue
-        if buscar_cliente_norm and buscar_cliente_norm not in " ".join(clientes).upper():
-            continue
-        pagos_filtrados.append(pago)
+    grupos_map = _construir_grupos_historial_pago(session, pagos_filtrados)
+    items = []
+    for grupo_id in grupo_ids_ordenados:
+        grupo = grupos_map.get(grupo_id)
+        if grupo:
+            items.append(_serializar_grupo_historial(grupo))
 
-    grupos = _construir_grupos_historial_pago(session, pagos_filtrados)
-    historial = []
-    for grupo in grupos.values():
-        historial.append(HistorialPagoProveedorOut(
-            grupo_id=grupo["grupo_id"],
-            lote_pago_id=grupo["lote_pago_id"],
-            fecha=grupo["fecha"],
-            proveedor_id=grupo["proveedor_id"],
-            proveedor_nombre=grupo["proveedor_nombre"],
-            total=grupo["total"],
-            cantidad_documentos=grupo["cantidad_documentos"],
-            documentos=sorted(grupo["documentos"]),
-            os_origen=sorted(grupo["os_origen"]),
-            facturas=sorted(grupo["facturas"]),
-            clientes=sorted(grupo["clientes"]),
-            metodos=sorted(grupo["metodos"]),
-            comprobantes=sorted(grupo["comprobantes"]),
-            estado=grupo["estado"],
-        ))
-    historial.sort(key=lambda item: item.fecha, reverse=True)
-    return historial
+    return HistorialPagoProveedorListResponseOut(
+        items=items,
+        page=page_ajustada,
+        page_size=page_size_normalizada,
+        total=total,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/cuentas-por-pagar/pagos-historial-paginado", response_model=HistorialPagoProveedorListResponseOut)
+def listar_historial_pagos_proveedores_paginado(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    proveedor_id: Optional[int] = Query(None),
+    buscar_os: Optional[str] = Query(None),
+    buscar_factura: Optional[str] = Query(None),
+    buscar_cliente: Optional[str] = Query(None),
+    fecha_desde: Optional[datetime] = Query(None),
+    fecha_hasta: Optional[datetime] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    session = get_session_for_tenant(tenant_slug)
+    started_at = perf_counter()
+    try:
+        resultado = _obtener_historial_pagos_proveedores_paginado(
+            session,
+            proveedor_id=proveedor_id,
+            buscar_os=buscar_os,
+            buscar_factura=buscar_factura,
+            buscar_cliente=buscar_cliente,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            page=page,
+            page_size=page_size,
+        )
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        logger.info(
+            "cxp_historial_paginado_ok tenant=%s page=%s size=%s total=%s items=%s elapsed_ms=%.2f",
+            tenant_slug,
+            resultado.page,
+            resultado.page_size,
+            resultado.total,
+            len(resultado.items),
+            elapsed_ms,
+        )
+        return resultado
+    finally:
+        session.close()
 
 
 @router.post("/cuentas-por-pagar/pagos-historial/{grupo_id}/revertir")

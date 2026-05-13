@@ -114,6 +114,24 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 SET business_timezone = COALESCE(NULLIF(TRIM(business_timezone), ''), 'America/Asuncion')
                 """
             ))
+    with engine.begin() as connection:
+        if "pagos_compras" in table_names:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_pago_compra_estado_fecha ON pagos_compras (estado, fecha DESC)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_pago_compra_lote_estado ON pagos_compras (lote_pago_id, estado)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_pago_compra_compra_estado ON pagos_compras (compra_id, estado)"
+            ))
+        if "compras" in table_names:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_compra_nro_factura ON compras (nro_factura)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_compra_nro_doc_origen ON compras (nro_documento_original)"
+            ))
     if "productos" not in table_names:
         _tenant_schema_checked.add(tenant_slug)
         return

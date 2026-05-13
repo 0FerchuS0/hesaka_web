@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, Building2, CreditCard, Eye, Landmark, Pencil, ReceiptText, Trash2, Wallet } from 'lucide-react'
+import { AlertCircle, Building2, CreditCard, Eye, Landmark, Pencil, ReceiptText, Save, Trash2, Wallet } from 'lucide-react'
 
 import Modal from '../components/Modal'
+import DetalleCompraContent from '../components/DetalleCompraContent'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api, useAuth } from '../context/AuthContext'
 import { invalidateJornadaLiveData } from '../hooks/useFinancialJornada'
@@ -135,10 +136,27 @@ function DetalleProveedorModal({ proveedor, onClose }) {
 
 function SeleccionarOSModal({ documentos, seleccionadas, onConfirm, onClose }) {
     const [selectedIds, setSelectedIds] = useState(seleccionadas)
+    const masterCheckboxRef = useRef(null)
 
     const toggle = compraId => {
         setSelectedIds(prev => prev.includes(compraId) ? prev.filter(id => id !== compraId) : [...prev, compraId])
     }
+    const allSelected = documentos.length > 0 && selectedIds.length === documentos.length
+    const someSelected = selectedIds.length > 0 && !allSelected
+
+    const toggleAll = () => {
+        setSelectedIds(allSelected ? [] : documentos.map(item => item.compra_id))
+    }
+
+    useEffect(() => {
+        setSelectedIds(seleccionadas)
+    }, [seleccionadas])
+
+    useEffect(() => {
+        if (masterCheckboxRef.current) {
+            masterCheckboxRef.current.indeterminate = someSelected
+        }
+    }, [someSelected])
 
     const totalSeleccionado = documentos
         .filter(item => selectedIds.includes(item.compra_id))
@@ -161,7 +179,16 @@ function SeleccionarOSModal({ documentos, seleccionadas, onConfirm, onClose }) {
                     <table>
                         <thead>
                             <tr>
-                                <th></th>
+                                <th>
+                                    <input
+                                        ref={masterCheckboxRef}
+                                        type="checkbox"
+                                        checked={allSelected}
+                                        onChange={toggleAll}
+                                        aria-label={allSelected ? 'Deseleccionar todas las OS' : 'Seleccionar todas las OS'}
+                                        style={{ accentColor: 'var(--primary-light)' }}
+                                    />
+                                </th>
                                 <th>Fecha</th>
                                 <th>OS origen</th>
                                 <th>Saldo</th>
@@ -613,6 +640,16 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         },
     })
 
+    const guardarFactura = useMutation({
+        mutationFn: payload => api.patch(`/compras/cuentas-por-pagar/pagos-historial/${encodeURIComponent(grupoId)}/factura`, payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['cxp-historial-pagos-listado'] })
+            queryClient.invalidateQueries({ queryKey: ['cxp-historial-detalle', grupoId] })
+            queryClient.invalidateQueries({ queryKey: ['compras'] })
+            onClose()
+        },
+    })
+
     const agregarMetodo = () => {
         if (montoNum <= 0) {
             setErrorAgregarMedio('Debes cargar un monto mayor a cero para agregar el medio de pago.')
@@ -653,6 +690,26 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         setMetodos(prev => prev.filter((_, idx) => idx !== index))
     }
 
+    const resolverPayloadFactura = () => {
+        let usarFacturaGenerica = false
+        if (!detalle?.puede_usar_factura_global) {
+            setErrorConfirmacion('Este lote no admite edicion administrativa de factura.')
+            return null
+        }
+        if (!facturaGlobal.trim()) {
+            const continuarSinFactura = confirm('No cargaste una factura para este pago. ¿Quieres continuar con numeracion interna generica?')
+            if (!continuarSinFactura) {
+                setErrorConfirmacion('Debes cargar una factura o confirmar la numeracion interna.')
+                return null
+            }
+            usarFacturaGenerica = true
+        }
+        return {
+            factura_global: facturaGlobal.trim() ? facturaGlobal : null,
+            usar_factura_generica: usarFacturaGenerica,
+        }
+    }
+
     const confirmar = event => {
         event.preventDefault()
         let usarFacturaGenerica = false
@@ -684,6 +741,13 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         })
     }
 
+    const confirmarFactura = () => {
+        const payload = resolverPayloadFactura()
+        if (!payload) return
+        setErrorConfirmacion('')
+        guardarFactura.mutate(payload)
+    }
+
     if (isLoading) {
         return <div className="flex-center" style={{ padding: 60 }}><div className="spinner" style={{ width: 30, height: 30 }} /></div>
     }
@@ -703,7 +767,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
                 <div style={{ display: 'grid', gap: 6 }}>
                     <div style={{ fontWeight: 700 }}>{detalle.proveedor_nombre}</div>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                        Se reeditara este pago sobre las mismas compras asociadas.
+                        Puedes actualizar la factura del lote sin tocar caja o banco. La reedicion financiera sigue trabajando sobre las mismas compras asociadas.
                     </div>
                     <div style={{ color: 'var(--warning)', fontWeight: 700, fontSize: '0.9rem' }}>
                         Total original: Gs. {fmt(totalOriginal)}
@@ -728,6 +792,9 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
                         onChange={event => setFacturaGlobal(event.target.value.toUpperCase())}
                         placeholder="Ej: 001-001-0001234"
                     />
+                    <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
+                        Este cambio es administrativo y se refleja tambien en Compras, aunque la jornada de ese pago ya este cerrada.
+                    </div>
                 </div>
             )}
 
@@ -833,24 +900,180 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
                 )}
             </div>
 
-            {(errorConfirmacion || guardarEdicion.isError) && (
+            {(errorConfirmacion || guardarEdicion.isError || guardarFactura.isError) && (
                 <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}>
                     <AlertCircle size={16} />
-                    {errorConfirmacion || guardarEdicion.error?.response?.data?.detail || 'No se pudo editar el pago.'}
+                    {errorConfirmacion || guardarFactura.error?.response?.data?.detail || guardarEdicion.error?.response?.data?.detail || 'No se pudo editar el pago.'}
                 </div>
             )}
 
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                {detalle.puede_usar_factura_global && (
+                    <button type="button" className="btn btn-secondary" onClick={confirmarFactura} disabled={guardarFactura.isPending}>
+                        {guardarFactura.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Save size={15} /> Guardar factura</>}
+                    </button>
+                )}
                 <button type="submit" className="btn btn-primary" disabled={guardarEdicion.isPending}>
-                    {guardarEdicion.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Pencil size={15} /> Guardar cambios</>}
+                    {guardarEdicion.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Pencil size={15} /> Guardar re-edicion financiera</>}
                 </button>
             </div>
         </form>
     )
 }
 
-function HistorialPagoActions({ item, onEditar, onPDF, onRevertir, isRevirtiendo, user, pdfOpeningGroupId, revertingGroupId }) {
+function VerPagoHistorialModal({ grupoId, onClose }) {
+    const [selectedCompraId, setSelectedCompraId] = useState(null)
+    const [openingCompraId, setOpeningCompraId] = useState(null)
+    const openTimerRef = useRef(null)
+    const { data: detalle, isLoading, isError, error } = useQuery({
+        queryKey: ['cxp-historial-detalle', grupoId],
+        queryFn: () => api.get(`/compras/cuentas-por-pagar/pagos-historial/${encodeURIComponent(grupoId)}`).then(response => response.data),
+        retry: false,
+    })
+
+    useEffect(() => {
+        return () => {
+            if (openTimerRef.current) clearTimeout(openTimerRef.current)
+        }
+    }, [])
+
+    const abrirDocumento = compraId => {
+        if (openTimerRef.current) clearTimeout(openTimerRef.current)
+        setOpeningCompraId(compraId)
+        document.getElementById(`historial-pago-doc-${grupoId}-${compraId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        openTimerRef.current = window.setTimeout(() => {
+            setSelectedCompraId(compraId)
+            setOpeningCompraId(null)
+        }, 220)
+    }
+
+    if (isLoading) {
+        return <div className="flex-center" style={{ padding: 60 }}><div className="spinner" style={{ width: 30, height: 30 }} /></div>
+    }
+
+    if (isError || !detalle) {
+        return (
+            <div className="empty-state" style={{ padding: '40px 20px' }}>
+                <AlertCircle size={34} />
+                <p>{error?.response?.data?.detail || 'No se pudo cargar el detalle del pago.'}</p>
+            </div>
+        )
+    }
+
+    return (
+        <div style={{ display: 'grid', gap: 16 }}>
+            <div className="card" style={{ marginBottom: 0, padding: '14px 16px' }}>
+                <div style={{ display: 'grid', gap: 6, fontSize: '0.82rem' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{detalle.proveedor_nombre || '-'}</div>
+                    <div><strong>Fecha:</strong> {fmtDate(detalle.fecha)}</div>
+                    <div><strong>Total:</strong> Gs. {fmt(detalle.total)}</div>
+                    <div><strong>OS:</strong> {detalle.os_origen?.length ? detalle.os_origen.join(', ') : '-'}</div>
+                    <div><strong>Facturas:</strong> {detalle.facturas?.length ? detalle.facturas.join(', ') : '-'}</div>
+                </div>
+            </div>
+
+            <div className="card" style={{ marginBottom: 0, padding: 0 }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700 }}>Medios de pago</div>
+                <div className="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Metodo</th>
+                                <th>Banco</th>
+                                <th>Comprobante</th>
+                                <th>Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(detalle.metodos_pago || []).map((item, index) => (
+                                <tr key={`${item.metodo_pago}-${index}`}>
+                                    <td>{item.metodo_pago || '-'}</td>
+                                    <td>{item.banco_nombre || '-'}</td>
+                                    <td>{item.nro_comprobante || '-'}</td>
+                                    <td style={{ fontWeight: 700 }}>Gs. {fmt(item.monto)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div className="card" style={{ marginBottom: 0, padding: 0 }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700 }}>Documentos afectados</div>
+                <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                    Al abrir un documento, la fila se resalta y el detalle completo aparece en una ventana individual con la misma vista que ya usa Compras.
+                </div>
+                <div className="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Documento</th>
+                                <th>OS</th>
+                                <th>Factura</th>
+                                <th>Cliente</th>
+                                <th>Metodo</th>
+                                <th>Comprobante</th>
+                                <th>Monto</th>
+                                <th>Accion</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(detalle.documentos_detalle || []).map(item => (
+                                <tr
+                                    key={`${item.compra_id}-${item.documento}`}
+                                    id={`historial-pago-doc-${grupoId}-${item.compra_id}`}
+                                    style={{
+                                        background: selectedCompraId === item.compra_id
+                                            ? 'rgba(59,130,246,0.12)'
+                                            : openingCompraId === item.compra_id
+                                                ? 'rgba(250,204,21,0.12)'
+                                                : undefined,
+                                        transition: 'background-color 160ms ease, box-shadow 160ms ease',
+                                        boxShadow: openingCompraId === item.compra_id
+                                            ? 'inset 3px 0 0 var(--warning)'
+                                            : selectedCompraId === item.compra_id
+                                                ? 'inset 3px 0 0 var(--primary-light)'
+                                                : undefined,
+                                    }}
+                                >
+                                    <td>{item.documento || '-'}</td>
+                                    <td>{item.os_origen || '-'}</td>
+                                    <td>{item.factura || '-'}</td>
+                                    <td>{item.cliente || '-'}</td>
+                                    <td>{item.metodo || '-'}</td>
+                                    <td>{item.comprobante || '-'}</td>
+                                    <td style={{ fontWeight: 700 }}>Gs. {fmt(item.monto)}</td>
+                                    <td>
+                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => abrirDocumento(item.compra_id)}>
+                                            <Eye size={14} /> {openingCompraId === item.compra_id ? 'Abriendo...' : 'Ver documento'}
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose}>Cerrar</button>
+            </div>
+
+            {selectedCompraId && (
+                <Modal
+                    title={`Ver documento #${selectedCompraId}`}
+                    onClose={() => setSelectedCompraId(null)}
+                    maxWidth="960px"
+                >
+                    <DetalleCompraContent compraId={selectedCompraId} onClose={() => setSelectedCompraId(null)} />
+                </Modal>
+            )}
+        </div>
+    )
+}
+
+function HistorialPagoActions({ item, onVer, onEditar, onPDF, onRevertir, isRevirtiendo, user, pdfOpeningGroupId, revertingGroupId }) {
     const [open, setOpen] = useState(false)
     const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
     const buttonRef = useRef(null)
@@ -925,6 +1148,9 @@ function HistorialPagoActions({ item, onEditar, onPDF, onRevertir, isRevirtiendo
                             zIndex: 100,
                         }}
                     >
+                        <button className="dropdown-item" onClick={() => handleAction(() => onVer(item))}>
+                            <Eye size={14} style={{ marginRight: 8 }} /> Ver pago
+                        </button>
                         {puedeEditar && (
                             <button className="dropdown-item" onClick={() => handleAction(() => onEditar(item))}>
                                 <Pencil size={14} style={{ marginRight: 8 }} /> Editar pago
@@ -962,6 +1188,7 @@ export default function CuentasPorPagarPage() {
     const [detalleProveedor, setDetalleProveedor] = useState(null)
     const [pagoProveedor, setPagoProveedor] = useState(null)
     const [editarPagoGrupo, setEditarPagoGrupo] = useState(null)
+    const [verPagoGrupo, setVerPagoGrupo] = useState(null)
     const [historialProveedorId, setHistorialProveedorId] = useState('')
     const [historialOS, setHistorialOS] = useState('')
     const [historialFactura, setHistorialFactura] = useState('')
@@ -1395,6 +1622,7 @@ export default function CuentasPorPagarPage() {
                                                 <td>
                                                     <HistorialPagoActions
                                                         item={item}
+                                                        onVer={selected => setVerPagoGrupo(selected)}
                                                         isRevirtiendo={revertirPago.isPending}
                                                         onEditar={selected => setEditarPagoGrupo(selected)}
                                                         onPDF={abrirHistorialPagoPDF}
@@ -1457,6 +1685,15 @@ export default function CuentasPorPagarPage() {
                     maxWidth="860px"
                 >
                     <EditarPagoHistorialModal grupoId={editarPagoGrupo.grupo_id} onClose={() => setEditarPagoGrupo(null)} />
+                </Modal>
+            )}
+            {verPagoGrupo && (
+                <Modal
+                    title={`Ver pago: ${verPagoGrupo.proveedor_nombre || 'Proveedor'}`}
+                    onClose={() => setVerPagoGrupo(null)}
+                    maxWidth="1120px"
+                >
+                    <VerPagoHistorialModal grupoId={verPagoGrupo.grupo_id} onClose={() => setVerPagoGrupo(null)} />
                 </Modal>
             )}
         </div>

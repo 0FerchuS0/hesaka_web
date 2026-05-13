@@ -37,12 +37,14 @@ from app.schemas.schemas import (
     CompraOut,
     CuentaPorPagarDocumentoOut,
     CuentaPorPagarProveedorResumenOut,
+    HistorialPagoProveedorDocumentoDetalleOut,
     HistorialPagoProveedorDetalleOut,
     HistorialPagoProveedorListResponseOut,
     HistorialPagoProveedorOut,
     PagoCompraCreate,
     PagoCompraOut,
     PagoProveedorCreate,
+    PagoProveedorFacturaUpdate,
     PagoProveedorMetodoOut,
     PagoProveedorOut,
     PagoProveedorAplicacionOut,
@@ -449,6 +451,34 @@ def _obtener_pagos_grupo(session, grupo_id: str) -> List[PagoCompra]:
     return query.filter(PagoCompra.lote_pago_id == grupo_id).order_by(PagoCompra.id.asc()).all()
 
 
+def _resolver_factura_lote(session, compras: List[Compra], proveedor_id: int, factura_global: Optional[str], usar_factura_generica: bool):
+    factura_a_asignar = None
+    tipo_documento_a_asignar = None
+    if factura_global:
+        factura_a_asignar = factura_global.strip().upper()
+        if not factura_a_asignar:
+            raise HTTPException(status_code=422, detail="La factura global no puede estar vacia.")
+        tipo_documento_a_asignar = "FACTURA"
+    elif usar_factura_generica:
+        factura_a_asignar = _generar_numero_generico_pago(session, proveedor_id)
+        tipo_documento_a_asignar = "SIN_FACTURA"
+    else:
+        raise HTTPException(status_code=422, detail="Debes indicar una factura o confirmar la numeracion interna generica.")
+
+    for compra in compras:
+        origen_documento = (compra.tipo_documento_original or compra.tipo_documento or "").upper()
+        if origen_documento != "ORDEN_SERVICIO":
+            raise HTTPException(status_code=422, detail="Solo se puede editar la factura de lotes originados desde ordenes de servicio.")
+        if not compra.tipo_documento_original:
+            compra.tipo_documento_original = compra.tipo_documento
+        if not compra.nro_documento_original:
+            compra.nro_documento_original = compra.nro_factura
+        compra.tipo_documento = tipo_documento_a_asignar
+        compra.nro_factura = factura_a_asignar
+
+    return factura_a_asignar, tipo_documento_a_asignar
+
+
 def _aplicar_pago_proveedor(session, proveedor_id: int, data: PagoProveedorCreate, lote_pago_id_forzado: Optional[str] = None) -> PagoProveedorOut:
     proveedor = session.query(Compra).options(selectinload(Compra.proveedor_rel)).filter(Compra.proveedor_id == proveedor_id).first()
     if not proveedor or not proveedor.proveedor_rel:
@@ -498,29 +528,18 @@ def _aplicar_pago_proveedor(session, proveedor_id: int, data: PagoProveedorCreat
 
     compras_ordenadas = sorted(compras_abiertas, key=lambda compra: _prioridad_cxp(session, compra))
     fecha_pago = normalizar_fecha_negocio(session, data.fecha)
-    lote_pago_id = lote_pago_id_forzado or (str(uuid4()) if len(data.metodos_pago) > 1 else None)
+    lote_pago_id = lote_pago_id_forzado if lote_pago_id_forzado is not None else str(uuid4())
     aplicaciones = []
 
     if data.compra_ids:
-        factura_a_asignar = None
-        tipo_documento_a_asignar = None
-        if data.factura_global:
-            factura_a_asignar = data.factura_global.strip().upper()
-            if not factura_a_asignar:
-                raise HTTPException(status_code=422, detail="La factura global no puede estar vacia.")
-            tipo_documento_a_asignar = "FACTURA"
-        elif data.usar_factura_generica:
-            factura_a_asignar = _generar_numero_generico_pago(session, proveedor_id)
-            tipo_documento_a_asignar = "SIN_FACTURA"
-
-        if factura_a_asignar:
-            for compra in compras_ordenadas:
-                if not compra.tipo_documento_original:
-                    compra.tipo_documento_original = compra.tipo_documento
-                if not compra.nro_documento_original:
-                    compra.nro_documento_original = compra.nro_factura
-                compra.tipo_documento = tipo_documento_a_asignar
-                compra.nro_factura = factura_a_asignar
+        if data.factura_global or data.usar_factura_generica:
+            _resolver_factura_lote(
+                session,
+                compras_ordenadas,
+                proveedor_id,
+                data.factura_global,
+                data.usar_factura_generica,
+            )
 
     for metodo in data.metodos_pago:
         monto_restante = float(metodo.monto or 0)
@@ -1004,7 +1023,111 @@ def obtener_detalle_pago_proveedor(
                 )
                 for pago in pagos
             ],
+            documentos_detalle=[
+                HistorialPagoProveedorDocumentoDetalleOut(
+                    compra_id=pago.compra_id,
+                    documento=detalle["documento"] or f"COMPRA #{pago.compra_id}",
+                    os_origen=detalle["os_origen"],
+                    factura=detalle["factura"],
+                    cliente=detalle["cliente"],
+                    metodo=detalle["metodo"],
+                    comprobante=detalle["comprobante"],
+                    monto=float(detalle["monto"] or 0),
+                )
+                for pago, detalle in zip(pagos, grupo["detalles"])
+            ],
         )
+    finally:
+        session.close()
+
+
+@router.patch("/cuentas-por-pagar/pagos-historial/{grupo_id}/factura", response_model=HistorialPagoProveedorDetalleOut)
+def actualizar_factura_pago_proveedor(
+    grupo_id: str,
+    data: PagoProveedorFacturaUpdate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        pagos = _obtener_pagos_grupo(session, grupo_id)
+        if not pagos:
+            raise HTTPException(status_code=404, detail="Pago no encontrado.")
+
+        compras_map = {}
+        for pago in pagos:
+            compra = pago.compra_rel
+            if compra:
+                compras_map[compra.id] = compra
+        compras = list(compras_map.values())
+        if not compras:
+            raise HTTPException(status_code=422, detail="No se encontraron compras asociadas para actualizar la factura.")
+
+        proveedor_id = compras[0].proveedor_id
+        if not proveedor_id:
+            raise HTTPException(status_code=422, detail="No se pudo determinar el proveedor de este lote.")
+
+        _resolver_factura_lote(session, compras, proveedor_id, data.factura_global, data.usar_factura_generica)
+        for pago in pagos:
+            if pago.compra_rel:
+                pago.nro_factura_asignada = pago.compra_rel.nro_factura
+
+        session.commit()
+
+        pagos_actualizados = _obtener_pagos_grupo(session, grupo_id)
+        grupos = _construir_grupos_historial_pago(session, pagos_actualizados)
+        grupo = grupos.get(grupo_id)
+        if not grupo:
+            raise HTTPException(status_code=404, detail="No se pudo construir el detalle actualizado del pago.")
+
+        compras_actualizadas = [pago.compra_rel for pago in pagos_actualizados if pago.compra_rel]
+        puede_usar_factura_global = bool(compras_actualizadas) and all(
+            (compra.tipo_documento_original or compra.tipo_documento) == "ORDEN_SERVICIO"
+            for compra in compras_actualizadas
+        )
+        factura_global = next(iter(grupo["facturas"])) if len(grupo["facturas"]) == 1 else None
+
+        return HistorialPagoProveedorDetalleOut(
+            grupo_id=grupo["grupo_id"],
+            lote_pago_id=grupo["lote_pago_id"],
+            fecha=grupo["fecha"],
+            proveedor_id=grupo["proveedor_id"],
+            proveedor_nombre=grupo["proveedor_nombre"],
+            total=grupo["total"],
+            compra_ids=sorted({pago.compra_id for pago in pagos_actualizados}),
+            documentos=sorted(grupo["documentos"]),
+            os_origen=sorted(grupo["os_origen"]),
+            facturas=sorted(grupo["facturas"]),
+            clientes=sorted(grupo["clientes"]),
+            puede_usar_factura_global=puede_usar_factura_global,
+            factura_global=factura_global,
+            metodos_pago=[
+                PagoProveedorMetodoOut(
+                    metodo_pago=pago.metodo_pago or "EFECTIVO",
+                    monto=float(pago.monto or 0),
+                    banco_id=pago.banco_id,
+                    banco_nombre=pago.banco_rel.nombre_banco if pago.banco_rel else None,
+                    nro_comprobante=pago.nro_comprobante,
+                )
+                for pago in pagos_actualizados
+            ],
+            documentos_detalle=[
+                HistorialPagoProveedorDocumentoDetalleOut(
+                    compra_id=pago.compra_id,
+                    documento=detalle["documento"] or f"COMPRA #{pago.compra_id}",
+                    os_origen=detalle["os_origen"],
+                    factura=detalle["factura"],
+                    cliente=detalle["cliente"],
+                    metodo=detalle["metodo"],
+                    comprobante=detalle["comprobante"],
+                    monto=float(detalle["monto"] or 0),
+                )
+                for pago, detalle in zip(pagos_actualizados, grupo["detalles"])
+            ],
+        )
+    except HTTPException:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -1069,6 +1192,7 @@ def _construir_grupos_historial_pago(session, pagos: List[PagoCompra]):
             "proveedor_nombre": proveedor_nombre,
             "total": 0.0,
             "cantidad_documentos": 0,
+            "compra_ids": set(),
             "documentos": set(),
             "os_origen": set(),
             "facturas": set(),
@@ -1079,6 +1203,8 @@ def _construir_grupos_historial_pago(session, pagos: List[PagoCompra]):
             "detalles": [],
         })
         grupo["total"] += float(pago.monto or 0)
+        if compra:
+            grupo["compra_ids"].add(compra.id)
         if documento:
             grupo["documentos"].add(documento)
         if os_origen:
@@ -1090,7 +1216,7 @@ def _construir_grupos_historial_pago(session, pagos: List[PagoCompra]):
         grupo["metodos"].add(pago.metodo_pago or "EFECTIVO")
         if pago.nro_comprobante:
             grupo["comprobantes"].add(pago.nro_comprobante)
-        grupo["cantidad_documentos"] = len(grupo["documentos"])
+        grupo["cantidad_documentos"] = len(grupo["compra_ids"])
         grupo["detalles"].append({
             "documento": documento,
             "os_origen": os_origen,

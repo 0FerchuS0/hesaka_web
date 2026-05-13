@@ -1091,6 +1091,11 @@ class PagoProveedorCreate(BaseModel):
     usar_factura_generica: bool = False
 
 
+class PagoProveedorFacturaUpdate(BaseModel):
+    factura_global: Optional[str] = None
+    usar_factura_generica: bool = False
+
+
 class PagoProveedorAplicacionOut(BaseModel):
     compra_id: int
     documento: str
@@ -1146,6 +1151,18 @@ class HistorialPagoProveedorDetalleOut(BaseModel):
     puede_usar_factura_global: bool = False
     factura_global: Optional[str] = None
     metodos_pago: List[PagoProveedorMetodoOut] = []
+    documentos_detalle: List["HistorialPagoProveedorDocumentoDetalleOut"] = []
+
+
+class HistorialPagoProveedorDocumentoDetalleOut(BaseModel):
+    compra_id: int
+    documento: str
+    os_origen: Optional[str] = None
+    factura: Optional[str] = None
+    cliente: Optional[str] = None
+    metodo: Optional[str] = None
+    comprobante: Optional[str] = None
+    monto: float = 0.0
 
 
 class VentaPendienteCompraItemOut(BaseModel):

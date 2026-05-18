@@ -69,6 +69,7 @@ ACTION_ROLES = {
     "reportes_comercial.exportar": ["ADMIN", "OPERADOR", "CAJERO"],
     "reportes_financieros.exportar": ["ADMIN", "CAJERO"],
     "clinica.dashboard": ["ADMIN", "DOCTOR"],
+    "clinica.agenda": ["ADMIN", "DOCTOR"],
     "clinica.pacientes": ["ADMIN", "DOCTOR"],
     "clinica.pacientes_crear": ["ADMIN", "DOCTOR"],
     "clinica.pacientes_editar": ["ADMIN", "DOCTOR"],
@@ -247,6 +248,19 @@ def require_action(action_key: str, fallback_module_key: Optional[str] = None):
         return current_user
 
     return _require_action
+
+
+def require_any_action(*action_keys: str, fallback_module_key: Optional[str] = None):
+    def _require_any_action(current_user: Usuario = Depends(get_current_user)) -> Usuario:
+        for action_key in action_keys:
+            if has_action_access(current_user, action_key, fallback_module_key):
+                return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene permisos para realizar esta accion.",
+        )
+
+    return _require_any_action
 
 
 def require_clinica(current_user: Usuario = Depends(get_current_user)) -> Usuario:

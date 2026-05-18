@@ -33,19 +33,23 @@ const CLINICA_PALETTE = {
 }
 
 const CLINICA_TABS = [
-    { key: 'dashboard', label: 'Dashboard Clinico', path: '/clinica/dashboard', icon: Stethoscope },
-    { key: 'agenda', label: 'Agenda', path: '/clinica/agenda', icon: CalendarDays },
-    { key: 'pacientes', label: 'Pacientes', path: '/clinica/pacientes', icon: Users },
-    { key: 'doctores', label: 'Doctores', path: '/clinica/doctores', icon: UserRound },
-    { key: 'consulta', label: 'Nueva consulta', path: '/clinica/consulta', icon: Plus },
-    { key: 'historial', label: 'Historial', path: '/clinica/historial', icon: FileText },
-    { key: 'lugares', label: 'Lugares', path: '/clinica/lugares', icon: MapPin },
-    { key: 'vademecum', label: 'Vademecum', path: '/clinica/vademecum', icon: FileText },
+    { key: 'dashboard', label: 'Dashboard Clinico', path: '/clinica/dashboard', icon: Stethoscope, actionKey: 'clinica.dashboard' },
+    { key: 'agenda', label: 'Agenda', path: '/clinica/agenda', icon: CalendarDays, actionKey: 'clinica.agenda' },
+    { key: 'pacientes', label: 'Pacientes', path: '/clinica/pacientes', icon: Users, actionKey: 'clinica.pacientes' },
+    { key: 'doctores', label: 'Doctores', path: '/clinica/doctores', icon: UserRound, actionKey: 'clinica.doctores' },
+    { key: 'consulta', label: 'Nueva consulta', path: '/clinica/consulta', icon: Plus, actionKey: 'clinica.consultas_crear' },
+    { key: 'historial', label: 'Historial', path: '/clinica/historial', icon: FileText, actionKey: 'clinica.historial' },
+    { key: 'lugares', label: 'Lugares', path: '/clinica/lugares', icon: MapPin, actionKey: 'clinica.lugares' },
+    { key: 'vademecum', label: 'Vademecum', path: '/clinica/vademecum', icon: FileText, actionKey: 'clinica.vademecum' },
 ]
 
 const WHATSAPP_TEMPLATE_KEY = 'hesaka-clinica-whatsapp-template'
 const DEFAULT_WHATSAPP_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Te recordamos tu turno para el {proxima_consulta} a las {hora_turno}. Te esperamos. Si no podras asistir, por favor avisanos para reprogramar.'
 const CLINICA_TEMPLATE_CODE = 'clinica_recordatorio_turno'
+
+function getAccessibleClinicaTabs(user) {
+    return CLINICA_TABS.filter(tab => hasActionAccess(user, tab.actionKey, 'clinica'))
+}
 
 function formatError(error, fallback = 'Ocurrio un error.') {
     const detail = error?.response?.data?.detail
@@ -712,6 +716,7 @@ function TurnoAgendaActions({
     onReprogramar,
     onWhatsapp,
     onEliminar,
+    canAttend = true,
     disabled,
 }) {
     const [open, setOpen] = useState(false)
@@ -783,7 +788,7 @@ function TurnoAgendaActions({
                                 Confirmar
                             </button>
                         ) : null}
-                        {item.estado !== 'ATENDIDO' ? (
+                        {canAttend && item.estado !== 'ATENDIDO' ? (
                             <button className="dropdown-item" onClick={() => handleAction(onAtender)}>
                                 Atender
                             </button>
@@ -993,6 +998,7 @@ function ClinicaShell({ currentKey, onNavigate, children }) {
 function DashboardClinicoSection() {
     const { user } = useAuth()
     const queryClient = useQueryClient()
+    const canAccessAgenda = hasActionAccess(user, 'clinica.agenda', 'clinica')
     const dashboardQuery = useQuery({
         queryKey: ['clinica', 'dashboard'],
         queryFn: async () => (await api.get('/clinica/dashboard/resumen')).data,
@@ -1002,11 +1008,13 @@ function DashboardClinicoSection() {
         queryKey: ['clinica', 'agenda-recordatorios'],
         queryFn: async () => (await api.get('/clinica/agenda/recordatorios')).data,
         staleTime: 60 * 1000,
+        enabled: canAccessAgenda,
     })
     const upcomingControlsQuery = useQuery({
         queryKey: ['clinica', 'proximos-controles'],
         queryFn: async () => (await api.get('/clinica/agenda/proximos-controles?limit=6')).data,
         staleTime: 60 * 1000,
+        enabled: canAccessAgenda,
     })
     const [showReminderModal, setShowReminderModal] = useState(false)
     const [whatsappItem, setWhatsappItem] = useState(null)
@@ -1024,7 +1032,7 @@ function DashboardClinicoSection() {
         },
     })
 
-    const reminderItems = flattenReminderBuckets(reminderQuery.data)
+    const reminderItems = canAccessAgenda ? flattenReminderBuckets(reminderQuery.data) : []
 
     useEffect(() => {
         if (!reminderItems.length) return
@@ -1091,6 +1099,7 @@ function DashboardClinicoSection() {
                 <div className="card">
                     <SectionHeader title="Alertas clinicas" subtitle="Mensajes utiles para el trabajo diario." />
                     <div style={{ display: 'grid', gap: 12 }}>
+                        {canAccessAgenda ? (
                         <div style={{ border: '1px solid rgba(29,211,199,0.25)', borderRadius: 14, padding: 16, background: 'rgba(29,211,199,0.06)' }}>
                             <div className="flex-between" style={{ gap: 12, alignItems: 'center' }}>
                                 <div>
@@ -1125,6 +1134,7 @@ function DashboardClinicoSection() {
                                 )}
                             </div>
                         </div>
+                        ) : null}
                         {reminderItems.length ? (
                             <div style={{ border: '1px solid rgba(56,189,248,0.35)', borderRadius: 14, padding: 16, background: 'rgba(56,189,248,0.08)' }}>
                                 <div className="flex-between" style={{ gap: 12, alignItems: 'center' }}>
@@ -1331,6 +1341,8 @@ function AgendaClinicaSection() {
     const { user } = useAuth()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
+    const canCreateTurno = hasActionAccess(user, 'clinica.agenda', 'clinica')
+    const canAttendTurno = hasActionAccess(user, 'clinica.consultas_crear', 'clinica')
     const today = useMemo(() => new Date(), [])
     const plusDays = useMemo(() => {
         const next = new Date(today)
@@ -1373,7 +1385,7 @@ function AgendaClinicaSection() {
 
     const pacientesQuery = useQuery({
         queryKey: ['clinica', 'agenda-pacientes', pacienteSearch],
-        queryFn: async () => (await api.get(`/clinica/pacientes?${queryString({ buscar: pacienteSearch, page: 1, page_size: 12 })}`)).data,
+        queryFn: async () => (await api.get(`/clinica/pacientes/simple?${queryString({ buscar: pacienteSearch, page_size: 12 })}`)).data,
         enabled: Boolean(modalTurno),
         staleTime: 60 * 1000,
     })
@@ -1387,14 +1399,14 @@ function AgendaClinicaSection() {
     const doctoresQuery = useQuery({
         queryKey: ['clinica', 'doctores-simple'],
         queryFn: async () => (await api.get('/clinica/doctores/simple')).data,
-        enabled: hasActionAccess(user, 'clinica.doctores', 'clinica'),
+        enabled: hasActionAccess(user, 'clinica.agenda', 'clinica'),
         staleTime: 5 * 60 * 1000,
     })
 
     const lugaresQuery = useQuery({
         queryKey: ['clinica', 'lugares-simple'],
         queryFn: async () => (await api.get('/clinica/lugares/simple')).data,
-        enabled: hasActionAccess(user, 'clinica.lugares', 'clinica'),
+        enabled: hasActionAccess(user, 'clinica.agenda', 'clinica'),
         staleTime: 5 * 60 * 1000,
     })
 
@@ -1523,7 +1535,7 @@ function AgendaClinicaSection() {
                 <SectionHeader
                     title="Agenda Clinica"
                     subtitle="Base operativa de turnos por paciente, doctor, lugar, fecha y estado."
-                    actions={hasActionAccess(user, 'clinica.consultas_crear', 'clinica') ? <button className="btn btn-primary" onClick={() => setModalTurno({ mode: 'create', data: null })}><Plus size={16} /> Nuevo turno</button> : null}
+                    actions={canCreateTurno ? <button className="btn btn-primary" onClick={() => setModalTurno({ mode: 'create', data: null })}><Plus size={16} /> Nuevo turno</button> : null}
                 />
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginBottom: 18 }}>
                     {[
@@ -1665,6 +1677,7 @@ function AgendaClinicaSection() {
                                                         </button>
                                                         <TurnoAgendaActions
                                                             item={item}
+                                                            canAttend={canAttendTurno}
                                                             disabled={cambiarEstadoMutation.isPending || deleteTurnoMutation.isPending}
                                                             onEditar={() => setModalTurno({ mode: 'edit', data: item })}
                                                             onConfirmar={() => cambiarEstadoMutation.mutate({ item, nextEstado: 'CONFIRMADO' })}
@@ -1701,7 +1714,7 @@ function AgendaClinicaSection() {
                 <Modal title={modalTurno.mode === 'edit' ? 'Editar turno clinico' : 'Nuevo turno clinico'} onClose={() => setModalTurno(null)} maxWidth="860px">
                     <TurnoClinicoForm
                         initialData={modalTurno.data}
-                        pacienteOptions={pacientesQuery.data?.items || []}
+                        pacienteOptions={pacientesQuery.data || []}
                         doctorOptions={doctoresQuery.data || []}
                         lugarOptions={lugaresQuery.data || []}
                         onSearchPaciente={setPacienteSearch}
@@ -6659,6 +6672,7 @@ export default function ClinicaPage() {
     const navigate = useNavigate()
     const { user } = useAuth()
     const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
+    const accessibleTabs = useMemo(() => getAccessibleClinicaTabs(user), [user])
 
     useEffect(() => {
         const clinicaTemplate = getWhatsappTemplateByCode(whatsappTemplates, CLINICA_TEMPLATE_CODE, DEFAULT_WHATSAPP_TEMPLATE)
@@ -6670,16 +6684,33 @@ export default function ClinicaPage() {
         return found?.key || 'dashboard'
     }, [location.pathname])
 
+    const hasSectionAccess = accessibleTabs.some(tab => tab.key === sectionKey)
+
+    useEffect(() => {
+        if (!user) return
+        if (hasSectionAccess) return
+        const fallbackPath = accessibleTabs[0]?.path
+        if (fallbackPath && fallbackPath !== location.pathname) {
+            navigate(fallbackPath, { replace: true })
+        }
+    }, [accessibleTabs, hasSectionAccess, location.pathname, navigate, user])
+
     return (
         <ClinicaShell currentKey={sectionKey} onNavigate={navigate}>
-            {sectionKey === 'dashboard' && <DashboardClinicoSection />}
-            {sectionKey === 'agenda' && <AgendaClinicaSection />}
-            {sectionKey === 'pacientes' && <PacientesSection />}
-            {sectionKey === 'doctores' && <DoctoresSection />}
-            {sectionKey === 'consulta' && <NuevaConsultaSection />}
-            {sectionKey === 'historial' && <HistorialClinicoGeneralSection />}
-            {sectionKey === 'lugares' && <LugaresSection />}
-            {sectionKey === 'vademecum' && <VademecumSection />}
+            {!accessibleTabs.length && user ? (
+                <EmptyCard title="Acceso clinico restringido" message="Tu usuario tiene el modulo clinico activo, pero no cuenta con ninguna seccion clinica habilitada." />
+            ) : null}
+            {accessibleTabs.length > 0 && !hasSectionAccess ? (
+                <EmptyCard title="Redirigiendo..." message="Estamos abriendo la primera seccion clinica disponible para este usuario." />
+            ) : null}
+            {hasSectionAccess && sectionKey === 'dashboard' && <DashboardClinicoSection />}
+            {hasSectionAccess && sectionKey === 'agenda' && <AgendaClinicaSection />}
+            {hasSectionAccess && sectionKey === 'pacientes' && <PacientesSection />}
+            {hasSectionAccess && sectionKey === 'doctores' && <DoctoresSection />}
+            {hasSectionAccess && sectionKey === 'consulta' && <NuevaConsultaSection />}
+            {hasSectionAccess && sectionKey === 'historial' && <HistorialClinicoGeneralSection />}
+            {hasSectionAccess && sectionKey === 'lugares' && <LugaresSection />}
+            {hasSectionAccess && sectionKey === 'vademecum' && <VademecumSection />}
             {!user && <EmptyCard title="Sin sesion clinica" message="Vuelva a iniciar sesion para continuar en el modulo clinico." />}
         </ClinicaShell>
     )

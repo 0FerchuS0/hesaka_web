@@ -47,6 +47,7 @@ from app.schemas.schemas import (
     ClinicaPacienteCreateIn,
     ClinicaPacienteHistorialOut,
     ClinicaPacienteOut,
+    ClinicaPacienteSimpleOut,
     ClinicaPacientesListOut,
     ClinicaPacienteUpdateIn,
     ClinicaRecetaMedicamentoDetalleHistorialOut,
@@ -66,7 +67,7 @@ from app.schemas.schemas import (
     ClinicaTurnoOut,
     ClinicaTurnosListOut,
 )
-from app.utils.auth import require_action, require_clinica
+from app.utils.auth import require_action, require_any_action, require_clinica
 from app.utils.pdf_consulta_clinica_web import generar_pdf_consulta_clinica
 from app.utils.pdf_indicaciones_clinica import generar_pdf_indicaciones_clinica
 from app.utils.pdf_receta_medicamento_clinica import (
@@ -1200,7 +1201,7 @@ def obtener_dashboard_clinico(
 @router.get("/agenda", response_model=ClinicaTurnosListOut)
 def listar_turnos_clinica(
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.historial", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
     buscar: str | None = Query(default=None),
     recordatorio: str | None = Query(default=None),
     fecha_desde: date | None = Query(default=None),
@@ -1270,7 +1271,7 @@ def listar_turnos_clinica(
 @router.get("/agenda/proximos-controles", response_model=list[ClinicaTurnoOut])
 def listar_proximos_controles_clinica(
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.historial", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
     limit: int = Query(default=6, ge=1, le=20),
 ):
     session = get_session_for_tenant(tenant_slug)
@@ -1301,7 +1302,7 @@ def listar_proximos_controles_clinica(
 @router.get("/agenda/recordatorios", response_model=ClinicaAgendaRecordatoriosOut)
 def listar_recordatorios_clinica(
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.historial", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
@@ -1339,7 +1340,7 @@ def listar_recordatorios_clinica(
 @router.get("/agenda/recordatorios/resumen", response_model=ClinicaAgendaRecordatoriosResumenOut)
 def resumen_recordatorios_clinica(
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.historial", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
     limit_per_bucket: int = Query(default=2, ge=1, le=5),
 ):
     session = get_session_for_tenant(tenant_slug)
@@ -1371,7 +1372,7 @@ def resumen_recordatorios_clinica(
 def crear_turno_clinica(
     payload: ClinicaTurnoIn,
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.consultas_crear", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
@@ -1415,7 +1416,7 @@ def marcar_recordatorio_turno(
     turno_id: int,
     categoria: str,
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.consultas_editar", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
@@ -1435,7 +1436,7 @@ def editar_turno_clinica(
     turno_id: int,
     payload: ClinicaTurnoIn,
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.consultas_editar", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
@@ -1479,7 +1480,7 @@ def editar_turno_clinica(
 def eliminar_turno_clinica(
     turno_id: int,
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.consultas_editar", "clinica")),
+    current_user=Depends(require_action("clinica.agenda", "clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
@@ -1542,10 +1543,53 @@ def listar_pacientes_clinica(
         session.close()
 
 
+@router.get("/pacientes/simple", response_model=list[ClinicaPacienteSimpleOut])
+def listar_pacientes_clinica_simple(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_any_action("clinica.pacientes", "clinica.agenda", fallback_module_key="clinica")),
+    buscar: str | None = Query(default=None),
+    page_size: int = Query(default=12, ge=1, le=25),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = session.query(
+            Paciente.id,
+            Paciente.nombre_completo,
+            Paciente.ci_pasaporte,
+            Paciente.telefono,
+        )
+        if buscar:
+            termino = f"%{buscar.strip()}%"
+            query = query.filter(
+                or_(
+                    Paciente.nombre_completo.ilike(termino),
+                    Paciente.ci_pasaporte.ilike(termino),
+                    Paciente.telefono.ilike(termino),
+                )
+            )
+
+        rows = (
+            query.order_by(Paciente.fecha_registro.desc(), Paciente.id.desc())
+            .limit(page_size)
+            .all()
+        )
+        return [
+            ClinicaPacienteSimpleOut(
+                id=row.id,
+                nombre_completo=row.nombre_completo,
+                ci_pasaporte=row.ci_pasaporte,
+                telefono=row.telefono,
+            )
+            for row in rows
+        ]
+    finally:
+        session.close()
+
+
 @router.get("/doctores/simple", response_model=list[ClinicaDoctorSimpleOut])
 def listar_doctores_clinica_simple(
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.doctores", "clinica")),
+    current_user=Depends(require_any_action("clinica.doctores", "clinica.agenda", fallback_module_key="clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
@@ -1703,7 +1747,7 @@ def eliminar_doctor_clinica(
 @router.get("/lugares/simple", response_model=list[ClinicaLugarSimpleOut])
 def listar_lugares_clinica_simple(
     tenant_slug: str = Depends(get_tenant_slug),
-    current_user=Depends(require_action("clinica.lugares", "clinica")),
+    current_user=Depends(require_any_action("clinica.lugares", "clinica.agenda", fallback_module_key="clinica")),
 ):
     session = get_session_for_tenant(tenant_slug)
     try:

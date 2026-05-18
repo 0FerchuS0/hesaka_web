@@ -68,6 +68,7 @@ export const actionRoles = {
     'reportes_comercial.exportar': ['ADMIN', 'OPERADOR', 'CAJERO'],
     'reportes_financieros.exportar': ['ADMIN', 'CAJERO'],
     'clinica.dashboard': ['ADMIN', 'DOCTOR'],
+    'clinica.agenda': ['ADMIN', 'DOCTOR'],
     'clinica.pacientes': ['ADMIN', 'DOCTOR'],
     'clinica.pacientes_crear': ['ADMIN', 'DOCTOR'],
     'clinica.pacientes_editar': ['ADMIN', 'DOCTOR'],
@@ -211,6 +212,7 @@ export const permissionCatalog = [
                 label: 'Modulo clinico',
                 actions: [
                     { key: 'clinica.dashboard', label: 'Dashboard clinico' },
+                    { key: 'clinica.agenda', label: 'Agenda clinica' },
                     { key: 'clinica.pacientes', label: 'Ver pacientes' },
                     { key: 'clinica.pacientes_crear', label: 'Crear pacientes' },
                     { key: 'clinica.pacientes_editar', label: 'Editar pacientes' },

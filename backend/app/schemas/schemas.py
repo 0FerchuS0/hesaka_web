@@ -1781,6 +1781,13 @@ class ClinicaPacientesListOut(BaseModel):
     total_pages: int
 
 
+class ClinicaPacienteSimpleOut(BaseModel):
+    id: int
+    nombre_completo: str
+    ci_pasaporte: Optional[str] = None
+    telefono: Optional[str] = None
+
+
 class ClinicaPacienteCreateIn(BaseModel):
     nombre_completo: str
     fecha_nacimiento: Optional[date] = None

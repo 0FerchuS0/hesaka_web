@@ -6,7 +6,7 @@ import { AuthProvider, useAuth, api } from './context/AuthContext'
 import Modal from './components/Modal'
 import Sidebar from './components/Sidebar'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
-import { hasModuleAccess, normalizeRole } from './utils/roles'
+import { hasActionAccess, hasModuleAccess, normalizeRole } from './utils/roles'
 import {
     consumeBeforeUnloadSuppression,
     getNavigationControlState,
@@ -85,12 +85,28 @@ function RoleRoute({ allowedRoles, children }) {
     return hasModuleAccess(user, allowedRoles) ? children : <AccessDenied />
 }
 
+function getDefaultClinicaRoute(user) {
+    const clinicaRoutes = [
+        ['clinica.dashboard', '/clinica/dashboard'],
+        ['clinica.agenda', '/clinica/agenda'],
+        ['clinica.pacientes', '/clinica/pacientes'],
+        ['clinica.doctores', '/clinica/doctores'],
+        ['clinica.consultas_crear', '/clinica/consulta'],
+        ['clinica.historial', '/clinica/historial'],
+        ['clinica.lugares', '/clinica/lugares'],
+        ['clinica.vademecum', '/clinica/vademecum'],
+    ]
+    const found = clinicaRoutes.find(([actionKey]) => hasActionAccess(user, actionKey, 'clinica'))
+    return found?.[1] || null
+}
+
 function HomeRoute() {
     const { user } = useAuth()
     const role = normalizeRole(user?.rol)
+    const defaultClinicaRoute = getDefaultClinicaRoute(user)
 
-    if (role === 'DOCTOR') {
-        return <Navigate to="/clinica/dashboard" replace />
+    if (role === 'DOCTOR' && defaultClinicaRoute) {
+        return <Navigate to={defaultClinicaRoute} replace />
     }
 
     if (hasModuleAccess(user, 'dashboard')) {
@@ -98,10 +114,16 @@ function HomeRoute() {
     }
 
     if (hasModuleAccess(user, 'clinica')) {
-        return <Navigate to="/clinica/dashboard" replace />
+        return defaultClinicaRoute ? <Navigate to={defaultClinicaRoute} replace /> : <AccessDenied />
     }
 
     return <AccessDenied />
+}
+
+function ClinicaIndexRoute() {
+    const { user } = useAuth()
+    const defaultClinicaRoute = getDefaultClinicaRoute(user)
+    return defaultClinicaRoute ? <Navigate to={defaultClinicaRoute} replace /> : <AccessDenied />
 }
 
 function AppLayout() {
@@ -401,7 +423,7 @@ function AppLayout() {
                             <Route path="/reportes/comisiones" element={<RoleRoute allowedRoles="reportes_financieros"><ReporteComisionesPage /></RoleRoute>} />
                             <Route path="/reportes/saldos" element={<Navigate to="/clientes/saldos" replace />} />
                             <Route path="/reportes/laboratorio" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteTrabajosLaboratorioPage /></RoleRoute>} />
-                            <Route path="/clinica" element={<Navigate to="/clinica/dashboard" replace />} />
+                            <Route path="/clinica" element={<RoleRoute allowedRoles="clinica"><ClinicaIndexRoute /></RoleRoute>} />
                             <Route path="/clinica/dashboard" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                             <Route path="/clinica/pacientes" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />
                             <Route path="/clinica/doctores" element={<RoleRoute allowedRoles="clinica"><ClinicaPage /></RoleRoute>} />

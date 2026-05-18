@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getNavigationControlState } from '../utils/navigationControl'
-import { hasModuleAccess, normalizeRole } from '../utils/roles'
+import { hasActionAccess, hasModuleAccess, normalizeRole } from '../utils/roles'
 import {
     LayoutDashboard,
     Package,
@@ -299,7 +299,21 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen = fals
                         })
                         return subItems.length > 0 ? { ...item, subItems } : null
                     }
-                    if (item.to === '/clinica') return hasModuleAccess(user, 'clinica') ? item : null
+                    if (item.to === '/clinica') {
+                        if (!hasModuleAccess(user, 'clinica')) return null
+                        const subItems = (item.subItems || []).filter(sub => {
+                            if (sub.to === '/clinica/dashboard') return hasActionAccess(user, 'clinica.dashboard', 'clinica')
+                            if (sub.to === '/clinica/agenda') return hasActionAccess(user, 'clinica.agenda', 'clinica')
+                            if (sub.to === '/clinica/pacientes') return hasActionAccess(user, 'clinica.pacientes', 'clinica')
+                            if (sub.to === '/clinica/doctores') return hasActionAccess(user, 'clinica.doctores', 'clinica')
+                            if (sub.to === '/clinica/consulta') return hasActionAccess(user, 'clinica.consultas_crear', 'clinica')
+                            if (sub.to === '/clinica/historial') return hasActionAccess(user, 'clinica.historial', 'clinica')
+                            if (sub.to === '/clinica/lugares') return hasActionAccess(user, 'clinica.lugares', 'clinica')
+                            if (sub.to === '/clinica/vademecum') return hasActionAccess(user, 'clinica.vademecum', 'clinica')
+                            return false
+                        })
+                        return subItems.length > 0 ? { ...item, subItems } : null
+                    }
                     return item
                 })
                 .filter(Boolean)

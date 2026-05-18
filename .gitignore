@@ -60,3 +60,7 @@ backend/venv/
 backend/__pycache__/
 frontend/.env
 *.dump
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json

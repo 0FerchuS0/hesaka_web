@@ -1004,27 +1004,60 @@ def listar_clientes_optimizado(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        query = _construir_query_clientes(session, buscar, referidor_id)
-        total = query.count()
+        query = (
+            session.query(
+                Cliente.id,
+                Cliente.nombre,
+                Cliente.ci,
+                Cliente.telefono,
+                Cliente.email,
+                Cliente.direccion,
+                Cliente.fecha_nacimiento,
+                Cliente.fecha_registro,
+                Cliente.notas,
+                Cliente.referidor_id,
+                Referidor.nombre.label("referidor_nombre"),
+            )
+            .outerjoin(Referidor, Referidor.id == Cliente.referidor_id)
+        )
+        if referidor_id:
+            query = query.filter(Cliente.referidor_id == referidor_id)
+        if buscar and buscar.strip():
+            term = f"%{buscar.strip()}%"
+            query = query.filter(
+                or_(
+                    Cliente.nombre.ilike(term),
+                    Cliente.ci.ilike(term),
+                    Cliente.telefono.ilike(term),
+                )
+            )
+
+        total = query.order_by(None).count()
         total_pages = ceil(total / page_size) if total else 1
         offset = (page - 1) * page_size
-        clientes = query.order_by(Cliente.nombre.asc()).offset(offset).limit(page_size).all()
+        rows = (
+            query
+            .order_by(Cliente.nombre.asc(), Cliente.id.asc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
 
         items = [
             ClienteListItemOut(
-                id=cliente.id,
-                nombre=cliente.nombre,
-                ci=cliente.ci,
-                telefono=cliente.telefono,
-                email=cliente.email,
-                direccion=cliente.direccion,
-                fecha_nacimiento=cliente.fecha_nacimiento,
-                fecha_registro=cliente.fecha_registro,
-                notas=cliente.notas,
-                referidor_id=cliente.referidor_id,
-                referidor_nombre=cliente.referidor_rel.nombre if cliente.referidor_rel else None,
+                id=row.id,
+                nombre=row.nombre,
+                ci=row.ci,
+                telefono=row.telefono,
+                email=row.email,
+                direccion=row.direccion,
+                fecha_nacimiento=row.fecha_nacimiento,
+                fecha_registro=row.fecha_registro,
+                notas=row.notas,
+                referidor_id=row.referidor_id,
+                referidor_nombre=row.referidor_nombre,
             )
-            for cliente in clientes
+            for row in rows
         ]
 
         return ClienteListResponseOut(

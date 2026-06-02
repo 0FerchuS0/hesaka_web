@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { PanelLeftOpen } from 'lucide-react'
 import { AuthProvider, useAuth, api } from './context/AuthContext'
 import Modal from './components/Modal'
 import Sidebar from './components/Sidebar'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
+import { applyModuleFreshnessSnapshot } from './utils/moduleFreshness'
 import { hasActionAccess, hasModuleAccess, normalizeRole } from './utils/roles'
 import {
     consumeBeforeUnloadSuppression,
@@ -128,6 +129,7 @@ function ClinicaIndexRoute() {
 
 function AppLayout() {
     const { user, logout } = useAuth()
+    const queryClient = useQueryClient()
     const location = useLocation()
     const [isMobileSidebarViewport, setIsMobileSidebarViewport] = useState(() => window.innerWidth <= 768)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -147,6 +149,29 @@ function AppLayout() {
         retry: false,
         staleTime: 60000,
     })
+
+    const { data: moduleFreshness } = useQuery({
+        queryKey: ['module-freshness-poll'],
+        queryFn: () => api.get('/ventas/module-freshness').then(response => response.data),
+        enabled: Boolean(user),
+        retry: false,
+        staleTime: 0,
+        refetchInterval: 30000,
+        refetchIntervalInBackground: true,
+    })
+
+    useEffect(() => {
+        if (!moduleFreshness) return
+        const changedModules = applyModuleFreshnessSnapshot(moduleFreshness)
+        if (!changedModules.length) return
+
+        if (changedModules.includes('ventas') && location.pathname.startsWith('/ventas')) {
+            void queryClient.invalidateQueries({ queryKey: ['ventas-optimizado'], refetchType: 'active' })
+        }
+        if (changedModules.includes('presupuestos') && location.pathname.startsWith('/presupuestos')) {
+            void queryClient.invalidateQueries({ queryKey: ['presupuestos'], refetchType: 'active' })
+        }
+    }, [location.pathname, moduleFreshness, queryClient])
 
     const performIdleLogout = useCallback(() => {
         if (idleTimerRef.current) {

@@ -327,10 +327,17 @@ export default function ClientesPage() {
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
     const [exportando, setExportando] = useState(false)
+    const [loadSecondaryFilters, setLoadSecondaryFilters] = useState(false)
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setLoadSecondaryFilters(true), 150)
+        return () => window.clearTimeout(timer)
+    }, [])
 
     const { data: referidores = [] } = useQuery({
         queryKey: ['referidores'],
         queryFn: () => api.get('/referidores/').then(r => r.data),
+        enabled: loadSecondaryFilters,
         retry: false,
     })
 

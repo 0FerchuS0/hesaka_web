@@ -1,9 +1,12 @@
+import { createPortal } from 'react-dom'
+
 // HESAKA Web - Componente reutilizable: Modal
 export default function Modal({
     title,
     onClose,
     children,
     maxWidth = '560px',
+    bodyPadding = '0 24px 24px',
     closeOnBackdrop = true,
     closeDisabled = false,
     onCloseAttempt,
@@ -16,12 +19,13 @@ export default function Modal({
         onClose?.()
     }
 
-    return (
+    const modalContent = (
         <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeOnBackdrop && handleClose()}>
             <div className="modal" style={{ maxWidth, maxHeight: '96vh', display: 'flex', flexDirection: 'column' }}>
                 <div className="modal-header" style={{ flexShrink: 0 }}>
                     <h3 className="modal-title">{title}</h3>
                     <button
+                        type="button"
                         onClick={handleClose}
                         disabled={closeDisabled}
                         title={closeDisabled ? 'La accion aun se esta procesando.' : 'Cerrar'}
@@ -38,10 +42,16 @@ export default function Modal({
                         x
                     </button>
                 </div>
-                <div style={{ overflow: 'auto', minWidth: 0, flex: 1, padding: '0 24px 24px' }}>
+                <div style={{ overflow: 'auto', minWidth: 0, flex: 1, padding: bodyPadding }}>
                     {children}
                 </div>
             </div>
         </div>
     )
+
+    if (typeof document === 'undefined') {
+        return modalContent
+    }
+
+    return createPortal(modalContent, document.body)
 }

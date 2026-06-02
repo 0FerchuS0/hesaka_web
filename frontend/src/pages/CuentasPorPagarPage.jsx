@@ -4,9 +4,10 @@ import { AlertCircle, Building2, CreditCard, Eye, Landmark, Pencil, ReceiptText,
 
 import Modal from '../components/Modal'
 import DetalleCompraContent from '../components/DetalleCompraContent'
+import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
 import { api, useAuth } from '../context/AuthContext'
-import { invalidateJornadaLiveData } from '../hooks/useFinancialJornada'
+import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
 import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
@@ -18,6 +19,7 @@ const fmtDate = value => {
     return date ? date.toLocaleDateString('es-PY') : '-'
 }
 const toDateTimeLocalValue = toBusinessDateTimeLocalValue
+const isJornadaClosedError = error => String(error?.response?.data?.detail || '').toLowerCase().includes('jornada')
 
 function estadoBadge(estado) {
     const map = {
@@ -241,6 +243,9 @@ function PagoProveedorModal({ proveedor, onClose }) {
     const [errorAgregarMedio, setErrorAgregarMedio] = useState('')
     const [errorConfirmacion, setErrorConfirmacion] = useState('')
     const [montoEditado, setMontoEditado] = useState(false)
+    const [showJornadaRecovery, setShowJornadaRecovery] = useState(false)
+    const { data: jornadaEstado } = useFinancialJornadaStatus()
+    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
 
     const { data: bancos = [] } = useQuery({
         queryKey: ['bancos'],
@@ -279,9 +284,19 @@ function PagoProveedorModal({ proveedor, onClose }) {
             invalidateJornadaLiveData(queryClient)
             onClose()
         },
+        onError: error => {
+            if (isJornadaClosedError(error)) {
+                setShowJornadaRecovery(true)
+                queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
+            }
+        },
     })
 
     const agregarMetodo = () => {
+        if (!jornadaAbierta) {
+            setErrorAgregarMedio('Debes abrir la jornada financiera antes de cargar medios de pago.')
+            return
+        }
         if (montoNum <= 0) {
             setErrorAgregarMedio('Debes cargar un monto mayor a cero para agregar el medio de pago.')
             return
@@ -323,6 +338,10 @@ function PagoProveedorModal({ proveedor, onClose }) {
 
     const confirmarPago = event => {
         event.preventDefault()
+        if (!jornadaAbierta) {
+            setErrorConfirmacion('Debes abrir la jornada financiera antes de confirmar este pago.')
+            return
+        }
         let usarFacturaGenerica = false
         if (metodos.length === 0) {
             setErrorConfirmacion('Debes agregar al menos un medio de pago antes de confirmar.')
@@ -366,6 +385,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
     return (
         <>
         <form onSubmit={confirmarPago}>
+            <FinancialJornadaNotice compact forceVisible={showJornadaRecovery || !jornadaAbierta} />
             <div className="card mb-16" style={{ padding: '14px 16px' }}>
                 <div style={{ display: 'grid', gap: 6 }}>
                     <div style={{ fontWeight: 700 }}>{proveedor.proveedor_nombre}</div>
@@ -434,7 +454,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
             <div className="grid-2 mb-16">
                 <div className="form-group">
                     <label className="form-label">Fecha del pago</label>
-                    <input type="datetime-local" className="form-input" value={fecha} onChange={event => setFecha(event.target.value)} />
+                    <input type="datetime-local" className="form-input" value={fecha} onChange={event => setFecha(event.target.value)} disabled={!jornadaAbierta} />
                 </div>
                 <div className="form-group">
                     <label className="form-label">Monto total agregado</label>
@@ -448,7 +468,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
                 <div className="grid-2 mb-16">
                     <div className="form-group">
                         <label className="form-label">Metodo</label>
-                        <select className="form-select" value={metodoPago} onChange={event => setMetodoPago(event.target.value)}>
+                        <select className="form-select" value={metodoPago} onChange={event => setMetodoPago(event.target.value)} disabled={!jornadaAbierta}>
                             <option value="EFECTIVO">EFECTIVO</option>
                             <option value="TRANSFERENCIA">TRANSFERENCIA</option>
                             <option value="TARJETA">TARJETA</option>
@@ -467,6 +487,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
                                 setMonto(normalizeGsInput(event.target.value).formatted)
                             }}
                             onFocus={event => event.target.select()}
+                            disabled={!jornadaAbierta}
                         />
                         <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
                             Sugerido: Gs. {fmt(montoSugerido)}. No se permite superar {osSeleccionadas.length > 0 ? 'las OS seleccionadas' : 'la deuda abierta'}.
@@ -474,18 +495,18 @@ function PagoProveedorModal({ proveedor, onClose }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Banco</label>
-                        <select className="form-select" value={bancoId} onChange={event => setBancoId(event.target.value)} disabled={metodoPago === 'EFECTIVO'}>
+                        <select className="form-select" value={bancoId} onChange={event => setBancoId(event.target.value)} disabled={!jornadaAbierta || metodoPago === 'EFECTIVO'}>
                             <option value="">Seleccionar banco</option>
                             {bancos.map(banco => <option key={banco.id} value={banco.id}>{banco.nombre_banco}</option>)}
                         </select>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Comprobante</label>
-                        <input className="form-input" value={nroComprobante} onChange={event => setNroComprobante(event.target.value)} placeholder="Opcional" />
+                        <input className="form-input" value={nroComprobante} onChange={event => setNroComprobante(event.target.value)} placeholder="Opcional" disabled={!jornadaAbierta} />
                     </div>
                 </div>
                 <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
-                    <button type="button" className="btn btn-secondary" onClick={agregarMetodo}>
+                    <button type="button" className="btn btn-secondary" onClick={agregarMetodo} disabled={!jornadaAbierta}>
                         Agregar medio
                     </button>
                 </div>
@@ -553,7 +574,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
                 <button
                     type="submit"
                     className="btn btn-primary"
-                    disabled={registrarPago.isPending}
+                    disabled={registrarPago.isPending || !jornadaAbierta}
                 >
                     {registrarPago.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Wallet size={15} /> Confirmar pago</>}
                 </button>
@@ -685,6 +706,10 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         if (montoEditado) return
         setMonto(formatGsAmount(montoSugerido))
     }, [montoEditado, montoSugerido])
+
+    useEffect(() => {
+        if (jornadaAbierta) setShowJornadaRecovery(false)
+    }, [jornadaAbierta])
 
     const eliminarMetodo = index => {
         setMetodos(prev => prev.filter((_, idx) => idx !== index))
@@ -1185,6 +1210,11 @@ export default function CuentasPorPagarPage() {
     const queryClient = useQueryClient()
     const { user } = useAuth()
     const [tab, setTab] = useState('creditos')
+    const [readyTabs, setReadyTabs] = useState({
+        creditos: false,
+        contados: false,
+        historial: false,
+    })
     const [detalleProveedor, setDetalleProveedor] = useState(null)
     const [pagoProveedor, setPagoProveedor] = useState(null)
     const [editarPagoGrupo, setEditarPagoGrupo] = useState(null)
@@ -1205,18 +1235,28 @@ export default function CuentasPorPagarPage() {
     const [historialPdfGroupId, setHistorialPdfGroupId] = useState(null)
     const [historialRevertingGroupId, setHistorialRevertingGroupId] = useState(null)
 
+    useEffect(() => {
+        if (readyTabs[tab]) return
+        const timer = window.setTimeout(() => {
+            setReadyTabs(prev => (prev[tab] ? prev : { ...prev, [tab]: true }))
+        }, 160)
+        return () => window.clearTimeout(timer)
+    }, [readyTabs, tab])
+
     const { data: resumen = [], isLoading: loadingResumen, isError: errorResumen, error: resumenError } = useQuery({
         queryKey: ['cxp-resumen'],
         queryFn: () => api.get('/compras/cuentas-por-pagar/resumen').then(response => response.data),
-        enabled: tab === 'creditos',
+        enabled: tab === 'creditos' && readyTabs.creditos,
         retry: false,
+        staleTime: 30000,
     })
 
     const { data: contados = [], isLoading: loadingContados, isError: errorContados, error: contadosError } = useQuery({
         queryKey: ['cxp-contados-pendientes'],
         queryFn: () => api.get('/compras/cuentas-por-pagar/contados-pendientes').then(response => response.data),
-        enabled: tab === 'contados',
+        enabled: tab === 'contados' && readyTabs.contados,
         retry: false,
+        staleTime: 30000,
     })
     const {
         data: historialData = { items: [], page: 1, page_size: historialPageSize, total: 0, total_pages: 1 },
@@ -1237,8 +1277,9 @@ export default function CuentasPorPagarPage() {
                 page_size: historialPageSize,
             },
         }).then(response => response.data || { items: [], page: 1, page_size: historialPageSize, total: 0, total_pages: 1 }),
-        enabled: tab === 'historial',
+        enabled: tab === 'historial' && readyTabs.historial,
         retry: false,
+        staleTime: 30000,
     })
 
     const historialPagos = historialData.items || []

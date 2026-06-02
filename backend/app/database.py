@@ -165,10 +165,20 @@ def ensure_tenant_schema(engine, tenant_slug: str):
     if "presupuestos" in table_names:
         presupuesto_columns = {column["name"] for column in inspector.get_columns("presupuestos")}
         with engine.begin() as connection:
+            if "doctor_receta" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN doctor_receta VARCHAR(255)"))
+            if "observaciones" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN observaciones VARCHAR(255)"))
+            if "fecha_receta" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN fecha_receta TIMESTAMP"))
             if "vendedor_id" not in presupuesto_columns and "vendedores" in table_names:
                 connection.execute(text("ALTER TABLE presupuestos ADD COLUMN vendedor_id INTEGER REFERENCES vendedores(id)"))
             if "canal_venta_id" not in presupuesto_columns and "canales_venta" in table_names:
                 connection.execute(text("ALTER TABLE presupuestos ADD COLUMN canal_venta_id INTEGER REFERENCES canales_venta(id)"))
+            if "referidor_id" not in presupuesto_columns and "referidores" in table_names:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN referidor_id INTEGER REFERENCES referidores(id)"))
+            if "comision_monto" not in presupuesto_columns:
+                connection.execute(text("ALTER TABLE presupuestos ADD COLUMN comision_monto DOUBLE PRECISION DEFAULT 0"))
 
     if "ventas" in table_names:
         venta_columns = {column["name"] for column in inspector.get_columns("ventas")}
@@ -236,6 +246,26 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 """
                 UPDATE presupuestos
                 SET no_requiere_proximo_control = COALESCE(no_requiere_proximo_control, FALSE)
+                """
+            ))
+    if "presupuesto_items" in table_names:
+        presupuesto_items_columns = {column["name"] for column in inspector.get_columns("presupuesto_items")}
+        with engine.begin() as connection:
+            if "costo_unitario" not in presupuesto_items_columns:
+                connection.execute(text("ALTER TABLE presupuesto_items ADD COLUMN costo_unitario DOUBLE PRECISION DEFAULT 0"))
+            if "descuento" not in presupuesto_items_columns:
+                connection.execute(text("ALTER TABLE presupuesto_items ADD COLUMN descuento DOUBLE PRECISION DEFAULT 0"))
+            if "descripcion_personalizada" not in presupuesto_items_columns:
+                connection.execute(text("ALTER TABLE presupuesto_items ADD COLUMN descripcion_personalizada TEXT"))
+            if "codigo_armazon" not in presupuesto_items_columns:
+                connection.execute(text("ALTER TABLE presupuesto_items ADD COLUMN codigo_armazon VARCHAR(50)"))
+            if "medidas_armazon" not in presupuesto_items_columns:
+                connection.execute(text("ALTER TABLE presupuesto_items ADD COLUMN medidas_armazon VARCHAR(50)"))
+            connection.execute(text(
+                """
+                UPDATE presupuesto_items
+                SET costo_unitario = COALESCE(costo_unitario, 0),
+                    descuento = COALESCE(descuento, 0)
                 """
             ))
 
@@ -533,10 +563,20 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         if "presupuestos" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_presupuesto_estado_fecha ON presupuestos (estado, fecha)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_presupuesto_cliente_fecha ON presupuestos (cliente_id, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_presupuesto_vendedor_fecha ON presupuestos (vendedor_id, fecha DESC, id DESC)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_presupuesto_canal_fecha ON presupuestos (canal_venta_id, fecha DESC, id DESC)"))
 
         if "ventas" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_venta_fecha_estado ON ventas (fecha, estado)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_venta_cliente_fecha ON ventas (cliente_id, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_venta_presupuesto_id ON ventas (presupuesto_id)"))
+            connection.execute(text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_venta_saldo_abierto_fecha
+                ON ventas (fecha DESC, id DESC)
+                WHERE saldo > 0 AND estado <> 'ANULADA'
+                """
+            ))
 
         if "pagos" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_pago_venta_fecha ON pagos (venta_id, fecha)"))
@@ -545,17 +585,78 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         if "movimientos_caja" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_caja_jornada_id ON movimientos_caja (jornada_id)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_caja_jornada_fecha ON movimientos_caja (jornada_id, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_caja_deposito_banco ON movimientos_caja (deposito_banco_id)"))
 
         if "movimientos_banco" in table_names:
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_banco_fecha ON movimientos_banco (banco_id, fecha)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_jornada_id ON movimientos_banco (jornada_id)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_jornada_fecha ON movimientos_banco (jornada_id, fecha)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mov_banco_grupo_pago ON movimientos_banco (grupo_pago_id)"))
+
+        if "gastos_operativos" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_gasto_movimiento_banco ON gastos_operativos (movimiento_banco_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_gasto_movimiento_caja ON gastos_operativos (movimiento_caja_id)"))
+
+        if "compra_detalles" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_compra_detalles_presupuesto_item ON compra_detalles (presupuesto_item_id)"))
+
+        if "compras" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_compra_proveedor_fecha ON compras (proveedor_id, fecha DESC, id DESC)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_compra_cliente_id ON compras (cliente_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_compra_venta_id ON compras (venta_id)"))
+            connection.execute(text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_compra_saldo_abierto_fecha
+                ON compras (fecha DESC, id DESC)
+                WHERE saldo > 0 AND estado NOT IN ('ANULADO', 'ANULADA')
+                """
+            ))
+
+        if "productos" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_producto_activo_categoria_nombre ON productos (activo, categoria_id, nombre, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_producto_activo_marca_nombre ON productos (activo, marca_id, nombre, id)"))
+
+        if "clinica_turnos" in table_names:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_clinica_turno_estado_fecha ON clinica_turnos (estado, fecha_hora, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_clinica_turno_doctor_fecha ON clinica_turnos (doctor_id, fecha_hora, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_clinica_turno_lugar_fecha ON clinica_turnos (lugar_atencion_id, fecha_hora, id)"))
 
     inspector = inspect(engine)
     table_names = inspector.get_table_names()
     ensure_sync_timestamp_columns(engine, inspector, table_names)
 
     _tenant_schema_checked.add(tenant_slug)
+
+
+def realign_postgres_sequences(engine) -> None:
+    """Alinea secuencias SERIAL/IDENTITY con el MAX(id) real de cada tabla."""
+    with engine.begin() as connection:
+        rows = connection.execute(text("""
+            SELECT
+                table_name,
+                column_name,
+                pg_get_serial_sequence(format('public.%I', table_name), column_name) AS sequence_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND column_default LIKE 'nextval(%'
+        """)).mappings().all()
+
+        for row in rows:
+            table_name = row["table_name"]
+            column_name = row["column_name"]
+            sequence_name = row["sequence_name"]
+            if not sequence_name:
+                continue
+
+            max_value = connection.execute(text(
+                f'SELECT COALESCE(MAX("{column_name}"), 0) FROM "{table_name}"'
+            )).scalar() or 0
+
+            next_value = int(max_value) + 1
+            connection.execute(
+                text("SELECT setval(:sequence_name, :next_value, false)"),
+                {"sequence_name": sequence_name, "next_value": next_value},
+            )
 
 
 def get_engine_for_tenant(tenant_slug: str):

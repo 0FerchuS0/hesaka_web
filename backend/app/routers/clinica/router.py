@@ -30,6 +30,7 @@ from app.schemas.schemas import (
     ClinicaConsultaDetalleOut,
     ClinicaHistorialGeneralItemOut,
     ClinicaHistorialGeneralOut,
+    ClinicaHistorialGeneralResumenOut,
     ClinicaConsultaHistorialOut,
     ClinicaConsultaOftalmologicaIn,
     ClinicaCuestionarioIn,
@@ -306,6 +307,12 @@ def _query_historial_general_recetas(session, desde_dt=None, hasta_dt=None, paci
         query = query.filter(RecetaMedicamento.fecha_emision < hasta_dt)
     if paciente_id:
         query = query.filter(RecetaMedicamento.paciente_id == paciente_id)
+    query = query.filter(
+        or_(
+            RecetaMedicamento.consulta_id.is_(None),
+            RecetaMedicamento.consulta_tipo.is_(None),
+        )
+    )
     if doctor_nombre_filtrado:
         query = query.filter(RecetaMedicamento.doctor_nombre == doctor_nombre_filtrado)
     if termino:
@@ -320,6 +327,56 @@ def _query_historial_general_recetas(session, desde_dt=None, hasta_dt=None, paci
             )
         )
     return query
+
+
+def _construir_historial_general_queries(
+    session,
+    tipo_normalizado: str,
+    desde_dt=None,
+    hasta_dt=None,
+    paciente_id=None,
+    doctor_id=None,
+    doctor_nombre_filtrado=None,
+    termino: str = "",
+):
+    query_parts = []
+    if tipo_normalizado in ("TODOS", "OFTALMOLOGIA"):
+        query_parts.append(
+            _query_historial_general_oftalmologia(
+                session,
+                desde_dt,
+                hasta_dt,
+                paciente_id=paciente_id,
+                doctor_id=doctor_id,
+                termino=termino,
+            )
+        )
+
+    if tipo_normalizado in ("TODOS", "CONTACTOLOGIA"):
+        query_parts.append(
+            _query_historial_general_contactologia(
+                session,
+                desde_dt,
+                hasta_dt,
+                paciente_id=paciente_id,
+                doctor_id=doctor_id,
+                termino=termino,
+            )
+        )
+
+    if tipo_normalizado in ("TODOS", "RECETA_MEDICAMENTOS"):
+        query_parts.append(
+            _query_historial_general_recetas(
+                session,
+                desde_dt,
+                hasta_dt,
+                paciente_id=paciente_id,
+                doctor_nombre_filtrado=doctor_nombre_filtrado,
+                termino=termino,
+            )
+        )
+
+    return query_parts
 
 
 def _serializar_pacientes(session, pacientes):
@@ -2396,16 +2453,14 @@ def obtener_historial_paciente_clinica(
         session.close()
 
 
-@router.get("/historial-general", response_model=ClinicaHistorialGeneralOut)
-def obtener_historial_clinico_general(
+@router.get("/historial-general/resumen", response_model=ClinicaHistorialGeneralResumenOut)
+def obtener_historial_clinico_general_resumen(
     fecha_desde: date | None = Query(default=None),
     fecha_hasta: date | None = Query(default=None),
     paciente_id: int | None = Query(default=None),
     doctor_id: int | None = Query(default=None),
     tipo: str | None = Query(default=None),
     buscar: str | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=25, ge=1, le=100),
     tenant_slug: str = Depends(get_tenant_slug),
     current_user=Depends(require_action("clinica.historial", "clinica")),
 ):
@@ -2423,47 +2478,23 @@ def obtener_historial_clinico_general(
                 raise HTTPException(status_code=404, detail="Doctor no encontrado.")
             doctor_nombre_filtrado = doctor_filtrado.nombre_completo
 
-        query_parts = []
-        if tipo_normalizado in ("TODOS", "OFTALMOLOGIA"):
-            query_parts.append(
-                _query_historial_general_oftalmologia(
-                    session,
-                    desde_dt,
-                    hasta_dt,
-                    paciente_id=paciente_id,
-                    doctor_id=doctor_id,
-                    termino=termino,
-                )
-            )
+        query_parts = _construir_historial_general_queries(
+            session,
+            tipo_normalizado,
+            desde_dt=desde_dt,
+            hasta_dt=hasta_dt,
+            paciente_id=paciente_id,
+            doctor_id=doctor_id,
+            doctor_nombre_filtrado=doctor_nombre_filtrado,
+            termino=termino,
+        )
+        if not query_parts:
+            return ClinicaHistorialGeneralResumenOut(total=0)
 
-        if tipo_normalizado in ("TODOS", "CONTACTOLOGIA"):
-            query_parts.append(
-                _query_historial_general_contactologia(
-                    session,
-                    desde_dt,
-                    hasta_dt,
-                    paciente_id=paciente_id,
-                    doctor_id=doctor_id,
-                    termino=termino,
-                )
-            )
-
-        if tipo_normalizado in ("TODOS", "RECETA_MEDICAMENTOS"):
-            query_parts.append(
-                _query_historial_general_recetas(
-                    session,
-                    desde_dt,
-                    hasta_dt,
-                    paciente_id=paciente_id,
-                    doctor_nombre_filtrado=doctor_nombre_filtrado,
-                    termino=termino,
-                )
-            )
-
-        if len(query_parts) == 1:
-            historial_sq = query_parts[0].subquery("clinica_historial_general")
-        else:
+        historial_sq = query_parts[0].subquery("clinica_historial_general")
+        if len(query_parts) > 1:
             historial_sq = union_all(*[query.statement for query in query_parts]).subquery("clinica_historial_general")
+
         counts_rows = (
             session.query(historial_sq.c.tipo, func.count().label("total"))
             .group_by(historial_sq.c.tipo)
@@ -2473,7 +2504,83 @@ def obtener_historial_clinico_general(
         total_oftalmologia = counts_map.get("OFTALMOLOGIA", 0)
         total_contactologia = counts_map.get("CONTACTOLOGIA", 0)
         total_recetas = counts_map.get("RECETA_MEDICAMENTOS", 0)
-        total = total_oftalmologia + total_contactologia + total_recetas
+        return ClinicaHistorialGeneralResumenOut(
+            total=total_oftalmologia + total_contactologia + total_recetas,
+            total_oftalmologia=total_oftalmologia,
+            total_contactologia=total_contactologia,
+            total_recetas=total_recetas,
+        )
+    finally:
+        session.close()
+
+
+@router.get("/historial-general", response_model=ClinicaHistorialGeneralOut)
+def obtener_historial_clinico_general(
+    fecha_desde: date | None = Query(default=None),
+    fecha_hasta: date | None = Query(default=None),
+    paciente_id: int | None = Query(default=None),
+    doctor_id: int | None = Query(default=None),
+    tipo: str | None = Query(default=None),
+    buscar: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    include_breakdown: bool = Query(default=True),
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("clinica.historial", "clinica")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        desde_dt = _inicio_dia(fecha_desde) if fecha_desde else None
+        hasta_dt = _inicio_dia(fecha_hasta) + timedelta(days=1) if fecha_hasta else None
+        tipo_normalizado = (tipo or "TODOS").strip().upper()
+        termino = (buscar or "").strip()
+        doctor_nombre_filtrado = None
+
+        if doctor_id:
+            doctor_filtrado = session.query(Doctor.id, Doctor.nombre_completo).filter(Doctor.id == doctor_id).first()
+            if not doctor_filtrado:
+                raise HTTPException(status_code=404, detail="Doctor no encontrado.")
+            doctor_nombre_filtrado = doctor_filtrado.nombre_completo
+
+        query_parts = _construir_historial_general_queries(
+            session,
+            tipo_normalizado,
+            desde_dt=desde_dt,
+            hasta_dt=hasta_dt,
+            paciente_id=paciente_id,
+            doctor_id=doctor_id,
+            doctor_nombre_filtrado=doctor_nombre_filtrado,
+            termino=termino,
+        )
+        if not query_parts:
+            return ClinicaHistorialGeneralOut(items=[], total=0, page=page, page_size=page_size, total_pages=1)
+
+        historial_sq = query_parts[0].subquery("clinica_historial_general")
+        if len(query_parts) > 1:
+            historial_sq = union_all(*[query.statement for query in query_parts]).subquery("clinica_historial_general")
+
+        total_oftalmologia = 0
+        total_contactologia = 0
+        total_recetas = 0
+        if include_breakdown:
+            counts_rows = (
+                session.query(historial_sq.c.tipo, func.count().label("total"))
+                .group_by(historial_sq.c.tipo)
+                .all()
+            )
+            counts_map = {row.tipo: row.total or 0 for row in counts_rows}
+            total_oftalmologia = counts_map.get("OFTALMOLOGIA", 0)
+            total_contactologia = counts_map.get("CONTACTOLOGIA", 0)
+            total_recetas = counts_map.get("RECETA_MEDICAMENTOS", 0)
+            total = total_oftalmologia + total_contactologia + total_recetas
+        else:
+            total = _count_rows(session.query(func.count()).select_from(historial_sq))
+            if tipo_normalizado == "OFTALMOLOGIA":
+                total_oftalmologia = total
+            elif tipo_normalizado == "CONTACTOLOGIA":
+                total_contactologia = total
+            elif tipo_normalizado == "RECETA_MEDICAMENTOS":
+                total_recetas = total
         total_pages = max(1, ceil(total / page_size)) if total else 1
         start = (page - 1) * page_size
         rows = (

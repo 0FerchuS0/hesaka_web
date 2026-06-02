@@ -446,6 +446,12 @@ export default function ProductosPage() {
     const [soloActivos, setSoloActivos] = useState(true)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(25)
+    const [loadSecondaryFilters, setLoadSecondaryFilters] = useState(false)
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setLoadSecondaryFilters(true), 150)
+        return () => window.clearTimeout(timer)
+    }, [])
 
     useEffect(() => {
         const timer = setTimeout(() => setBuscarDebounced(buscar.trim()), 350)
@@ -485,12 +491,14 @@ export default function ProductosPage() {
     const { data: categorias = [] } = useQuery({
         queryKey: ['categorias'],
         queryFn: () => api.get('/categorias/').then(response => response.data),
+        enabled: loadSecondaryFilters,
         retry: false,
     })
 
     const { data: marcas = [] } = useQuery({
         queryKey: ['marcas'],
         queryFn: () => api.get('/marcas/').then(response => response.data),
+        enabled: loadSecondaryFilters,
         retry: false,
     })
 

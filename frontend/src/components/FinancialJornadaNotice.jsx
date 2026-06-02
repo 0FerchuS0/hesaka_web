@@ -53,6 +53,7 @@ function JornadaOpenForm({ onDone }) {
 
 export default function FinancialJornadaNotice({
     compact = false,
+    forceVisible = false,
     title = 'La jornada financiera de hoy no está abierta.',
     message = 'Para registrar cobros, gastos, pagos, transferencias o ajustes primero debes abrir la jornada.',
 }) {
@@ -61,7 +62,7 @@ export default function FinancialJornadaNotice({
     const { data, isLoading } = useFinancialJornadaStatus()
     const puedeAbrir = hasActionAccess(user, 'finanzas.jornada_abrir', 'finanzas')
 
-    if (isLoading || data?.abierta) return null
+    if (!forceVisible && (isLoading || data?.abierta)) return null
 
     return (
         <>

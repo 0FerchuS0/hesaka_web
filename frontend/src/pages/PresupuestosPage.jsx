@@ -4,10 +4,13 @@ import { flushSync } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
+import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList, Clock } from 'lucide-react'
+import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { nowBusinessDateTimeLocalValue, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
+import { markModuleFreshnessSeen, shouldForceModuleRefresh } from '../utils/moduleFreshness'
 import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
@@ -54,6 +57,7 @@ const sanitizeItemFinancials = item => {
         subtotal: bruto - descuento,
     }
 }
+const isJornadaClosedError = error => String(error?.response?.data?.detail || '').toLowerCase().includes('jornada')
 const abrirPresupuestoPdf = async presupuestoId => {
     await requestAndOpenPdf(
         () => api.get(`/presupuestos/${presupuestoId}/pdf`, { responseType: 'blob' }),
@@ -340,8 +344,11 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
     const [monto, setMonto] = useState('')
     const [nota, setNota] = useState('')
     const [pagoInicial, setPagoInicial] = useState(false)
+    const [showJornadaRecovery, setShowJornadaRecovery] = useState(false)
 
     const { data: bancos = [] } = useQuery({ queryKey: ['bancos'], queryFn: () => api.get('/bancos/').then(r => r.data) })
+    const { data: jornadaEstado } = useFinancialJornadaStatus()
+    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
     const montoMaximo = Math.max(0, Math.trunc(Number(presupuesto?.total || 0)))
     const montoCobrado = parseGsInput(monto)
 
@@ -396,7 +403,13 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                 qc.invalidateQueries({ queryKey: ['ventas-optimizado'] }),
                 qc.invalidateQueries({ queryKey: ['ventas'] }),
             ]).catch(() => {})
-        }
+        },
+        onError: error => {
+            if (isJornadaClosedError(error)) {
+                setShowJornadaRecovery(true)
+                qc.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
+            }
+        },
     })
     const confirmNavigation = usePendingNavigationGuard(
         convertir.isPending || pagoInicial,
@@ -410,8 +423,16 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
         return () => onBusyChange?.(false)
     }, [convertir.isPending, onBusyChange])
 
+    useEffect(() => {
+        if (jornadaAbierta) setShowJornadaRecovery(false)
+    }, [jornadaAbierta])
+
     const handleSubmit = e => {
         e.preventDefault()
+        if (pagoInicial && !jornadaAbierta) {
+            window.alert('Debes abrir la jornada financiera antes de registrar un cobro inicial.')
+            return
+        }
         if (pagoInicial && montoCobrado > montoMaximo) {
             window.alert('El monto cobrado no puede superar el total pendiente del presupuesto.')
             return
@@ -450,6 +471,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
             </label>
             {pagoInicial && (
                 <>
+                    <FinancialJornadaNotice compact forceVisible={showJornadaRecovery || !jornadaAbierta} />
                     <div className="grid-2 mb-16">
                         <div className="form-group">
                             <label className="form-label">Monto cobrado (Gs.)</label>
@@ -461,7 +483,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                                 onChange={e => setMonto(normalizeGsInput(e.target.value).formatted)}
                                 onFocus={e => e.target.select()}
                                 placeholder="0"
-                                disabled={convertir.isPending}
+                                disabled={convertir.isPending || !jornadaAbierta}
                             />
                             <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
                                 Sugerido: Gs. {fmt(montoMaximo)}. No se permite cargar más que el saldo pendiente.
@@ -469,7 +491,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                         </div>
                         <div className="form-group">
                             <label className="form-label">Método</label>
-                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={convertir.isPending}>
+                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={convertir.isPending || !jornadaAbierta}>
                                 <option value="EFECTIVO">💵 Efectivo</option>
                                 <option value="TARJETA">💳 Tarjeta</option>
                                 <option value="TRANSFERENCIA">🏦 Transferencia</option>
@@ -479,7 +501,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                     {['TARJETA', 'TRANSFERENCIA'].includes(metodo) && (
                         <div className="form-group mb-16">
                             <label className="form-label">Banco *</label>
-                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={convertir.isPending}>
+                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={convertir.isPending || !jornadaAbierta}>
                                 <option value="">Seleccionar banco...</option>
                                 {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre_banco}</option>)}
                             </select>
@@ -488,7 +510,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                     )}
                     <div className="form-group mb-16">
                         <label className="form-label">Nota</label>
-                        <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Opcional..." disabled={convertir.isPending} />
+                        <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Opcional..." disabled={convertir.isPending || !jornadaAbierta} />
                     </div>
                 </>
             )}
@@ -499,7 +521,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
             )}
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={convertir.isPending}>Cancelar</button>
-                <button type="submit" className="btn btn-primary" disabled={convertir.isPending}>
+                <button type="submit" className="btn btn-primary" disabled={convertir.isPending || (pagoInicial && !jornadaAbierta)}>
                     {convertir.isPending ? 'Confirmando venta...' : <><ShoppingBag size={15} /> Confirmar Venta</>}
                 </button>
             </div>
@@ -1267,6 +1289,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
 
 export default function PresupuestosPage() {
     const qc = useQueryClient()
+    const forceRefreshOnMount = shouldForceModuleRefresh('presupuestos')
     const [buscar, setBuscar] = useState('')
     const [modal, setModal] = useState(false)
     const [editarPre, setEditarPre] = useState(null)     // presupuesto a editar
@@ -1312,7 +1335,13 @@ export default function PresupuestosPage() {
             return api.get(`/presupuestos/listado-optimizado?${params.toString()}`).then(r => r.data)
         },
         retry: false,
+        refetchOnMount: forceRefreshOnMount ? 'always' : true,
     })
+
+    useEffect(() => {
+        if (!presupuestosData?.version) return
+        markModuleFreshnessSeen('presupuestos', presupuestosData.version)
+    }, [presupuestosData?.version])
 
     const presupuestos = Array.isArray(presupuestosData?.items) ? presupuestosData.items : []
     const filtrados = presupuestos

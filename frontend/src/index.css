@@ -792,6 +792,195 @@ select:not([class*="react-select"]) {
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
+.clinica-form-shell .form-label,
+.clinica-form-shell .checkbox-label,
+.clinica-form-shell strong,
+.clinica-form-shell label {
+  color: #10324b;
+}
+
+.clinica-form-shell {
+  font-size: 0.94rem;
+  color: #10324b !important;
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.clinica-form-shell .card,
+.clinica-form-shell .card-title,
+.clinica-form-shell p,
+.clinica-form-shell span,
+.clinica-form-shell div,
+.clinica-form-shell small {
+  color: inherit;
+}
+
+.clinica-form-shell button,
+.clinica-form-shell svg {
+  color: unset;
+}
+
+.clinica-form-shell .form-input,
+.clinica-form-shell .form-select,
+.clinica-form-shell textarea.form-input,
+.clinica-form-shell input.form-input,
+.clinica-form-shell select.form-input,
+.clinica-form-shell select.form-select {
+  background: rgba(255, 255, 255, 0.94) !important;
+  color: #10324b !important;
+  border: 1px solid rgba(15, 118, 110, 0.18) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  caret-color: #0f766e;
+  color-scheme: light;
+  pointer-events: auto;
+}
+
+.clinica-form-shell .form-input::placeholder,
+.clinica-form-shell textarea.form-input::placeholder {
+  color: #7a8ca0 !important;
+}
+
+.clinica-form-shell .form-input:focus,
+.clinica-form-shell .form-select:focus,
+.clinica-form-shell textarea.form-input:focus,
+.clinica-form-shell input.form-input:focus,
+.clinica-form-shell select.form-input:focus,
+.clinica-form-shell select.form-select:focus {
+  background: #ffffff !important;
+  border-color: rgba(15, 118, 110, 0.42) !important;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12) !important;
+}
+
+.clinica-form-shell .form-input:disabled,
+.clinica-form-shell .form-select:disabled,
+.clinica-form-shell textarea.form-input:disabled,
+.clinica-form-shell input.form-input:disabled,
+.clinica-form-shell select.form-input:disabled,
+.clinica-form-shell select.form-select:disabled {
+  background: rgba(241, 245, 249, 0.95) !important;
+  color: #64748b !important;
+  cursor: not-allowed;
+}
+
+.clinica-form-shell .form-input option,
+.clinica-form-shell .form-select option {
+  background: #ffffff !important;
+  color: #10324b !important;
+}
+
+.clinica-form-shell .btn.btn-secondary,
+.clinica-form-shell .btn.btn-secondary.btn-sm {
+  color: #10324b;
+}
+
+.clinica-form-shell input[type="checkbox"],
+.clinica-form-shell input[type="radio"] {
+  accent-color: #0f766e;
+}
+
+.anamnesis-form-shell,
+.anamnesis-form-shell * {
+  color: #10324b !important;
+  opacity: 1 !important;
+}
+
+.anamnesis-form-shell .form-label,
+.anamnesis-form-shell label,
+.anamnesis-form-shell span,
+.anamnesis-form-shell div,
+.anamnesis-form-shell small,
+.anamnesis-form-shell strong,
+.anamnesis-form-shell p {
+  color: #10324b !important;
+}
+
+.anamnesis-form-shell [style*="var(--text-muted)"] {
+  color: #5f7388 !important;
+}
+
+.anamnesis-form-shell input[type="checkbox"],
+.anamnesis-form-shell input[type="radio"] {
+  accent-color: #0f766e;
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+.consulta-linked-panel,
+.consulta-linked-panel * {
+  color: #16324a;
+}
+
+.consulta-linked-panel .badge-green {
+  background: rgba(34, 197, 94, 0.14);
+  color: #0f8a4b;
+}
+
+.consulta-linked-panel .badge-yellow {
+  background: rgba(245, 158, 11, 0.16);
+  color: #a16207;
+}
+
+.consulta-linked-panel-card {
+  color: #16324a !important;
+}
+
+.consulta-linked-panel-card > div:first-child,
+.consulta-linked-panel-card strong {
+  color: #16324a !important;
+}
+
+.consulta-linked-panel .btn.btn-secondary,
+.consulta-linked-panel .btn.btn-secondary.btn-sm {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(21, 94, 117, 0.18);
+  color: #16324a !important;
+}
+
+.consulta-linked-panel .btn.btn-secondary:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: rgba(21, 94, 117, 0.28);
+  color: #0f2d44 !important;
+}
+
+.consulta-linked-panel .btn:disabled,
+.consulta-linked-panel .btn.btn-secondary:disabled {
+  opacity: 1 !important;
+  background: rgba(241, 245, 249, 0.96) !important;
+  border: 1px solid rgba(148, 163, 184, 0.28) !important;
+  color: #8aa0b6 !important;
+  cursor: not-allowed;
+}
+
+.consulta-linked-panel .btn svg,
+.consulta-linked-panel .btn:disabled svg {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
+.consulta-header-tabs .btn.btn-secondary,
+.consulta-header-tabs .btn.btn-secondary.btn-sm {
+  background: rgba(255, 255, 255, 0.86) !important;
+  border: 1px solid rgba(148, 163, 184, 0.22) !important;
+  color: #5b6f85 !important;
+  box-shadow: none !important;
+}
+
+.consulta-header-tabs .btn.btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-color: rgba(59, 130, 246, 0.2) !important;
+  color: #24435f !important;
+}
+
+.consulta-header-tabs .btn.btn-primary {
+  color: #ffffff !important;
+}
+
+.consulta-receta-action,
+.consulta-receta-action * {
+  color: #ffffff !important;
+}
+
 /* ─── Search Bar ─────────────────────────────────────────────────── */
 .search-bar {
   display: flex;

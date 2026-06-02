@@ -3,7 +3,7 @@ from math import ceil
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -551,14 +551,77 @@ def listar_productos_optimizado(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        query = _construir_query_productos(session, buscar, categoria_id, marca_id, solo_activos)
-        total = query.count()
+        query = (
+            session.query(
+                Producto.id,
+                Producto.codigo,
+                Producto.nombre,
+                Producto.codigo_fabricante,
+                Producto.marca_id,
+                Producto.marca,
+                Marca.nombre.label("marca_nombre"),
+                Producto.categoria_id,
+                Categoria.nombre.label("categoria_nombre"),
+                Producto.precio_venta,
+                Producto.costo,
+                Producto.costo_variable,
+                Producto.stock_actual,
+                Producto.impuesto,
+                Producto.activo,
+                Producto.bajo_pedido,
+            )
+            .outerjoin(Categoria, Categoria.id == Producto.categoria_id)
+            .outerjoin(Marca, Marca.id == Producto.marca_id)
+        )
+        if solo_activos:
+            query = query.filter(Producto.activo == True)
+        if categoria_id:
+            query = query.filter(Producto.categoria_id == categoria_id)
+        if marca_id:
+            query = query.filter(Producto.marca_id == marca_id)
+        if buscar and buscar.strip():
+            term = f"%{buscar.strip()}%"
+            query = query.filter(
+                or_(
+                    Producto.nombre.ilike(term),
+                    Producto.codigo.ilike(term),
+                    Producto.marca.ilike(term),
+                    Producto.codigo_fabricante.ilike(term),
+                )
+            )
+
+        total = query.order_by(None).count()
         total_pages = ceil(total / page_size) if total else 1
         offset = (page - 1) * page_size
-        productos = query.order_by(Producto.nombre.asc()).offset(offset).limit(page_size).all()
+        rows = (
+            query
+            .order_by(Producto.nombre.asc(), Producto.id.asc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
 
         return ProductoListResponseOut(
-            items=[_build_producto_list_item(producto) for producto in productos],
+            items=[
+                ProductoListItemOut(
+                    id=row.id,
+                    codigo=row.codigo,
+                    nombre=row.nombre,
+                    codigo_fabricante=row.codigo_fabricante,
+                    marca_id=row.marca_id,
+                    marca=row.marca_nombre or row.marca,
+                    categoria_id=row.categoria_id,
+                    categoria_nombre=row.categoria_nombre,
+                    precio_venta=row.precio_venta,
+                    costo=row.costo,
+                    costo_variable=row.costo_variable,
+                    stock_actual=row.stock_actual,
+                    impuesto=row.impuesto,
+                    activo=row.activo,
+                    bajo_pedido=row.bajo_pedido,
+                )
+                for row in rows
+            ],
             page=page,
             page_size=page_size,
             total=total,

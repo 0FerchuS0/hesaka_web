@@ -24,6 +24,7 @@ const fmtDateTime = value => {
     return date ? date.toLocaleString('es-PY') : '-'
 }
 const formatDateInputValue = toDateInputValue
+const isJornadaClosedError = error => String(error?.response?.data?.detail || '').toLowerCase().includes('jornada')
 const RETIRO_WHATSAPP_TEMPLATE_KEY = 'hesaka-retiro-whatsapp-template'
 const DEFAULT_RETIRO_WHATSAPP_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Tu trabajo{venta} ya esta disponible para retiro. Cuando gustes, puedes pasar por la optica. Quedamos atentos.'
 const RETIRO_TEMPLATE_CODE = 'venta_aviso_retiro'
@@ -863,6 +864,7 @@ function PagoCompraModal({ compra, onClose }) {
     const [metodoPago, setMetodoPago] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
     const [nroComprobante, setNroComprobante] = useState('')
+    const [showJornadaRecovery, setShowJornadaRecovery] = useState(false)
     const { data: jornadaEstado } = useFinancialJornadaStatus()
     const jornadaAbierta = Boolean(jornadaEstado?.abierta)
     const saldoPendiente = Math.max(0, Math.trunc(Number(compra?.saldo || 0)))
@@ -890,6 +892,12 @@ function PagoCompraModal({ compra, onClose }) {
             queryClient.invalidateQueries({ queryKey: ['bancos'] })
             invalidateJornadaLiveData(queryClient)
             onClose()
+        },
+        onError: error => {
+            if (isJornadaClosedError(error)) {
+                setShowJornadaRecovery(true)
+                queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
+            }
         },
     })
     const eliminarPago = useMutation({
@@ -924,9 +932,13 @@ function PagoCompraModal({ compra, onClose }) {
         })
     }
 
+    useEffect(() => {
+        if (jornadaAbierta) setShowJornadaRecovery(false)
+    }, [jornadaAbierta])
+
     return (
         <form onSubmit={handleSubmit}>
-            <FinancialJornadaNotice compact />
+            <FinancialJornadaNotice compact forceVisible={showJornadaRecovery} />
             <div className="card mb-16" style={{ padding: '14px 16px' }}>
                 <div style={{ display: 'grid', gap: 6 }}>
                     <div style={{ fontWeight: 700 }}>{compra.proveedor_nombre || 'Sin proveedor'}</div>
@@ -1157,8 +1169,16 @@ export default function ComprasPage() {
     const [deletingId, setDeletingId] = useState(null)
     const [entregaProcessing, setEntregaProcessing] = useState(false)
     const [whatsappRetiro, setWhatsappRetiro] = useState(null)
-    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
+    const [loadSecondaryCatalogs, setLoadSecondaryCatalogs] = useState(false)
+    const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog({
+        enabled: loadSecondaryCatalogs,
+    })
     const actualizarWhatsappTemplate = useActualizarWhatsappTemplate()
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setLoadSecondaryCatalogs(true), 180)
+        return () => window.clearTimeout(timer)
+    }, [])
 
     useEffect(() => {
         const retiroTemplate = getWhatsappTemplateByCode(whatsappTemplates, RETIRO_TEMPLATE_CODE, DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
@@ -1185,6 +1205,7 @@ export default function ComprasPage() {
             return api.get(`/compras/listado-optimizado?${params.toString()}`).then(response => response.data)
         },
         retry: false,
+        staleTime: 30000,
     })
 
     const compras = data?.items || []

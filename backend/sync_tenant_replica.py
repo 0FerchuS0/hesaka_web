@@ -18,7 +18,7 @@ from sqlalchemy import MetaData, create_engine, delete, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 
 from app.config import settings
-from app.database import Base, ensure_tenant_schema
+from app.database import Base, ensure_tenant_schema, realign_postgres_sequences
 from app.models import clinica_models, models  # noqa: F401
 
 
@@ -49,10 +49,11 @@ SYNC_TABLES = [
     {"name": "pagos", "mode": "incremental"},
     {"name": "ajustes_venta", "mode": "incremental"},
     {"name": "ajustes_venta_items", "mode": "incremental"},
-    {"name": "comisiones", "mode": "incremental"},
+    {"name": "jornadas_financieras", "mode": "incremental"},
     {"name": "movimientos_banco", "mode": "incremental"},
     {"name": "gastos_operativos", "mode": "incremental"},
     {"name": "movimientos_caja", "mode": "incremental"},
+    {"name": "comisiones", "mode": "incremental"},
     {"name": "compras", "mode": "incremental"},
     {"name": "compra_detalles", "mode": "incremental"},
     {"name": "compra_ventas", "mode": "incremental"},
@@ -144,7 +145,11 @@ def upsert_rows(replica_engine, table, rows: list[dict]) -> None:
         set_=update_columns,
     )
     with replica_engine.begin() as connection:
-        connection.execute(stmt)
+        connection.execute(text("SET session_replication_role = replica"))
+        try:
+            connection.execute(stmt)
+        finally:
+            connection.execute(text("SET session_replication_role = DEFAULT"))
 
 
 def fetch_all_rows(source_engine, table, columns: list[str]) -> list[dict]:
@@ -159,9 +164,13 @@ def sync_replace_table(source_engine, replica_engine, metadata: MetaData, table_
     rows = fetch_all_rows(source_engine, table, columns)
 
     with replica_engine.begin() as connection:
-        connection.execute(delete(table))
-        if rows:
-            connection.execute(table.insert(), rows)
+        connection.execute(text("SET session_replication_role = replica"))
+        try:
+            connection.execute(delete(table))
+            if rows:
+                connection.execute(table.insert(), rows)
+        finally:
+            connection.execute(text("SET session_replication_role = DEFAULT"))
 
     update_sync_state(replica_engine, table_name, datetime.utcnow(), full_sync=True)
     logger.info("Tabla %s sincronizada en modo replace (%s filas).", table_name, len(rows))
@@ -183,16 +192,20 @@ def remove_missing_rows(source_engine, replica_engine, table, pk_columns: list[s
         return
 
     with replica_engine.begin() as connection:
-        if len(pk_columns) == 1:
-            connection.execute(
-                table.delete().where(table.c[pk_columns[0]].in_([key[0] for key in extra_keys]))
-            )
-        else:
-            connection.execute(
-                table.delete().where(
-                    tuple_(*[table.c[column] for column in pk_columns]).in_(list(extra_keys))
+        connection.execute(text("SET session_replication_role = replica"))
+        try:
+            if len(pk_columns) == 1:
+                connection.execute(
+                    table.delete().where(table.c[pk_columns[0]].in_([key[0] for key in extra_keys]))
                 )
-            )
+            else:
+                connection.execute(
+                    table.delete().where(
+                        tuple_(*[table.c[column] for column in pk_columns]).in_(list(extra_keys))
+                    )
+                )
+        finally:
+            connection.execute(text("SET session_replication_role = DEFAULT"))
 
 
 def sync_incremental_table(
@@ -260,6 +273,8 @@ def run_sync(tenant_slug: str, full_resync: bool) -> None:
                 full_resync=full_resync,
             )
 
+    realign_postgres_sequences(replica_engine)
+    logger.info("Secuencias PostgreSQL realineadas en replica local.")
     logger.info("Sincronizacion completada para tenant '%s'.", tenant_slug)
 
 

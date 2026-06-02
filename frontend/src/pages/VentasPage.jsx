@@ -11,6 +11,7 @@ import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
+import { markModuleFreshnessSeen, shouldForceModuleRefresh } from '../utils/moduleFreshness'
 import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
@@ -23,6 +24,7 @@ const fmtDateTime = d => {
     return date ? date.toLocaleString('es-PY', { dateStyle: 'short', timeStyle: 'short' }) : '-'
 }
 const toDateTimeLocalValue = toBusinessDateTimeLocalValue
+const isJornadaClosedError = error => String(error?.response?.data?.detail || '').toLowerCase().includes('jornada')
 const gs = v => `Gs. ${new Intl.NumberFormat('es-PY').format(v ?? 0)}`
 const formatDateTimeLocalValue = value => {
     if (!value) return ''
@@ -645,6 +647,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
     const [fecha, setFecha] = useState(() => toDateTimeLocalValue(new Date()))
     const [pdfOpeningPagoId, setPdfOpeningPagoId] = useState(null)
     const [deletingPagoId, setDeletingPagoId] = useState(null)
+    const [showJornadaRecovery, setShowJornadaRecovery] = useState(false)
     const [montoEditado, setMontoEditado] = useState(false)
     const { data: jornadaEstado } = useFinancialJornadaStatus()
     const jornadaAbierta = Boolean(jornadaEstado?.abierta)
@@ -714,7 +717,13 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
             setMontoEditado(false)
             setNota('')
             refrescarEnSegundoPlano()
-        }
+        },
+        onError: error => {
+            if (isJornadaClosedError(error)) {
+                setShowJornadaRecovery(true)
+                qc.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
+            }
+        },
     })
 
     const eliminar = useMutation({
@@ -750,6 +759,10 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
         onBusyChange?.(busy)
         return () => onBusyChange?.(false)
     }, [cobrar.isPending, deletingPagoId, onBusyChange, pdfOpeningPagoId])
+
+    useEffect(() => {
+        if (jornadaAbierta) setShowJornadaRecovery(false)
+    }, [jornadaAbierta])
 
     useEffect(() => {
         if (!venta?.saldo || montoEditado) return
@@ -790,7 +803,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <FinancialJornadaNotice compact />
+            <FinancialJornadaNotice compact forceVisible={showJornadaRecovery} />
             {/* Info Resumen */}
             <div style={{ background: 'rgba(26,86,219,0.06)', border: '1px solid rgba(26,86,219,0.15)', borderRadius: 10, padding: '12px 16px', display: 'flex', justifyContent: 'space-between' }}>
                 <div>
@@ -1235,6 +1248,8 @@ export default function VentasPage() {
     const [whatsappRetiro, setWhatsappRetiro] = useState(null)
     const [whatsappComprobante, setWhatsappComprobante] = useState(null)
     const [whatsappBusyId, setWhatsappBusyId] = useState(null)
+    const [loadSecondaryFilters, setLoadSecondaryFilters] = useState(false)
+    const forceRefreshOnMount = shouldForceModuleRefresh('ventas')
     const { data: configPublica } = useQuery({
         queryKey: ['configuracion-general-publica'],
         queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
@@ -1258,6 +1273,11 @@ export default function VentasPage() {
     }, [buscar])
 
     useEffect(() => {
+        const timer = window.setTimeout(() => setLoadSecondaryFilters(true), 150)
+        return () => window.clearTimeout(timer)
+    }, [])
+
+    useEffect(() => {
         setPage(1)
     }, [buscarDebounced, estadoFiltro, fechaDesdeFiltro, fechaHastaFiltro, entregaFiltro, vendedorFiltro, canalFiltro, soloPendientes, pageSize])
 
@@ -1268,12 +1288,14 @@ export default function VentasPage() {
     const { data: vendedoresFiltro = [] } = useQuery({
         queryKey: ['ventas-vendedores-filtro'],
         queryFn: () => api.get('/vendedores/?solo_activos=true&limit=200').then(r => r.data),
+        enabled: loadSecondaryFilters,
         retry: false,
     })
 
     const { data: canalesFiltro = [] } = useQuery({
         queryKey: ['ventas-canales-filtro'],
         queryFn: () => api.get('/canales-venta/?solo_activos=true&limit=200').then(r => r.data),
+        enabled: loadSecondaryFilters,
         retry: false,
     })
 
@@ -1294,7 +1316,13 @@ export default function VentasPage() {
             return api.get(`/ventas/listado-optimizado?${params}`).then(r => r.data)
         },
         retry: false,
+        refetchOnMount: forceRefreshOnMount ? 'always' : true,
     })
+
+    useEffect(() => {
+        if (!data?.version) return
+        markModuleFreshnessSeen('ventas', data.version)
+    }, [data?.version])
 
     const ventas = data?.items || []
     const totalRegistros = data?.total || 0

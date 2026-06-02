@@ -841,6 +841,7 @@ class PresupuestoListResponseOut(BaseModel):
     page_size: int
     total: int
     total_pages: int
+    version: Optional[str] = None
 
 
 class PresupuestoAsignacionComercialIn(BaseModel):
@@ -868,6 +869,7 @@ class VentaListResponseOut(BaseModel):
     page_size: int
     total: int
     total_pages: int
+    version: Optional[str] = None
 
 
 class AjusteVentaCreate(BaseModel):
@@ -1996,6 +1998,13 @@ class ClinicaHistorialGeneralOut(BaseModel):
     page: int
     page_size: int
     total_pages: int
+    total_oftalmologia: int = 0
+    total_contactologia: int = 0
+    total_recetas: int = 0
+
+
+class ClinicaHistorialGeneralResumenOut(BaseModel):
+    total: int
     total_oftalmologia: int = 0
     total_contactologia: int = 0
     total_recetas: int = 0

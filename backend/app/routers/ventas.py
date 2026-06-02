@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import List, Optional
 from datetime import date, datetime
 from math import ceil
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from app.database import get_session_for_tenant
 from app.models.models import (
     Venta, Presupuesto, PresupuestoItem, Pago,
@@ -56,6 +56,35 @@ def _resolver_fecha_operacion(session, value: Optional[datetime] = None) -> date
     if value is None:
         return ahora_negocio(session)
     return normalizar_fecha_negocio(session, value)
+
+
+def _serializar_version_modulo(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() if value else None
+
+
+def _obtener_version_ventas(session) -> Optional[str]:
+    latest = session.query(func.max(Venta.updated_at)).scalar()
+    return _serializar_version_modulo(latest)
+
+
+def _obtener_version_presupuestos(session) -> Optional[str]:
+    latest = session.query(func.max(Presupuesto.updated_at)).scalar()
+    return _serializar_version_modulo(latest)
+
+
+@router.get("/module-freshness")
+def obtener_frescura_modulos_comerciales(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        return {
+            "ventas_version": _obtener_version_ventas(session),
+            "presupuestos_version": _obtener_version_presupuestos(session),
+        }
+    finally:
+        session.close()
 
 
 # ─── Helpers financieros ───────────────────────────────────────────────────────
@@ -466,6 +495,7 @@ def listar_presupuestos_optimizado(
             page_size=page_size,
             total=total,
             total_pages=total_pages,
+            version=_obtener_version_presupuestos(session),
         )
     finally:
         session.close()
@@ -775,19 +805,43 @@ def get_ventas_pendientes_cobro(
     """Obtiene todas las ventas con saldo pendiente (> 0)."""
     session = get_session_for_tenant(tenant_slug)
     try:
-        ventas = session.query(Venta).filter(Venta.saldo > 0).order_by(Venta.fecha.desc()).all()
-        print(f"DEBUG: Found {len(ventas)} pending sales for tenant {tenant_slug}")
-        result = []
-        for v in ventas:
-            vo = VentaOut.model_validate(v)
-            if v.cliente_rel:
-                vo.cliente_nombre = str(v.cliente_rel.nombre)
-            else:
-                vo.cliente_nombre = "N/A"
-            vo.vendedor_nombre = v.vendedor_rel.nombre if getattr(v, "vendedor_rel", None) else None
-            vo.canal_venta_nombre = v.canal_venta_rel.nombre if getattr(v, "canal_venta_rel", None) else None
-            result.append(vo)
-        return result
+        rows = (
+            session.query(
+                Venta.id,
+                Venta.codigo,
+                Venta.fecha,
+                Venta.cliente_id,
+                Cliente.nombre.label("cliente_nombre"),
+                Venta.total,
+                Venta.saldo,
+                Venta.estado,
+                Venta.estado_entrega,
+                Vendedor.nombre.label("vendedor_nombre"),
+                CanalVenta.nombre.label("canal_venta_nombre"),
+            )
+            .outerjoin(Cliente, Venta.cliente_id == Cliente.id)
+            .outerjoin(Vendedor, Venta.vendedor_id == Vendedor.id)
+            .outerjoin(CanalVenta, Venta.canal_venta_id == CanalVenta.id)
+            .filter(Venta.saldo > 0, Venta.estado != "ANULADA")
+            .order_by(Venta.fecha.desc(), Venta.id.desc())
+            .all()
+        )
+        return [
+            VentaOut(
+                id=row.id,
+                codigo=row.codigo,
+                fecha=row.fecha,
+                cliente_id=row.cliente_id,
+                cliente_nombre=row.cliente_nombre or "N/A",
+                total=row.total or 0.0,
+                saldo=row.saldo or 0.0,
+                estado=row.estado or "PENDIENTE",
+                estado_entrega=row.estado_entrega,
+                vendedor_nombre=row.vendedor_nombre,
+                canal_venta_nombre=row.canal_venta_nombre,
+            )
+            for row in rows
+        ]
     except Exception as e:
         print(f"ERROR in get_ventas_pendientes_cobro: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1060,7 +1114,19 @@ def listar_ventas_optimizado(
     session = get_session_for_tenant(tenant_slug)
     try:
         query = (
-            session.query(Venta)
+            session.query(
+                Venta.id,
+                Venta.codigo,
+                Venta.fecha,
+                Venta.cliente_id,
+                Cliente.nombre.label("cliente_nombre"),
+                Venta.total,
+                Venta.saldo,
+                Venta.estado,
+                Venta.estado_entrega,
+                Vendedor.nombre.label("vendedor_nombre"),
+                CanalVenta.nombre.label("canal_venta_nombre"),
+            )
             .outerjoin(Cliente, Venta.cliente_id == Cliente.id)
             .outerjoin(Vendedor, Venta.vendedor_id == Vendedor.id)
             .outerjoin(CanalVenta, Venta.canal_venta_id == CanalVenta.id)
@@ -1092,10 +1158,10 @@ def listar_ventas_optimizado(
                 )
             )
 
-        total = query.count()
+        total = query.order_by(None).count()
         total_pages = ceil(total / page_size) if total else 1
         offset = (page - 1) * page_size
-        ventas = (
+        rows = (
             query
             .order_by(Venta.fecha.desc(), Venta.id.desc())
             .offset(offset)
@@ -1105,19 +1171,19 @@ def listar_ventas_optimizado(
 
         items = [
             VentaListItemOut(
-                id=venta.id,
-                codigo=venta.codigo,
-                fecha=venta.fecha,
-                cliente_id=venta.cliente_id,
-                cliente_nombre=venta.cliente_rel.nombre if venta.cliente_rel else "N/A",
-                vendedor_nombre=venta.vendedor_rel.nombre if getattr(venta, "vendedor_rel", None) else None,
-                canal_venta_nombre=venta.canal_venta_rel.nombre if getattr(venta, "canal_venta_rel", None) else None,
-                total=venta.total or 0.0,
-                saldo=venta.saldo or 0.0,
-                estado=venta.estado,
-                estado_entrega=venta.estado_entrega,
+                id=row.id,
+                codigo=row.codigo,
+                fecha=row.fecha,
+                cliente_id=row.cliente_id,
+                cliente_nombre=row.cliente_nombre or "N/A",
+                vendedor_nombre=row.vendedor_nombre,
+                canal_venta_nombre=row.canal_venta_nombre,
+                total=row.total or 0.0,
+                saldo=row.saldo or 0.0,
+                estado=row.estado,
+                estado_entrega=row.estado_entrega,
             )
-            for venta in ventas
+            for row in rows
         ]
         return VentaListResponseOut(
             items=items,
@@ -1125,6 +1191,7 @@ def listar_ventas_optimizado(
             page_size=page_size,
             total=total,
             total_pages=total_pages,
+            version=_obtener_version_ventas(session),
         )
     finally:
         session.close()

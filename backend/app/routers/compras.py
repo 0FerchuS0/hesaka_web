@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import String, cast, func, literal, or_
+from sqlalchemy import String, case, cast, func, literal, or_
 from sqlalchemy.orm import selectinload
 
 from app.database import get_session_for_tenant
@@ -161,11 +161,23 @@ def _obtener_clientes_y_ventas(compra: Compra) -> tuple[list[str], list[str]]:
 
 
 def _estado_vencimiento_compra(session, compra: Compra) -> str:
-    if (compra.condicion_pago or "CONTADO") != "CREDITO":
+    return _estado_vencimiento_desde_datos(
+        compra.condicion_pago,
+        compra.fecha_vencimiento,
+        normalizar_fecha_negocio(session),
+    )
+
+
+def _estado_vencimiento_desde_datos(
+    condicion_pago: Optional[str],
+    fecha_vencimiento: Optional[datetime],
+    fecha_negocio: datetime,
+) -> str:
+    if (condicion_pago or "CONTADO") != "CREDITO":
         return "CONTADO"
-    if not compra.fecha_vencimiento:
+    if not fecha_vencimiento:
         return "SIN_VENCIMIENTO"
-    if compra.fecha_vencimiento < normalizar_fecha_negocio(session):
+    if fecha_vencimiento < fecha_negocio:
         return "VENCIDO"
     return "AL_DIA"
 
@@ -205,6 +217,207 @@ def _serializar_documento_cxp(session, compra: Compra) -> CuentaPorPagarDocument
         clientes_nombres=clientes,
         ventas_codigos=ventas_codigos,
     )
+
+
+def _cargar_contexto_documentos_cxp(session, compra_ids: List[int]) -> dict[int, dict[str, List[str]]]:
+    contexto = {
+        compra_id: {
+            "clientes_nombres": [],
+            "ventas_codigos": [],
+        }
+        for compra_id in compra_ids
+    }
+    if not compra_ids:
+        return contexto
+
+    compras_directas = (
+        session.query(
+            Compra.id.label("compra_id"),
+            Venta.codigo.label("venta_codigo"),
+            Cliente.nombre.label("cliente_nombre"),
+        )
+        .outerjoin(Venta, Compra.venta_id == Venta.id)
+        .outerjoin(Cliente, Compra.cliente_id == Cliente.id)
+        .filter(Compra.id.in_(compra_ids))
+        .all()
+    )
+    for row in compras_directas:
+        data = contexto.setdefault(row.compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+        if row.venta_codigo and row.venta_codigo not in data["ventas_codigos"]:
+            data["ventas_codigos"].append(row.venta_codigo)
+        if row.cliente_nombre and row.cliente_nombre not in data["clientes_nombres"]:
+            data["clientes_nombres"].append(row.cliente_nombre)
+
+    ventas_asociadas = (
+        session.query(
+            CompraVenta.compra_id.label("compra_id"),
+            Venta.codigo.label("venta_codigo"),
+            Cliente.nombre.label("cliente_nombre"),
+        )
+        .join(Venta, CompraVenta.venta_id == Venta.id)
+        .outerjoin(Cliente, Venta.cliente_id == Cliente.id)
+        .filter(CompraVenta.compra_id.in_(compra_ids))
+        .all()
+    )
+    for row in ventas_asociadas:
+        data = contexto.setdefault(row.compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+        if row.venta_codigo and row.venta_codigo not in data["ventas_codigos"]:
+            data["ventas_codigos"].append(row.venta_codigo)
+        if row.cliente_nombre and row.cliente_nombre not in data["clientes_nombres"]:
+            data["clientes_nombres"].append(row.cliente_nombre)
+
+    for data in contexto.values():
+        data["clientes_nombres"].sort()
+    return contexto
+
+
+def _query_documentos_cxp_base(session):
+    return (
+        session.query(
+            Compra.id.label("compra_id"),
+            Compra.fecha.label("fecha"),
+            Compra.proveedor_id.label("proveedor_id"),
+            Proveedor.nombre.label("proveedor_nombre"),
+            Compra.condicion_pago.label("condicion_pago"),
+            Compra.tipo_documento.label("tipo_documento"),
+            Compra.nro_factura.label("nro_factura"),
+            Compra.tipo_documento_original.label("tipo_documento_original"),
+            Compra.nro_documento_original.label("nro_documento_original"),
+            Compra.total.label("total"),
+            Compra.saldo.label("saldo"),
+            Compra.estado.label("estado"),
+            Compra.fecha_vencimiento.label("fecha_vencimiento"),
+            Compra.tipo_compra.label("tipo_compra"),
+            Compra.estado_entrega.label("estado_entrega"),
+        )
+        .outerjoin(Proveedor, Compra.proveedor_id == Proveedor.id)
+    )
+
+
+def _serializar_documentos_cxp_rows(session, rows) -> List[CuentaPorPagarDocumentoOut]:
+    compra_ids = [row.compra_id for row in rows]
+    contexto = _cargar_contexto_documentos_cxp(session, compra_ids)
+    fecha_negocio = normalizar_fecha_negocio(session)
+    documentos = []
+    for row in rows:
+        data = contexto.get(row.compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+        documentos.append(CuentaPorPagarDocumentoOut(
+            compra_id=row.compra_id,
+            fecha=row.fecha,
+            proveedor_id=row.proveedor_id,
+            proveedor_nombre=row.proveedor_nombre or "Sin proveedor",
+            condicion_pago=row.condicion_pago,
+            tipo_documento=row.tipo_documento,
+            nro_factura=row.nro_factura,
+            tipo_documento_original=row.tipo_documento_original,
+            nro_documento_original=row.nro_documento_original,
+            total=float(row.total or 0),
+            saldo=float(row.saldo or 0),
+            estado=row.estado,
+            fecha_vencimiento=row.fecha_vencimiento,
+            estado_vencimiento=_estado_vencimiento_desde_datos(
+                row.condicion_pago,
+                row.fecha_vencimiento,
+                fecha_negocio,
+            ),
+            tipo_compra=row.tipo_compra or "ORIGINAL",
+            estado_entrega=row.estado_entrega or "RECIBIDO",
+            clientes_nombres=data["clientes_nombres"],
+            ventas_codigos=data["ventas_codigos"],
+        ))
+    return documentos
+
+
+def _cargar_contexto_compra_listado(session, compra_ids: List[int]) -> dict[int, dict[str, List[str]]]:
+    contexto = {
+        compra_id: {
+            "clientes_nombres": [],
+            "ventas_codigos": [],
+        }
+        for compra_id in compra_ids
+    }
+    if not compra_ids:
+        return contexto
+
+    direct_rows = (
+        session.query(
+            Compra.id.label("compra_id"),
+            Compra.cliente_id.label("cliente_id"),
+            Cliente.nombre.label("cliente_nombre"),
+            Venta.codigo.label("venta_codigo"),
+        )
+        .outerjoin(Cliente, Compra.cliente_id == Cliente.id)
+        .outerjoin(Venta, Compra.venta_id == Venta.id)
+        .filter(Compra.id.in_(compra_ids))
+        .all()
+    )
+    for row in direct_rows:
+        data = contexto.setdefault(row.compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+        if row.cliente_nombre and row.cliente_nombre not in data["clientes_nombres"]:
+            data["clientes_nombres"].append(row.cliente_nombre)
+        if row.venta_codigo and row.venta_codigo not in data["ventas_codigos"]:
+            data["ventas_codigos"].append(row.venta_codigo)
+
+    asociadas_rows = (
+        session.query(
+            CompraVenta.compra_id.label("compra_id"),
+            Cliente.nombre.label("cliente_nombre"),
+            Venta.codigo.label("venta_codigo"),
+        )
+        .join(Venta, CompraVenta.venta_id == Venta.id)
+        .outerjoin(Cliente, Venta.cliente_id == Cliente.id)
+        .filter(CompraVenta.compra_id.in_(compra_ids))
+        .all()
+    )
+    for row in asociadas_rows:
+        data = contexto.setdefault(row.compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+        if row.cliente_nombre and row.cliente_nombre not in data["clientes_nombres"]:
+            data["clientes_nombres"].append(row.cliente_nombre)
+        if row.venta_codigo and row.venta_codigo not in data["ventas_codigos"]:
+            data["ventas_codigos"].append(row.venta_codigo)
+
+    presupuesto_rows = (
+        session.query(
+            CompraDetalle.compra_id.label("compra_id"),
+            Cliente.nombre.label("cliente_nombre"),
+            Venta.codigo.label("venta_codigo"),
+        )
+        .join(PresupuestoItem, CompraDetalle.presupuesto_item_id == PresupuestoItem.id)
+        .join(Presupuesto, PresupuestoItem.presupuesto_id == Presupuesto.id)
+        .outerjoin(Cliente, Presupuesto.cliente_id == Cliente.id)
+        .outerjoin(Venta, Venta.presupuesto_id == Presupuesto.id)
+        .filter(CompraDetalle.compra_id.in_(compra_ids))
+        .all()
+    )
+    for row in presupuesto_rows:
+        data = contexto.setdefault(row.compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+        if row.cliente_nombre and row.cliente_nombre not in data["clientes_nombres"]:
+            data["clientes_nombres"].append(row.cliente_nombre)
+        if row.venta_codigo and row.venta_codigo not in data["ventas_codigos"]:
+            data["ventas_codigos"].append(row.venta_codigo)
+
+    for data in contexto.values():
+        data["clientes_nombres"].sort()
+    return contexto
+
+
+def _cantidades_compradas_por_presupuesto_item(session, presupuesto_item_ids: List[int]) -> dict[int, int]:
+    if not presupuesto_item_ids:
+        return {}
+    rows = (
+        session.query(
+            CompraDetalle.presupuesto_item_id,
+            func.sum(CompraDetalle.cantidad).label("cantidad_comprada"),
+        )
+        .filter(CompraDetalle.presupuesto_item_id.in_(presupuesto_item_ids))
+        .group_by(CompraDetalle.presupuesto_item_id)
+        .all()
+    )
+    return {
+        row.presupuesto_item_id: int(row.cantidad_comprada or 0)
+        for row in rows
+        if row.presupuesto_item_id is not None
+    }
 
 
 def _generar_numero_generico_pago(session, proveedor_id: int) -> str:
@@ -304,7 +517,11 @@ def _calcular_estado_entrega_venta(session, venta: Venta) -> Optional[str]:
     return "RECIBIDO"
 
 
-def _construir_items_pendientes_venta(session, venta: Venta, proveedor_id: Optional[int]) -> List[VentaPendienteCompraItemOut]:
+def _construir_items_pendientes_venta(
+    venta: Venta,
+    proveedor_id: Optional[int],
+    cantidades_compradas: dict[int, int],
+) -> List[VentaPendienteCompraItemOut]:
     if not venta.presupuesto_rel or not venta.presupuesto_rel.items:
         return []
 
@@ -316,9 +533,7 @@ def _construir_items_pendientes_venta(session, venta: Venta, proveedor_id: Optio
         if proveedor_id and producto.proveedor_id and producto.proveedor_id != proveedor_id:
             continue
 
-        cantidad_comprada = session.query(func.sum(CompraDetalle.cantidad)).filter(
-            CompraDetalle.presupuesto_item_id == item.id
-        ).scalar() or 0
+        cantidad_comprada = cantidades_compradas.get(item.id, 0)
         cantidad_pendiente = item.cantidad - int(cantidad_comprada)
         if cantidad_pendiente <= 0:
             continue
@@ -676,6 +891,13 @@ def listar_ventas_pendientes_para_compra(
         )
 
         ventas = query.limit(limit).all()
+        presupuesto_item_ids = [
+            item.id
+            for venta in ventas
+            if venta.presupuesto_rel and venta.presupuesto_rel.items
+            for item in venta.presupuesto_rel.items
+        ]
+        cantidades_compradas = _cantidades_compradas_por_presupuesto_item(session, presupuesto_item_ids)
         resultado = []
         for venta in ventas:
             cliente_nombre = venta.cliente_rel.nombre if venta.cliente_rel else "Sin cliente"
@@ -684,7 +906,7 @@ def listar_ventas_pendientes_para_compra(
                 if buscar.strip().upper() not in texto:
                     continue
 
-            items_pendientes = _construir_items_pendientes_venta(session, venta, proveedor_id)
+            items_pendientes = _construir_items_pendientes_venta(venta, proveedor_id, cantidades_compradas)
             if tipo_compra == "STOCK/SERVICIO" or not items_pendientes:
                 continue
 
@@ -711,48 +933,50 @@ def obtener_resumen_cuentas_por_pagar(
     session = get_session_for_tenant(tenant_slug)
     started_at = perf_counter()
     try:
-        compras = (
-            session.query(Compra)
-            .options(selectinload(Compra.proveedor_rel))
+        fecha_negocio = normalizar_fecha_negocio(session)
+        vencido_cond = (
+            (Compra.condicion_pago == "CREDITO") &
+            (Compra.fecha_vencimiento.is_not(None)) &
+            (Compra.fecha_vencimiento < fecha_negocio)
+        )
+        sin_vencimiento_cond = (
+            (Compra.condicion_pago == "CREDITO") &
+            (Compra.fecha_vencimiento.is_(None))
+        )
+        es_os_cond = func.coalesce(Compra.tipo_documento_original, Compra.tipo_documento) == "ORDEN_SERVICIO"
+
+        resultado = (
+            session.query(
+                Compra.proveedor_id.label("proveedor_id"),
+                Proveedor.nombre.label("proveedor_nombre"),
+                func.count(Compra.id).label("cantidad_documentos"),
+                func.sum(case((vencido_cond, 1), else_=0)).label("vencidas"),
+                func.sum(case((sin_vencimiento_cond, 1), else_=0)).label("sin_vencimiento"),
+                func.sum(Compra.saldo).label("total_deuda"),
+                func.sum(case((vencido_cond, Compra.saldo), else_=0.0)).label("total_vencido"),
+                func.sum(case((sin_vencimiento_cond, Compra.saldo), else_=0.0)).label("total_sin_vencimiento"),
+                func.sum(case((es_os_cond, Compra.saldo), else_=0.0)).label("total_os"),
+            )
+            .join(Proveedor, Compra.proveedor_id == Proveedor.id)
             .filter(Compra.saldo > 0)
-            .order_by(Compra.fecha.asc())
+            .group_by(Compra.proveedor_id, Proveedor.nombre)
+            .order_by(Proveedor.nombre.asc())
             .all()
         )
-
-        resumen_map = {}
-        for compra in compras:
-            proveedor_id = compra.proveedor_id
-            if not proveedor_id:
-                continue
-
-            resumen = resumen_map.setdefault(proveedor_id, {
-                "proveedor_id": proveedor_id,
-                "proveedor_nombre": compra.proveedor_rel.nombre if compra.proveedor_rel else "Sin proveedor",
-                "cantidad_documentos": 0,
-                "vencidas": 0,
-                "sin_vencimiento": 0,
-                "total_deuda": 0.0,
-                "total_vencido": 0.0,
-                "total_sin_vencimiento": 0.0,
-                "total_os": 0.0,
-            })
-
-            saldo = float(compra.saldo or 0)
-            resumen["cantidad_documentos"] += 1
-            resumen["total_deuda"] += saldo
-
-            estado_vencimiento = _estado_vencimiento_compra(session, compra)
-            if estado_vencimiento == "VENCIDO":
-                resumen["vencidas"] += 1
-                resumen["total_vencido"] += saldo
-            elif estado_vencimiento == "SIN_VENCIMIENTO":
-                resumen["sin_vencimiento"] += 1
-                resumen["total_sin_vencimiento"] += saldo
-
-            if (compra.tipo_documento_original or compra.tipo_documento) == "ORDEN_SERVICIO":
-                resumen["total_os"] += saldo
-
-        resultado = [CuentaPorPagarProveedorResumenOut(**item) for item in resumen_map.values()]
+        resultado = [
+            CuentaPorPagarProveedorResumenOut(
+                proveedor_id=row.proveedor_id,
+                proveedor_nombre=row.proveedor_nombre or "Sin proveedor",
+                cantidad_documentos=int(row.cantidad_documentos or 0),
+                vencidas=int(row.vencidas or 0),
+                sin_vencimiento=int(row.sin_vencimiento or 0),
+                total_deuda=float(row.total_deuda or 0),
+                total_vencido=float(row.total_vencido or 0),
+                total_sin_vencimiento=float(row.total_sin_vencimiento or 0),
+                total_os=float(row.total_os or 0),
+            )
+            for row in resultado
+        ]
         elapsed_ms = (perf_counter() - started_at) * 1000
         logger.info("cxp_resumen_ok tenant=%s rows=%s elapsed_ms=%.2f", tenant_slug, len(resultado), elapsed_ms)
         return resultado
@@ -768,20 +992,14 @@ def obtener_contados_pendientes(
     session = get_session_for_tenant(tenant_slug)
     started_at = perf_counter()
     try:
-        compras = (
-            session.query(Compra)
-            .options(
-                selectinload(Compra.proveedor_rel),
-                selectinload(Compra.ventas_asociadas)
-                .selectinload(CompraVenta.venta_rel)
-                .selectinload(Venta.cliente_rel),
-            )
+        rows = (
+            _query_documentos_cxp_base(session)
             .filter(Compra.saldo > 0)
             .filter(Compra.condicion_pago == "CONTADO")
             .order_by(Compra.fecha.desc())
             .all()
         )
-        resultado = [_serializar_documento_cxp(session, compra) for compra in compras]
+        resultado = _serializar_documentos_cxp_rows(session, rows)
         elapsed_ms = (perf_counter() - started_at) * 1000
         logger.info("cxp_contados_ok tenant=%s rows=%s elapsed_ms=%.2f", tenant_slug, len(resultado), elapsed_ms)
         return resultado
@@ -799,13 +1017,7 @@ def obtener_detalle_cuentas_por_pagar_proveedor(
     session = get_session_for_tenant(tenant_slug)
     try:
         query = (
-            session.query(Compra)
-            .options(
-                selectinload(Compra.proveedor_rel),
-                selectinload(Compra.ventas_asociadas)
-                .selectinload(CompraVenta.venta_rel)
-                .selectinload(Venta.cliente_rel),
-            )
+            _query_documentos_cxp_base(session)
             .filter(Compra.proveedor_id == proveedor_id)
             .filter(Compra.saldo > 0)
         )
@@ -814,12 +1026,12 @@ def obtener_detalle_cuentas_por_pagar_proveedor(
         if condicion_normalizada in {"CREDITO", "CONTADO"}:
             query = query.filter(Compra.condicion_pago == condicion_normalizada)
 
-        compras = query.order_by(
+        rows = query.order_by(
             Compra.fecha_vencimiento.is_(None),
             Compra.fecha_vencimiento.asc(),
             Compra.fecha.asc(),
         ).all()
-        return [_serializar_documento_cxp(session, compra) for compra in compras]
+        return _serializar_documentos_cxp_rows(session, rows)
     finally:
         session.close()
 
@@ -1591,26 +1803,7 @@ def listar_compras_optimizado(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        query = (
-            session.query(Compra)
-            .options(
-                selectinload(Compra.proveedor_rel),
-                selectinload(Compra.items).selectinload(CompraDetalle.presupuesto_item_rel),
-                selectinload(Compra.items)
-                .selectinload(CompraDetalle.presupuesto_item_rel)
-                .selectinload(PresupuestoItem.presupuesto_rel)
-                .selectinload(Presupuesto.cliente_rel),
-                selectinload(Compra.items)
-                .selectinload(CompraDetalle.presupuesto_item_rel)
-                .selectinload(PresupuestoItem.presupuesto_rel)
-                .selectinload(Presupuesto.venta_rel),
-                selectinload(Compra.ventas_asociadas)
-                .selectinload(CompraVenta.venta_rel)
-                .selectinload(Venta.cliente_rel),
-                selectinload(Compra.venta_rel).selectinload(Venta.cliente_rel),
-                selectinload(Compra.cliente_rel),
-            )
-        )
+        query = session.query(Compra.id)
 
         if estado:
             query = query.filter(Compra.estado == estado)
@@ -1637,19 +1830,79 @@ def listar_compras_optimizado(
                 )
             )
 
-        total = query.count()
+        total = query.order_by(None).count()
         total_pages = ceil(total / page_size) if total else 1
         offset = (page - 1) * page_size
-        compras = (
-            query
-            .order_by(Compra.fecha.desc(), Compra.id.desc())
-            .offset(offset)
-            .limit(page_size)
+        compra_ids = [
+            row.id
+            for row in (
+                query
+                .order_by(Compra.fecha.desc(), Compra.id.desc())
+                .offset(offset)
+                .limit(page_size)
+                .all()
+            )
+        ]
+
+        if not compra_ids:
+            return CompraListResponseOut(
+                items=[],
+                page=page,
+                page_size=page_size,
+                total=total,
+                total_pages=total_pages,
+            )
+
+        rows = (
+            session.query(
+                Compra.id.label("id"),
+                Compra.fecha.label("fecha"),
+                Compra.proveedor_id.label("proveedor_id"),
+                Proveedor.nombre.label("proveedor_nombre"),
+                Compra.tipo_documento.label("tipo_documento"),
+                Compra.nro_factura.label("nro_factura"),
+                Compra.tipo_documento_original.label("tipo_documento_original"),
+                Compra.nro_documento_original.label("nro_documento_original"),
+                Compra.total.label("total"),
+                Compra.saldo.label("saldo"),
+                Compra.estado.label("estado"),
+                Compra.estado_entrega.label("estado_entrega"),
+                Compra.condicion_pago.label("condicion_pago"),
+                Compra.tipo_compra.label("tipo_compra"),
+            )
+            .outerjoin(Proveedor, Compra.proveedor_id == Proveedor.id)
+            .filter(Compra.id.in_(compra_ids))
             .all()
         )
+        rows_por_id = {row.id: row for row in rows}
+        contexto = _cargar_contexto_compra_listado(session, compra_ids)
+        items = []
+        for compra_id in compra_ids:
+            row = rows_por_id.get(compra_id)
+            if not row:
+                continue
+            data = contexto.get(compra_id, {"clientes_nombres": [], "ventas_codigos": []})
+            items.append(CompraListItemOut(
+                id=row.id,
+                fecha=row.fecha,
+                proveedor_id=row.proveedor_id,
+                proveedor_nombre=row.proveedor_nombre,
+                tipo_documento=row.tipo_documento,
+                nro_factura=row.nro_factura,
+                tipo_documento_original=row.tipo_documento_original,
+                nro_documento_original=row.nro_documento_original,
+                total=float(row.total or 0),
+                saldo=float(row.saldo or 0),
+                estado=row.estado,
+                estado_entrega=row.estado_entrega,
+                condicion_pago=row.condicion_pago,
+                tipo_compra=row.tipo_compra or "ORIGINAL",
+                clientes_nombres=data["clientes_nombres"],
+                ventas_codigos=data["ventas_codigos"],
+            ))
 
         return CompraListResponseOut(
-            items=[_serializar_compra_listado(compra) for compra in compras],
+            items=items,
             page=page,
             page_size=page_size,
             total=total,

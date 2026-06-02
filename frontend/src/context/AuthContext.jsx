@@ -53,10 +53,25 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        // Política solicitada: siempre iniciar por login para evitar sesiones viejas inconsistentes.
-        localStorage.removeItem('hesaka_token')
-        localStorage.removeItem('hesaka_user')
-        setUser(null)
+        const token = localStorage.getItem('hesaka_token')
+        const rawUser = localStorage.getItem('hesaka_user')
+
+        if (!token || !rawUser) {
+            localStorage.removeItem('hesaka_token')
+            localStorage.removeItem('hesaka_user')
+            setUser(null)
+            setLoading(false)
+            return
+        }
+
+        try {
+            const storedUser = JSON.parse(rawUser)
+            setUser(storedUser)
+        } catch {
+            localStorage.removeItem('hesaka_token')
+            localStorage.removeItem('hesaka_user')
+            setUser(null)
+        }
         setLoading(false)
     }, [])
 

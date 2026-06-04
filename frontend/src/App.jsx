@@ -7,6 +7,7 @@ import Modal from './components/Modal'
 import Sidebar from './components/Sidebar'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { applyModuleFreshnessSnapshot } from './utils/moduleFreshness'
+import { completeTrackedFlow, consumePendingTrackedFlow, markFlowStep, waitForNextPaint } from './utils/performanceMonitor'
 import { hasActionAccess, hasModuleAccess, normalizeRole } from './utils/roles'
 import {
     consumeBeforeUnloadSuppression,
@@ -55,6 +56,7 @@ const ReporteAjustesVentasPage = lazy(() => import('./pages/ReporteAjustesVentas
 const CobroMultiplePage = lazy(() => import('./pages/CobroMultiplePage'))
 const HistorialCobrosMultiplesPage = lazy(() => import('./pages/HistorialCobrosMultiplesPage'))
 const ClinicaPage = lazy(() => import('./pages/ClinicaPage'))
+const PerformanceReportPage = lazy(() => import('./pages/PerformanceReportPage'))
 
 const RouteLoader = () => (
     <div className="page-body">
@@ -172,6 +174,15 @@ function AppLayout() {
             void queryClient.invalidateQueries({ queryKey: ['presupuestos'], refetchType: 'active' })
         }
     }, [location.pathname, moduleFreshness, queryClient])
+
+    useEffect(() => {
+        const pendingLogin = consumePendingTrackedFlow('login')
+        if (!pendingLogin) return
+        markFlowStep(pendingLogin, 'pantalla_principal', 'Pantalla principal visible', { ruta: location.pathname })
+        void waitForNextPaint().then(() => {
+            completeTrackedFlow(pendingLogin, { metadata: { ruta_final: location.pathname } })
+        })
+    }, [location.pathname])
 
     const performIdleLogout = useCallback(() => {
         if (idleTimerRef.current) {
@@ -437,6 +448,7 @@ function AppLayout() {
                             <Route path="/ventas/historial-cobros-multiples" element={<RoleRoute allowedRoles="cobros"><HistorialCobrosMultiplesPage /></RoleRoute>} />
                             <Route path="/cuentas-por-pagar" element={<RoleRoute allowedRoles="cuentas_por_pagar"><CuentasPorPagarPage /></RoleRoute>} />
                             <Route path="/gastos" element={<RoleRoute allowedRoles="finanzas"><GastosPage /></RoleRoute>} />
+                            <Route path="/rendimiento" element={<PerformanceReportPage />} />
 
                             <Route path="/reportes" element={<Navigate to="/reportes/ventas" replace />} />
                             <Route path="/reportes/ventas" element={<RoleRoute allowedRoles="reportes_comercial"><ReporteVentasPage /></RoleRoute>} />

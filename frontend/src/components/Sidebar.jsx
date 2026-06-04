@@ -46,6 +46,7 @@ const navGroups = [
                     { to: '/usuarios', label: 'Usuarios', icon: Shield },
                 ]
             },
+            { to: '/rendimiento', icon: BarChart2, label: 'Rendimiento' },
         ]
     },
     {
@@ -251,6 +252,7 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen = fals
                     if (item.to === '/presupuestos') {
                         return hasModuleAccess(user, 'presupuestos') ? item : null
                     }
+                    if (item.to === '/rendimiento') return item
                     if (item.to === '/ventas') {
                         if (!hasModuleAccess(user, 'ventas')) return null
                         const subItems = (item.subItems || []).filter(sub => {

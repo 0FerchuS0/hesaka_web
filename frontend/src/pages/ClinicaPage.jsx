@@ -23,6 +23,7 @@ import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { nowBusinessDateTimeLocalValue, todayBusinessInputValue } from '../utils/formatters'
+import { completeTrackedFlow, failTrackedFlow, markFlowStep, startTrackedFlow, waitForNextPaint } from '../utils/performanceMonitor'
 
 const CLINICA_PALETTE = {
     accent: '#1dd3c7',
@@ -4221,10 +4222,23 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                     {canConvert && !paciente?.es_cliente && (
                                         <button type="button" className="btn btn-secondary" onClick={async () => {
                                             if (!paciente?.id) return
+                                            const trace = startTrackedFlow({
+                                                flowKey: 'convertir_a_cliente',
+                                                label: 'Convertir a Cliente',
+                                                metadata: {
+                                                    paciente_id: paciente.id,
+                                                    paciente_nombre: paciente.nombre || null,
+                                                },
+                                            })
+                                            markFlowStep(trace, 'envio_conversion', 'Solicitud de conversion enviada')
                                             try {
                                                 await api.post(`/clinica/pacientes/${paciente.id}/convertir-cliente`)
                                                 await invalidateAll()
+                                                markFlowStep(trace, 'listados_actualizados', 'Listados clinicos actualizados')
+                                                await waitForNextPaint()
+                                                completeTrackedFlow(trace)
                                             } catch (error) {
+                                                failTrackedFlow(trace, { error })
                                                 window.alert(formatError(error, 'No se pudo convertir el paciente a cliente.'))
                                             }
                                         }}>
@@ -4684,11 +4698,23 @@ function PacientesSection() {
         },
     })
 
+    const convertirTraceRef = useRef(null)
+
     const convertirMutation = useMutation({
         mutationFn: async pacienteId => (await api.post(`/clinica/pacientes/${pacienteId}/convertir-cliente`)).data,
         onSuccess: async () => {
+            const trace = convertirTraceRef.current
+            markFlowStep(trace, 'cliente_creado', 'Paciente convertido a cliente')
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] })
             await queryClient.invalidateQueries({ queryKey: ['clinica', 'paciente-historial'] })
+            markFlowStep(trace, 'listados_actualizados', 'Listados clinicos actualizados')
+            await waitForNextPaint()
+            completeTrackedFlow(trace)
+            convertirTraceRef.current = null
+        },
+        onError: error => {
+            failTrackedFlow(convertirTraceRef.current, { error })
+            convertirTraceRef.current = null
         },
     })
 
@@ -5532,6 +5558,8 @@ function NuevaConsultaSection() {
         staleTime: 60 * 1000,
     })
 
+    const consultaTraceRef = useRef(null)
+
     const saveConsultaMutation = useMutation({
         mutationFn: async ({ consulta, anamnesis, recetaSugerida }) => {
             if (selectedPatient?.id && anamnesis) {
@@ -5554,8 +5582,12 @@ function NuevaConsultaSection() {
         },
         onSuccess: result => {
             const data = result?.created
+            const trace = consultaTraceRef.current
             setConsultaSaveError('')
             setLastCreated(data)
+            markFlowStep(trace, 'consulta_guardada', 'Consulta guardada en backend', {
+                consulta_id: data?.id ?? null,
+            })
             void Promise.all([
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'dashboard'] }),
                 queryClient.invalidateQueries({ queryKey: ['clinica', 'pacientes'] }),
@@ -5578,8 +5610,22 @@ function NuevaConsultaSection() {
                     },
                 })
             }
+            void waitForNextPaint().then(() => {
+                markFlowStep(trace, 'pantalla_actualizada', 'Pantalla de consulta actualizada')
+                completeTrackedFlow(trace, {
+                    metadata: {
+                        consulta_id: data?.id ?? null,
+                        paciente_id: selectedPatient?.id ?? null,
+                        paciente_nombre: selectedPatient?.nombre || null,
+                        tipo_consulta: tipo,
+                    },
+                })
+                consultaTraceRef.current = null
+            })
         },
         onError: error => {
+            failTrackedFlow(consultaTraceRef.current, { error })
+            consultaTraceRef.current = null
             setConsultaSaveError(formatError(error, 'No se pudo guardar la consulta.'))
         },
     })
@@ -6107,7 +6153,19 @@ function NuevaConsultaSection() {
                 onTypeChange={setTipo}
                 doctores={doctoresQuery.data || []}
                 lugares={lugaresQuery.data || []}
-                onSave={payload => saveConsultaMutation.mutate(payload)}
+                onSave={payload => {
+                    consultaTraceRef.current = startTrackedFlow({
+                        flowKey: 'nueva_consulta',
+                        label: 'Nueva Consulta',
+                        metadata: {
+                            paciente_id: selectedPatient?.id ?? null,
+                            paciente_nombre: selectedPatient?.nombre || null,
+                            tipo_consulta: tipo,
+                        },
+                    })
+                    markFlowStep(consultaTraceRef.current, 'envio_formulario', 'Formulario de consulta enviado')
+                    saveConsultaMutation.mutate(payload)
+                }}
                 onClose={() => setConsultaModalOpen(false)}
                 saving={saveConsultaMutation.isPending}
                 error={consultaSaveError}

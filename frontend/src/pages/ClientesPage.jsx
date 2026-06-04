@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import { parseBackendDateTime } from '../utils/formatters'
 import Modal from '../components/Modal'
 import { Users, Plus, Search, Edit2, Phone, User, Eye } from 'lucide-react'
 import { exportReportBlob } from '../utils/reportExports'
+import { completeTrackedFlow, failTrackedFlow, markFlowStep, startTrackedFlow, waitForNextPaint } from '../utils/performanceMonitor'
 
 function fmt(fecha) {
     if (!fecha) return '-'
@@ -319,6 +320,7 @@ function ClienteFichaModal({ clienteId, onClose }) {
 
 export default function ClientesPage() {
     const qc = useQueryClient()
+    const createTraceRef = useRef(null)
     const [buscar, setBuscar] = useState('')
     const [buscarDebounced, setBuscarDebounced] = useState('')
     const [referidorFiltro, setReferidorFiltro] = useState('')
@@ -369,11 +371,30 @@ export default function ClientesPage() {
 
     const crear = useMutation({
         mutationFn: d => api.post('/clientes/', d),
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ['clientes'] })
-            qc.invalidateQueries({ queryKey: ['clientes-optimizado'] })
+        onSuccess: async response => {
+            const trace = createTraceRef.current
+            markFlowStep(trace, 'cliente_guardado', 'Cliente guardado en backend', {
+                cliente_id: response?.data?.id ?? null,
+            })
+            await Promise.all([
+                qc.invalidateQueries({ queryKey: ['clientes'] }),
+                qc.invalidateQueries({ queryKey: ['clientes-optimizado'] }),
+            ])
             setModal(null)
-        }
+            markFlowStep(trace, 'listado_actualizado', 'Listado de clientes actualizado')
+            await waitForNextPaint()
+            completeTrackedFlow(trace, {
+                metadata: {
+                    cliente_id: response?.data?.id ?? null,
+                    cliente_nombre: response?.data?.nombre || null,
+                },
+            })
+            createTraceRef.current = null
+        },
+        onError: error => {
+            failTrackedFlow(createTraceRef.current, { error })
+            createTraceRef.current = null
+        },
     })
 
     const editar = useMutation({
@@ -387,7 +408,15 @@ export default function ClientesPage() {
 
     const handleSave = (f) => {
         const payload = { ...f, fecha_nacimiento: f.fecha_nacimiento || null }
-        if (modal === 'nuevo') crear.mutate(payload)
+        if (modal === 'nuevo') {
+            createTraceRef.current = startTrackedFlow({
+                flowKey: 'nuevo_cliente',
+                label: 'Nuevo Cliente',
+                metadata: { nombre: payload.nombre || null },
+            })
+            markFlowStep(createTraceRef.current, 'envio_formulario', 'Formulario enviado')
+            crear.mutate(payload)
+        }
         else editar.mutate({ id: modal.id, ...payload })
     }
 

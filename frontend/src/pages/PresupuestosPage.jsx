@@ -12,6 +12,7 @@ import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { nowBusinessDateTimeLocalValue, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
 import { markModuleFreshnessSeen, shouldForceModuleRefresh } from '../utils/moduleFreshness'
 import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
+import { completeTrackedFlow, failTrackedFlow, markFlowStep, startTrackedFlow, waitForNextPaint } from '../utils/performanceMonitor'
 
 const fmt = v => new Intl.NumberFormat('es-PY').format(v ?? 0)
 const fmtDate = d => {
@@ -339,6 +340,7 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
 // Modal para convertir presupuesto en venta
 function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
     const qc = useQueryClient()
+    const traceRef = useRef(null)
     const [metodo, setMetodo] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
     const [monto, setMonto] = useState('')
@@ -395,18 +397,37 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
 
     const convertir = useMutation({
         mutationFn: pagos => api.post(`/presupuestos/${presupuesto.id}/convertir-venta`, pagos),
-        onSuccess: response => {
+        onSuccess: async response => {
             const ventaNueva = response?.data
+            const trace = traceRef.current
+            markFlowStep(trace, 'venta_creada', 'Venta creada desde presupuesto', {
+                venta_id: ventaNueva?.id ?? null,
+            })
             removerPresupuestoDeCache(presupuesto.id)
             insertarVentaEnCache(ventaNueva)
             onClose(ventaNueva)
-            Promise.all([
+            await Promise.all([
                 qc.invalidateQueries({ queryKey: ['presupuestos'] }),
                 qc.invalidateQueries({ queryKey: ['ventas-optimizado'] }),
                 qc.invalidateQueries({ queryKey: ['ventas'] }),
             ]).catch(() => {})
+            markFlowStep(trace, 'tablas_actualizadas', 'Presupuestos y ventas actualizados')
+            await waitForNextPaint()
+            completeTrackedFlow(trace, {
+                metadata: {
+                    presupuesto_id: presupuesto?.id ?? null,
+                    presupuesto_codigo: presupuesto?.codigo || null,
+                    venta_id: ventaNueva?.id ?? null,
+                    venta_codigo: ventaNueva?.codigo || null,
+                    pago_inicial: pagoInicial && montoCobrado > 0 ? montoCobrado : 0,
+                    pago_inicial_metodo: pagoInicial && montoCobrado > 0 ? metodo : null,
+                },
+            })
+            traceRef.current = null
         },
         onError: error => {
+            failTrackedFlow(traceRef.current, { error })
+            traceRef.current = null
             if (isJornadaClosedError(error)) {
                 setShowJornadaRecovery(true)
                 qc.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
@@ -452,6 +473,18 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                 nota: nota || null
             })
         }
+        traceRef.current = startTrackedFlow({
+            flowKey: 'convertir_a_venta',
+            label: 'Convertir a Venta',
+            metadata: {
+                presupuesto_id: presupuesto?.id ?? null,
+                presupuesto_codigo: presupuesto?.codigo || null,
+                pago_inicial_habilitado: Boolean(pagoInicial),
+            },
+        })
+        markFlowStep(traceRef.current, 'envio_conversion', 'Solicitud de conversion enviada', {
+            cantidad_pagos: pagos.length,
+        })
         convertir.mutate(pagos)
     }
 
@@ -730,6 +763,7 @@ const presupuestoCoincideConFiltro = (presupuesto, estadoFiltro, vendedorFiltro,
 
 function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const qc = useQueryClient()
+    const traceRef = useRef(null)
     const esEdicion = !!presupuesto
     const [cliente, setCliente] = useState(presupuesto ? String(presupuesto.cliente_id) : '')
     const [buscarCli, setBuscarCli] = useState(presupuesto ? (presupuesto.cliente_nombre || '') : '')
@@ -935,9 +969,33 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             : api.post('/presupuestos/', d),
         onSuccess: async (response) => {
             const presupuestoActualizado = response?.data
+            const trace = traceRef.current
+            if (!esEdicion) {
+                markFlowStep(trace, 'presupuesto_guardado', 'Presupuesto guardado en backend', {
+                    presupuesto_id: presupuestoActualizado?.id ?? null,
+                })
+            }
             if (presupuestoActualizado) actualizarCachePresupuestos(presupuestoActualizado)
             await qc.invalidateQueries({ queryKey: ['presupuestos'] })
             onClose()
+            if (!esEdicion) {
+                markFlowStep(trace, 'listado_actualizado', 'Listado de presupuestos actualizado')
+                await waitForNextPaint()
+                completeTrackedFlow(trace, {
+                    metadata: {
+                        presupuesto_id: presupuestoActualizado?.id ?? null,
+                        presupuesto_codigo: presupuestoActualizado?.codigo || null,
+                        cliente_id: presupuestoActualizado?.cliente_id ?? null,
+                    },
+                })
+                traceRef.current = null
+            }
+        },
+        onError: error => {
+            if (!esEdicion) {
+                failTrackedFlow(traceRef.current, { error })
+                traceRef.current = null
+            }
         }
     })
     const confirmNavigation = usePendingNavigationGuard(
@@ -975,6 +1033,17 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
         // Alerta si hay referidor pero sin comisión
         if (referidor && (!comision || parseFloat(comision) === 0)) {
             if (!window.confirm('El referidor seleccionado no tiene comisión asignada. ¿Desea guardar el presupuesto igual?')) return
+        }
+        if (!esEdicion) {
+            traceRef.current = startTrackedFlow({
+                flowKey: 'nuevo_presupuesto',
+                label: 'Nuevo Presupuesto',
+                metadata: {
+                    cliente_id: cliente ? parseInt(cliente) : null,
+                    cantidad_items: items.filter(i => i.producto_id).length,
+                },
+            })
+            markFlowStep(traceRef.current, 'envio_formulario', 'Formulario de presupuesto enviado')
         }
         crear.mutate({
             cliente_id: parseInt(cliente),

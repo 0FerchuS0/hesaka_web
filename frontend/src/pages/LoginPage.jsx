@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { LogIn } from 'lucide-react'
 import PasswordField from '../components/PasswordField'
 import { api } from '../context/AuthContext'
+import { failTrackedFlow, markFlowStep, startTrackedFlow } from '../utils/performanceMonitor'
 
 export default function LoginPage() {
     const { login } = useAuth()
@@ -43,10 +44,18 @@ export default function LoginPage() {
         event.preventDefault()
         setError('')
         setLoading(true)
+        const trace = startTrackedFlow({
+            flowKey: 'login',
+            label: 'Login',
+            metadata: { email: form.email || null },
+            persistAcrossNavigation: true,
+        })
         try {
             await login(form.email, form.password)
+            markFlowStep(trace, 'autenticado', 'Credenciales aceptadas')
             navigate('/')
         } catch (err) {
+            failTrackedFlow(trace, { error: err })
             setError(err.response?.data?.detail || 'Error al iniciar sesion. Verifica tus credenciales.')
         } finally {
             setLoading(false)

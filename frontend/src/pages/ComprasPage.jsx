@@ -13,6 +13,7 @@ import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/u
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { parseBackendDateTime, toDateInputValue } from '../utils/formatters'
 import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
+import { completeTrackedFlow, failTrackedFlow, markFlowStep, startTrackedFlow, waitForNextPaint } from '../utils/performanceMonitor'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => {
@@ -640,6 +641,7 @@ function CompraTipoSelectorModal({ onSelect, onClose }) {
 
 function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, initialTipoCompra = 'ORIGINAL', startWithVentas = false }) {
     const queryClient = useQueryClient()
+    const traceRef = useRef(null)
     const editando = Boolean(compraId)
     const [proveedor, setProveedor] = useState('')
     const [tipoDocumento, setTipoDocumento] = useState('FACTURA')
@@ -697,14 +699,39 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
 
     const mutation = useMutation({
         mutationFn: payload => editando ? api.put(`/compras/${compraId}`, payload) : api.post('/compras/', payload),
-        onSuccess: (response) => {
-            queryClient.invalidateQueries({ queryKey: ['compras'] })
-            queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
-            if (editando) queryClient.invalidateQueries({ queryKey: ['compra-detalle', compraId] })
+        onSuccess: async (response) => {
+            const trace = traceRef.current
+            if (!editando) {
+                markFlowStep(trace, 'compra_guardada', 'Compra guardada en backend', {
+                    compra_id: response?.data?.id ?? null,
+                })
+            }
+            await queryClient.invalidateQueries({ queryKey: ['compras'] })
+            await queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
+            if (editando) await queryClient.invalidateQueries({ queryKey: ['compra-detalle', compraId] })
             onClose()
             const whatsappContext = response?.data?.whatsapp_retiro
             if (!editando && estadoEntrega === 'RECIBIDO' && whatsappContext?.cliente_telefono) {
                 onWhatsappReady?.(whatsappContext)
+            }
+            if (!editando) {
+                markFlowStep(trace, 'listado_actualizado', 'Listado de compras actualizado')
+                await waitForNextPaint()
+                completeTrackedFlow(trace, {
+                    metadata: {
+                        compra_id: response?.data?.id ?? null,
+                        compra_total: response?.data?.total ?? total,
+                        tipo_compra: tipoCompra,
+                        ventas_asociadas: ventasSeleccionadas.length,
+                    },
+                })
+                traceRef.current = null
+            }
+        },
+        onError: error => {
+            if (!editando) {
+                failTrackedFlow(traceRef.current, { error })
+                traceRef.current = null
             }
         },
     })
@@ -758,6 +785,19 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                 presupuesto_item_id: item.presupuesto_item_id || null,
             }))
 
+        if (!editando) {
+            traceRef.current = startTrackedFlow({
+                flowKey: 'nueva_compra',
+                label: 'Nueva Compra',
+                metadata: {
+                    tipo_compra,
+                    condicion_pago: condicionPago,
+                    ventas_asociadas: ventasSeleccionadas.length,
+                    cantidad_items: itemsValidos.length,
+                },
+            })
+            markFlowStep(traceRef.current, 'envio_formulario', 'Formulario de compra enviado')
+        }
         mutation.mutate({
             proveedor_id: proveedor ? parseInt(proveedor, 10) : null,
             tipo_documento: tipoDocumento,
@@ -860,6 +900,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
 
 function PagoCompraModal({ compra, onClose }) {
     const queryClient = useQueryClient()
+    const traceRef = useRef(null)
     const [monto, setMonto] = useState(() => formatGsAmount(compra.saldo || 0))
     const [metodoPago, setMetodoPago] = useState('EFECTIVO')
     const [bancoId, setBancoId] = useState('')
@@ -883,17 +924,32 @@ function PagoCompraModal({ compra, onClose }) {
 
     const registrarPago = useMutation({
         mutationFn: payload => api.post(`/compras/${compra.id}/pagos`, payload),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['compras'] })
-            queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
-            queryClient.invalidateQueries({ queryKey: ['compra-pagos', compra.id] })
-            queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
-            queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
-            queryClient.invalidateQueries({ queryKey: ['bancos'] })
+        onSuccess: async () => {
+            const trace = traceRef.current
+            markFlowStep(trace, 'pago_registrado', 'Pago de compra registrado')
+            await queryClient.invalidateQueries({ queryKey: ['compras'] })
+            await queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
+            await queryClient.invalidateQueries({ queryKey: ['compra-pagos', compra.id] })
+            await queryClient.invalidateQueries({ queryKey: ['saldo-caja'] })
+            await queryClient.invalidateQueries({ queryKey: ['movimientos-caja'] })
+            await queryClient.invalidateQueries({ queryKey: ['bancos'] })
             invalidateJornadaLiveData(queryClient)
             onClose()
+            markFlowStep(trace, 'saldo_actualizado', 'Saldo y movimientos actualizados')
+            await waitForNextPaint()
+            completeTrackedFlow(trace, {
+                metadata: {
+                    compra_id: compra?.id ?? null,
+                    compra_documento: compra?.nro_factura || null,
+                    monto_pagado: montoPago,
+                    metodo_pago: metodoPago,
+                },
+            })
+            traceRef.current = null
         },
         onError: error => {
+            failTrackedFlow(traceRef.current, { error })
+            traceRef.current = null
             if (isJornadaClosedError(error)) {
                 setShowJornadaRecovery(true)
                 queryClient.invalidateQueries({ queryKey: ['jornada-financiera-actual'] })
@@ -924,6 +980,17 @@ function PagoCompraModal({ compra, onClose }) {
             window.alert('El monto a pagar no puede superar el saldo pendiente de la compra.')
             return
         }
+        traceRef.current = startTrackedFlow({
+            flowKey: 'pagar_compra',
+            label: 'Pagar Compra',
+            metadata: {
+                compra_id: compra?.id ?? null,
+                compra_documento: compra?.nro_factura || null,
+            },
+        })
+        markFlowStep(traceRef.current, 'envio_pago', 'Solicitud de pago enviada', {
+            monto: montoPago,
+        })
         registrarPago.mutate({
             monto: montoPago,
             metodo_pago: metodoPago,

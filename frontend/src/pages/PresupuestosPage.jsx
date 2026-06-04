@@ -347,8 +347,10 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
     const [showJornadaRecovery, setShowJornadaRecovery] = useState(false)
 
     const { data: bancos = [] } = useQuery({ queryKey: ['bancos'], queryFn: () => api.get('/bancos/').then(r => r.data) })
-    const { data: jornadaEstado } = useFinancialJornadaStatus()
-    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
+    const { data: jornadaEstado, isLoading: jornadaEstadoLoading, isFetched: jornadaEstadoFetched } = useFinancialJornadaStatus()
+    const jornadaAbierta = jornadaEstado?.abierta === true
+    const jornadaVerificando = pagoInicial && !showJornadaRecovery && !jornadaEstadoFetched && jornadaEstadoLoading
+    const mostrarAvisoJornada = showJornadaRecovery || (jornadaEstadoFetched && !jornadaAbierta)
     const montoMaximo = Math.max(0, Math.trunc(Number(presupuesto?.total || 0)))
     const montoCobrado = parseGsInput(monto)
 
@@ -429,6 +431,10 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
 
     const handleSubmit = e => {
         e.preventDefault()
+        if (pagoInicial && !jornadaEstadoFetched) {
+            window.alert('Estamos verificando el estado de la jornada financiera. Intenta de nuevo en un instante.')
+            return
+        }
         if (pagoInicial && !jornadaAbierta) {
             window.alert('Debes abrir la jornada financiera antes de registrar un cobro inicial.')
             return
@@ -471,7 +477,29 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
             </label>
             {pagoInicial && (
                 <>
-                    <FinancialJornadaNotice compact forceVisible={showJornadaRecovery || !jornadaAbierta} />
+                    {jornadaVerificando ? (
+                        <div
+                            className="card"
+                            style={{
+                                marginBottom: 12,
+                                padding: '12px 14px',
+                                borderColor: 'rgba(26, 86, 219, 0.25)',
+                                background: 'linear-gradient(135deg, rgba(26, 86, 219, 0.09), rgba(59, 130, 246, 0.06))',
+                            }}
+                        >
+                            <div style={{ fontWeight: 700, marginBottom: 4 }}>Verificando jornada financiera...</div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.45 }}>
+                                Estamos confirmando si la jornada de hoy ya esta abierta para no mostrar acciones incorrectas ni cortar tu flujo.
+                            </div>
+                        </div>
+                    ) : (
+                        <FinancialJornadaNotice
+                            compact
+                            forceVisible={mostrarAvisoJornada}
+                            statusData={jornadaEstado}
+                            statusLoading={jornadaEstadoLoading}
+                        />
+                    )}
                     <div className="grid-2 mb-16">
                         <div className="form-group">
                             <label className="form-label">Monto cobrado (Gs.)</label>
@@ -483,7 +511,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                                 onChange={e => setMonto(normalizeGsInput(e.target.value).formatted)}
                                 onFocus={e => e.target.select()}
                                 placeholder="0"
-                                disabled={convertir.isPending || !jornadaAbierta}
+                                disabled={convertir.isPending || !jornadaAbierta || jornadaVerificando}
                             />
                             <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.76rem' }}>
                                 Sugerido: Gs. {fmt(montoMaximo)}. No se permite cargar más que el saldo pendiente.
@@ -491,7 +519,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                         </div>
                         <div className="form-group">
                             <label className="form-label">Método</label>
-                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={convertir.isPending || !jornadaAbierta}>
+                            <select className="form-select" value={metodo} onChange={e => setMetodo(e.target.value)} disabled={convertir.isPending || !jornadaAbierta || jornadaVerificando}>
                                 <option value="EFECTIVO">💵 Efectivo</option>
                                 <option value="TARJETA">💳 Tarjeta</option>
                                 <option value="TRANSFERENCIA">🏦 Transferencia</option>
@@ -501,7 +529,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                     {['TARJETA', 'TRANSFERENCIA'].includes(metodo) && (
                         <div className="form-group mb-16">
                             <label className="form-label">Banco *</label>
-                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={convertir.isPending || !jornadaAbierta}>
+                            <select className="form-select" value={bancoId} onChange={e => setBancoId(e.target.value)} required disabled={convertir.isPending || !jornadaAbierta || jornadaVerificando}>
                                 <option value="">Seleccionar banco...</option>
                                 {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre_banco}</option>)}
                             </select>
@@ -510,7 +538,7 @@ function ConvertirVentaModal({ presupuesto, onClose, onBusyChange }) {
                     )}
                     <div className="form-group mb-16">
                         <label className="form-label">Nota</label>
-                        <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Opcional..." disabled={convertir.isPending || !jornadaAbierta} />
+                        <input className="form-input" value={nota} onChange={e => setNota(e.target.value)} placeholder="Opcional..." disabled={convertir.isPending || !jornadaAbierta || jornadaVerificando} />
                     </div>
                 </>
             )}
@@ -1289,6 +1317,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
 
 export default function PresupuestosPage() {
     const qc = useQueryClient()
+    useFinancialJornadaStatus()
     const forceRefreshOnMount = shouldForceModuleRefresh('presupuestos')
     const [buscar, setBuscar] = useState('')
     const [modal, setModal] = useState(false)

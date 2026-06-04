@@ -614,6 +614,9 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
     const [errorConfirmacion, setErrorConfirmacion] = useState('')
     const [seeded, setSeeded] = useState(false)
     const [montoEditado, setMontoEditado] = useState(false)
+    const [showJornadaRecovery, setShowJornadaRecovery] = useState(false)
+    const { data: jornadaEstado } = useFinancialJornadaStatus()
+    const jornadaAbierta = Boolean(jornadaEstado?.abierta)
 
     const { data: bancos = [] } = useQuery({
         queryKey: ['bancos'],
@@ -752,6 +755,8 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
             usarFacturaGenerica = true
         }
         setErrorConfirmacion('')
+        const confirmarReedicion = window.confirm('Vas a guardar una re-edicion financiera de este pago. Esto puede actualizar caja, bancos y movimientos asociados. ¿Deseas continuar?')
+        if (!confirmarReedicion) return
         guardarEdicion.mutate({
             fecha: fecha || null,
             metodos_pago: metodos.map(item => ({
@@ -788,6 +793,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
 
     return (
         <form onSubmit={confirmar}>
+            <FinancialJornadaNotice compact forceVisible={showJornadaRecovery || !jornadaAbierta} />
             <div className="card mb-16" style={{ padding: '14px 16px' }}>
                 <div style={{ display: 'grid', gap: 6 }}>
                     <div style={{ fontWeight: 700 }}>{detalle.proveedor_nombre}</div>
@@ -935,8 +941,13 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
                 {detalle.puede_usar_factura_global && (
-                    <button type="button" className="btn btn-secondary" onClick={confirmarFactura} disabled={guardarFactura.isPending}>
-                        {guardarFactura.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Save size={15} /> Guardar factura</>}
+                    <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={confirmarFactura}
+                        disabled={guardarFactura.isPending}
+                    >
+                        {guardarFactura.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><Save size={15} /> Guardar cambio de factura</>}
                     </button>
                 )}
                 <button type="submit" className="btn btn-primary" disabled={guardarEdicion.isPending}>

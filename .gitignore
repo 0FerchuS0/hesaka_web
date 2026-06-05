@@ -1,6 +1,7 @@
 # OS / editor
 .DS_Store
 Thumbs.db
+desktop.ini
 .vscode/
 .idea/
 
@@ -33,6 +34,9 @@ frontend/dist/
 *.pid
 tmp/
 temp/
+.tmp.driveupload/
+.tmp.drivedownload/
+.tmp_dbsync/
 
 # Local databases
 *.db

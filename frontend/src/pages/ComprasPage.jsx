@@ -323,10 +323,32 @@ function ActionButton({ title, danger = false, onClick, children }) {
 function RemoteProveedorSelect({ value, proveedorNombre = '', onChange }) {
     const [buscar, setBuscar] = useState(proveedorNombre)
     const [showList, setShowList] = useState(false)
+    const containerRef = useRef(null)
+    const menuRef = useRef(null)
 
     useEffect(() => {
         setBuscar(proveedorNombre || '')
     }, [proveedorNombre])
+
+    useEffect(() => {
+        if (!showList) return undefined
+
+        const handlePointerDown = event => {
+            if (containerRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) {
+                return
+            }
+            const submitButton = event.target instanceof Element
+                ? event.target.closest('[data-compra-submit="true"]')
+                : null
+            setShowList(false)
+            if (submitButton instanceof HTMLButtonElement) {
+                window.setTimeout(() => submitButton.click(), 0)
+            }
+        }
+
+        document.addEventListener('mousedown', handlePointerDown)
+        return () => document.removeEventListener('mousedown', handlePointerDown)
+    }, [showList])
 
     const { data: proveedores = [] } = useQuery({
         queryKey: ['proveedores-select', buscar],
@@ -340,7 +362,7 @@ function RemoteProveedorSelect({ value, proveedorNombre = '', onChange }) {
     })
 
     return (
-        <div style={{ position: 'relative' }}>
+        <div ref={containerRef} style={{ position: 'relative' }}>
             <input
                 className="form-input"
                 value={buscar}
@@ -355,6 +377,7 @@ function RemoteProveedorSelect({ value, proveedorNombre = '', onChange }) {
             />
             {showList && (
                 <div
+                    ref={menuRef}
                     style={{ position: 'absolute', zIndex: 90, top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, maxHeight: 260, overflowY: 'auto', boxShadow: '0 12px 30px rgba(0,0,0,0.45)' }}
                     onMouseDown={event => event.preventDefault()}
                 >
@@ -391,10 +414,31 @@ function CompraProductoSelect({ item, index, onUpdateItem }) {
     const [showList, setShowList] = useState(false)
     const [menuPosition, setMenuPosition] = useState(null)
     const inputRef = useRef(null)
+    const menuRef = useRef(null)
 
     useEffect(() => {
         setBuscar(item.descripcion || '')
     }, [item.descripcion])
+
+    useEffect(() => {
+        if (!showList) return undefined
+
+        const handlePointerDown = event => {
+            if (inputRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) {
+                return
+            }
+            const submitButton = event.target instanceof Element
+                ? event.target.closest('[data-compra-submit="true"]')
+                : null
+            setShowList(false)
+            if (submitButton instanceof HTMLButtonElement) {
+                window.setTimeout(() => submitButton.click(), 0)
+            }
+        }
+
+        document.addEventListener('mousedown', handlePointerDown)
+        return () => document.removeEventListener('mousedown', handlePointerDown)
+    }, [showList])
 
     const { data: productos = [] } = useQuery({
         queryKey: ['compras-productos-select', buscar],
@@ -465,8 +509,8 @@ function CompraProductoSelect({ item, index, onUpdateItem }) {
             />
             {showList && (
                 <>
-                    <div style={{ position: 'fixed', inset: 0, zIndex: 95 }} onClick={() => setShowList(false)} />
                     <div
+                        ref={menuRef}
                         style={{
                             position: 'fixed',
                             top: menuPosition?.top ?? 0,
@@ -697,14 +741,32 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
 
     const total = useMemo(() => items.reduce((sum, item) => sum + (item.subtotal || 0), 0), [items])
 
+    const startCompraTracking = metadata => {
+        try {
+            traceRef.current = startTrackedFlow({
+                flowKey: 'nueva_compra',
+                label: 'Nueva Compra',
+                metadata,
+            })
+            markFlowStep(traceRef.current, 'envio_formulario', 'Formulario de compra enviado')
+        } catch (error) {
+            traceRef.current = null
+            console.error('No se pudo iniciar el tracking de compra:', error)
+        }
+    }
+
     const mutation = useMutation({
         mutationFn: payload => editando ? api.put(`/compras/${compraId}`, payload) : api.post('/compras/', payload),
         onSuccess: async (response) => {
             const trace = traceRef.current
             if (!editando) {
-                markFlowStep(trace, 'compra_guardada', 'Compra guardada en backend', {
-                    compra_id: response?.data?.id ?? null,
-                })
+                try {
+                    markFlowStep(trace, 'compra_guardada', 'Compra guardada en backend', {
+                        compra_id: response?.data?.id ?? null,
+                    })
+                } catch (error) {
+                    console.error('No se pudo registrar el paso de tracking de compra guardada:', error)
+                }
             }
             await queryClient.invalidateQueries({ queryKey: ['compras'] })
             await queryClient.invalidateQueries({ queryKey: ['compras-optimizado'] })
@@ -715,22 +777,34 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                 onWhatsappReady?.(whatsappContext)
             }
             if (!editando) {
-                markFlowStep(trace, 'listado_actualizado', 'Listado de compras actualizado')
+                try {
+                    markFlowStep(trace, 'listado_actualizado', 'Listado de compras actualizado')
+                } catch (error) {
+                    console.error('No se pudo registrar el paso de tracking del listado actualizado:', error)
+                }
                 await waitForNextPaint()
-                completeTrackedFlow(trace, {
-                    metadata: {
-                        compra_id: response?.data?.id ?? null,
-                        compra_total: response?.data?.total ?? total,
-                        tipo_compra: tipoCompra,
-                        ventas_asociadas: ventasSeleccionadas.length,
-                    },
-                })
+                try {
+                    completeTrackedFlow(trace, {
+                        metadata: {
+                            compra_id: response?.data?.id ?? null,
+                            compra_total: response?.data?.total ?? total,
+                            tipo_compra: tipoCompra,
+                            ventas_asociadas: ventasSeleccionadas.length,
+                        },
+                    })
+                } catch (error) {
+                    console.error('No se pudo completar el tracking de compra:', error)
+                }
                 traceRef.current = null
             }
         },
         onError: error => {
             if (!editando) {
-                failTrackedFlow(traceRef.current, { error })
+                try {
+                    failTrackedFlow(traceRef.current, { error })
+                } catch (trackingError) {
+                    console.error('No se pudo registrar el error de tracking de compra:', trackingError)
+                }
                 traceRef.current = null
             }
         },
@@ -785,20 +859,21 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                 presupuesto_item_id: item.presupuesto_item_id || null,
             }))
 
-        if (!editando) {
-            traceRef.current = startTrackedFlow({
-                flowKey: 'nueva_compra',
-                label: 'Nueva Compra',
-                metadata: {
-                    tipo_compra,
-                    condicion_pago: condicionPago,
-                    ventas_asociadas: ventasSeleccionadas.length,
-                    cantidad_items: itemsValidos.length,
-                },
-            })
-            markFlowStep(traceRef.current, 'envio_formulario', 'Formulario de compra enviado')
+        if (itemsValidos.length === 0) {
+            window.alert('Debes agregar al menos un item valido antes de guardar la compra.')
+            return
         }
-        mutation.mutate({
+
+        if (!editando) {
+            startCompraTracking({
+                tipo_compra: tipoCompra,
+                condicion_pago: condicionPago,
+                ventas_asociadas: ventasSeleccionadas.length,
+                cantidad_items: itemsValidos.length,
+            })
+        }
+        try {
+            mutation.mutate({
             proveedor_id: proveedor ? parseInt(proveedor, 10) : null,
             tipo_documento: tipoDocumento,
             nro_factura: nroDoc,
@@ -810,7 +885,11 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
             tipo_compra: tipoCompra,
             ventas_ids: ventasSeleccionadas.map(venta => venta.venta_id),
             items: itemsValidos,
-        })
+            })
+        } catch (error) {
+            console.error('Error disparando el guardado de compra:', error)
+            window.alert('Ocurrio un error al intentar guardar la compra. Revisa la consola del navegador.')
+        }
     }
 
     if (editando && loadingCompra) {
@@ -891,7 +970,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                 <div className="form-group"><label className="form-label">Observaciones</label><textarea className="form-input" rows={2} value={observaciones} onChange={event => setObservaciones(event.target.value)} style={{ resize: 'vertical' }} /></div>
                 <div style={{ background: 'rgba(26,86,219,0.08)', border: '1px solid rgba(26,86,219,0.2)', borderRadius: 10, padding: '14px 20px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>TOTAL</span><span style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--primary-light)' }}>Gs. {fmt(total)}</span></div>
                 {mutation.isError && <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#f87171', display: 'flex', gap: 8 }}><AlertCircle size={16} /> {mutation.error?.response?.data?.detail || 'Error al guardar la compra.'}</div>}
-                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button><button type="submit" className="btn btn-primary" disabled={mutation.isPending}>{mutation.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><ShoppingCart size={15} /> {editando ? 'Guardar Cambios' : 'Guardar Compra'}</>}</button></div>
+                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button><button type="submit" data-compra-submit="true" className="btn btn-primary" disabled={mutation.isPending} onClick={handleSubmit}>{mutation.isPending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <><ShoppingCart size={15} /> {editando ? 'Guardar Cambios' : 'Guardar Compra'}</>}</button></div>
             </form>
             {showVentasModal && <VentaSelectorModal proveedorId={proveedor} tipoCompra={tipoCompra} selectedVentas={ventasSeleccionadas} onConfirm={handleVentasConfirm} onClose={() => setShowVentasModal(false)} />}
         </>

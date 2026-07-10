@@ -4,6 +4,7 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+.claude/
 
 # Python
 __pycache__/
@@ -23,6 +24,8 @@ env/
 backend/.env
 backend/.env.local
 backend/.env.production
+.env.railway-backup
+.env.railway-backup.local
 
 # Frontend
 frontend/node_modules/

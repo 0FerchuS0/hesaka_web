@@ -846,6 +846,67 @@ def _serializar_cuestionario(cuestionario):
     )
 
 
+def _resumir_anamnesis(cuestionario: ClinicaCuestionarioOut | None) -> str | None:
+    if not cuestionario:
+        return None
+    sintomas = [
+        ("cefalea", "Cefalea"),
+        ("ardor", "Ardor"),
+        ("ojo_seco", "Ojo seco"),
+        ("lagrimeo", "Lagrimeo"),
+        ("fotofobia", "Fotofobia"),
+        ("vision_doble", "Vision doble"),
+        ("destellos", "Destellos"),
+        ("manchas", "Manchas"),
+        ("dificultad_cerca", "Dificultad de cerca"),
+    ]
+    sintomas_activos = [label for key, label in sintomas if getattr(cuestionario, key, False)]
+    partes = []
+    if cuestionario.motivo_principal:
+        partes.append(f"Motivo: {cuestionario.motivo_principal}")
+    if cuestionario.tiempo_molestias:
+        partes.append(f"Tiempo: {cuestionario.tiempo_molestias}")
+    if sintomas_activos:
+        partes.append(f"Sintomas: {', '.join(sintomas_activos)}")
+    if cuestionario.antecedentes_familiares:
+        partes.append(f"Antecedentes: {cuestionario.antecedentes_familiares}")
+    if cuestionario.medicamentos:
+        partes.append(f"Medicamentos: {cuestionario.medicamentos}")
+    return " | ".join(partes) if partes else None
+
+
+def _obtener_anamnesis_asociada_consulta(session, paciente_id: int, fecha_consulta: datetime | None, anamnesis_id: int | None = None):
+    cuestionario = None
+    if anamnesis_id:
+        cuestionario = (
+            session.query(Cuestionario)
+            .filter(Cuestionario.id == anamnesis_id, Cuestionario.paciente_id == paciente_id)
+            .first()
+        )
+    if not cuestionario and fecha_consulta:
+        cuestionario = (
+            session.query(Cuestionario)
+            .filter(Cuestionario.paciente_id == paciente_id, Cuestionario.fecha <= fecha_consulta)
+            .order_by(Cuestionario.fecha.desc(), Cuestionario.id.desc())
+            .first()
+        )
+    if not cuestionario and fecha_consulta:
+        cuestionario = (
+            session.query(Cuestionario)
+            .filter(Cuestionario.paciente_id == paciente_id, Cuestionario.fecha > fecha_consulta)
+            .order_by(Cuestionario.fecha.asc(), Cuestionario.id.asc())
+            .first()
+        )
+    if not cuestionario:
+        cuestionario = (
+            session.query(Cuestionario)
+            .filter(Cuestionario.paciente_id == paciente_id)
+            .order_by(Cuestionario.fecha.desc(), Cuestionario.id.desc())
+            .first()
+        )
+    return _serializar_cuestionario(cuestionario)
+
+
 def _obtener_consulta_oft_segura(session, consulta_id: int):
     row = session.execute(
         text("SELECT * FROM clinica_consultas_oftalmologicas WHERE id = :consulta_id"),
@@ -863,6 +924,12 @@ def _obtener_consulta_oft_segura(session, consulta_id: int):
         doctor_nombre = session.query(Doctor.nombre_completo).filter(Doctor.id == doctor_id).scalar()
     if lugar_atencion_id:
         lugar_nombre = session.query(LugarAtencion.nombre).filter(LugarAtencion.id == lugar_atencion_id).scalar()
+    anamnesis = _obtener_anamnesis_asociada_consulta(
+        session,
+        row.get("paciente_id"),
+        row.get("fecha"),
+        row.get("anamnesis_id"),
+    )
     recetas_relacionadas = _obtener_recetas_relacionadas(session, row.get("paciente_id"), consulta_id, "OFTALMOLOGIA")
 
     return ClinicaConsultaDetalleOut(
@@ -870,6 +937,7 @@ def _obtener_consulta_oft_segura(session, consulta_id: int):
         paciente_id=row.get("paciente_id"),
         tipo="OFTALMOLOGIA",
         fecha=row.get("fecha"),
+        anamnesis_id=anamnesis.id if anamnesis else row.get("anamnesis_id"),
         doctor_id=doctor_id,
         doctor_nombre=doctor_nombre,
         lugar_atencion_id=lugar_atencion_id,
@@ -940,6 +1008,7 @@ def _obtener_consulta_oft_segura(session, consulta_id: int):
         tiene_receta_lentes_pdf=True,
         tiene_indicaciones_pdf=True,
         recetas_medicamentos_relacionadas=recetas_relacionadas,
+        anamnesis=anamnesis,
     )
 
 
@@ -960,6 +1029,12 @@ def _obtener_consulta_cont_segura(session, consulta_id: int):
         doctor_nombre = session.query(Doctor.nombre_completo).filter(Doctor.id == doctor_id).scalar()
     if lugar_atencion_id:
         lugar_nombre = session.query(LugarAtencion.nombre).filter(LugarAtencion.id == lugar_atencion_id).scalar()
+    anamnesis = _obtener_anamnesis_asociada_consulta(
+        session,
+        row.get("paciente_id"),
+        row.get("fecha"),
+        row.get("anamnesis_id"),
+    )
     recetas_relacionadas = _obtener_recetas_relacionadas(session, row.get("paciente_id"), consulta_id, "CONTACTOLOGIA")
 
     return ClinicaConsultaDetalleOut(
@@ -967,6 +1042,7 @@ def _obtener_consulta_cont_segura(session, consulta_id: int):
         paciente_id=row.get("paciente_id"),
         tipo="CONTACTOLOGIA",
         fecha=row.get("fecha"),
+        anamnesis_id=anamnesis.id if anamnesis else row.get("anamnesis_id"),
         doctor_id=doctor_id,
         doctor_nombre=doctor_nombre,
         lugar_atencion_id=lugar_atencion_id,
@@ -983,6 +1059,7 @@ def _obtener_consulta_cont_segura(session, consulta_id: int):
         tiene_receta_lentes_pdf=False,
         tiene_indicaciones_pdf=True,
         recetas_medicamentos_relacionadas=recetas_relacionadas,
+        anamnesis=anamnesis,
     )
 
 
@@ -1033,6 +1110,22 @@ def _obtener_recetas_relacionadas(session, paciente_id: int, consulta_id: int, c
         }
         for receta in recetas
     ]
+
+
+def _obtener_ultima_receta_relacionada(session, paciente_id: int, consulta_id: int, consulta_tipo: str):
+    receta = (
+        session.query(RecetaMedicamento)
+        .filter(
+            RecetaMedicamento.paciente_id == paciente_id,
+            RecetaMedicamento.consulta_id == consulta_id,
+            RecetaMedicamento.consulta_tipo == consulta_tipo,
+        )
+        .order_by(RecetaMedicamento.fecha_emision.desc(), RecetaMedicamento.id.desc())
+        .first()
+    )
+    if not receta:
+        return None
+    return _obtener_receta_medicamento_segura(session, receta.id)
 
 
 @router.get("/dashboard/resumen", response_model=ClinicaDashboardResumenOut)
@@ -2348,6 +2441,7 @@ def obtener_historial_paciente_clinica(
             session.query(
                 ConsultaOftalmologica.id,
                 ConsultaOftalmologica.fecha,
+                ConsultaOftalmologica.anamnesis_id,
                 ConsultaOftalmologica.motivo,
                 ConsultaOftalmologica.diagnostico,
                 ConsultaOftalmologica.plan_tratamiento,
@@ -2367,6 +2461,7 @@ def obtener_historial_paciente_clinica(
             session.query(
                 ConsultaContactologia.id,
                 ConsultaContactologia.fecha,
+                ConsultaContactologia.anamnesis_id,
                 ConsultaContactologia.diagnostico,
                 ConsultaContactologia.resumen_resultados,
                 ConsultaContactologia.plan_tratamiento,
@@ -2389,38 +2484,46 @@ def obtener_historial_paciente_clinica(
             .all()
         )
 
-        oftalmologia = [
-            ClinicaConsultaHistorialOut(
-                id=row.id,
-                fecha=row.fecha,
-                tipo="OFTALMOLOGIA",
-                doctor_nombre=row.doctor_nombre,
-                lugar_nombre=row.lugar_nombre,
-                motivo=row.motivo,
-                diagnostico=row.diagnostico,
-                plan_tratamiento=row.plan_tratamiento,
-                tipo_lente=row.tipo_lente,
-                material_lente=row.material_lente,
-                fecha_control=row.fecha_control,
+        oftalmologia = []
+        for row in oft_rows:
+            anamnesis = _obtener_anamnesis_asociada_consulta(session, paciente_id, row.fecha, row.anamnesis_id)
+            oftalmologia.append(
+                ClinicaConsultaHistorialOut(
+                    id=row.id,
+                    fecha=row.fecha,
+                    tipo="OFTALMOLOGIA",
+                    doctor_nombre=row.doctor_nombre,
+                    lugar_nombre=row.lugar_nombre,
+                    motivo=row.motivo,
+                    diagnostico=row.diagnostico,
+                    plan_tratamiento=row.plan_tratamiento,
+                    tipo_lente=row.tipo_lente,
+                    material_lente=row.material_lente,
+                    fecha_control=row.fecha_control,
+                    anamnesis_id=anamnesis.id if anamnesis else row.anamnesis_id,
+                    anamnesis_resumen=_resumir_anamnesis(anamnesis),
+                )
             )
-            for row in oft_rows
-        ]
-        contactologia = [
-            ClinicaConsultaHistorialOut(
-                id=row.id,
-                fecha=row.fecha,
-                tipo="CONTACTOLOGIA",
-                doctor_nombre=row.doctor_nombre,
-                lugar_nombre=row.lugar_nombre,
-                diagnostico=row.diagnostico,
-                resumen=row.resumen_resultados,
-                plan_tratamiento=row.plan_tratamiento,
-                tipo_lente=row.tipo_lente,
-                marca_recomendada=row.marca_recomendada,
-                fecha_control=row.fecha_control,
+        contactologia = []
+        for row in cont_rows:
+            anamnesis = _obtener_anamnesis_asociada_consulta(session, paciente_id, row.fecha, row.anamnesis_id)
+            contactologia.append(
+                ClinicaConsultaHistorialOut(
+                    id=row.id,
+                    fecha=row.fecha,
+                    tipo="CONTACTOLOGIA",
+                    doctor_nombre=row.doctor_nombre,
+                    lugar_nombre=row.lugar_nombre,
+                    diagnostico=row.diagnostico,
+                    resumen=row.resumen_resultados,
+                    plan_tratamiento=row.plan_tratamiento,
+                    tipo_lente=row.tipo_lente,
+                    marca_recomendada=row.marca_recomendada,
+                    fecha_control=row.fecha_control,
+                    anamnesis_id=anamnesis.id if anamnesis else row.anamnesis_id,
+                    anamnesis_resumen=_resumir_anamnesis(anamnesis),
+                )
             )
-            for row in cont_rows
-        ]
         recetas = [
                 ClinicaRecetaMedicamentoHistorialOut(
                     id=receta.id,
@@ -2962,6 +3065,7 @@ def crear_consulta_oftalmologica(
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             agenda_turno_id=payload.agenda_turno_id,
+            anamnesis_id=payload.anamnesis_id,
             fecha=normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else ahora_negocio(session),
             motivo=_normalizar_texto(payload.motivo),
             diagnostico=_normalizar_texto(payload.diagnostico),
@@ -3074,6 +3178,7 @@ def editar_consulta_oftalmologica(
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
         consulta.agenda_turno_id = payload.agenda_turno_id
+        consulta.anamnesis_id = payload.anamnesis_id
         consulta.fecha = normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else (consulta.fecha or ahora_negocio(session))
         consulta.motivo = _normalizar_texto(payload.motivo)
         consulta.diagnostico = _normalizar_texto(payload.diagnostico)
@@ -3211,7 +3316,11 @@ def pdf_indicaciones_oftalmologia(
     try:
         consulta = _obtener_consulta_oft_segura(session, consulta_id)
         paciente = _obtener_paciente_seguro(session, consulta.paciente_id)
-        pdf = generar_pdf_indicaciones_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
+        consulta_data = consulta.model_dump()
+        receta_relacionada = _obtener_ultima_receta_relacionada(session, consulta.paciente_id, consulta.id, "OFTALMOLOGIA")
+        if receta_relacionada:
+            consulta_data["receta_medicamentos_relacionada"] = receta_relacionada.model_dump()
+        pdf = generar_pdf_indicaciones_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta_data)
         return StreamingResponse(iter([pdf]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="indicaciones_oft_{consulta_id}.pdf"'})
     finally:
         session.close()
@@ -3231,6 +3340,7 @@ def crear_consulta_contactologia(
             doctor_id=payload.doctor_id,
             lugar_atencion_id=payload.lugar_atencion_id,
             agenda_turno_id=payload.agenda_turno_id,
+            anamnesis_id=payload.anamnesis_id,
             fecha=normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else ahora_negocio(session),
             tipo_lente=_normalizar_texto(payload.tipo_lente),
             diseno=_normalizar_texto(payload.diseno),
@@ -3289,6 +3399,7 @@ def editar_consulta_contactologia(
         consulta.doctor_id = payload.doctor_id
         consulta.lugar_atencion_id = payload.lugar_atencion_id
         consulta.agenda_turno_id = payload.agenda_turno_id
+        consulta.anamnesis_id = payload.anamnesis_id
         consulta.fecha = normalizar_fecha_negocio(session, payload.fecha) if payload.fecha else (consulta.fecha or ahora_negocio(session))
         consulta.tipo_lente = _normalizar_texto(payload.tipo_lente)
         consulta.diseno = _normalizar_texto(payload.diseno)
@@ -3372,7 +3483,11 @@ def pdf_indicaciones_contactologia(
     try:
         consulta = _obtener_consulta_cont_segura(session, consulta_id)
         paciente = _obtener_paciente_seguro(session, consulta.paciente_id)
-        pdf = generar_pdf_indicaciones_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta.model_dump())
+        consulta_data = consulta.model_dump()
+        receta_relacionada = _obtener_ultima_receta_relacionada(session, consulta.paciente_id, consulta.id, "CONTACTOLOGIA")
+        if receta_relacionada:
+            consulta_data["receta_medicamentos_relacionada"] = receta_relacionada.model_dump()
+        pdf = generar_pdf_indicaciones_clinica(_nombre_empresa_documentos(session), paciente.nombre_completo, paciente.ci_pasaporte, consulta_data)
         return StreamingResponse(iter([pdf]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="indicaciones_cont_{consulta_id}.pdf"'})
     finally:
         session.close()

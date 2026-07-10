@@ -1,5 +1,5 @@
 import { AlertCircle, CalendarClock } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import Modal from './Modal'
 import { useAuth } from '../context/AuthContext'
@@ -58,15 +58,26 @@ export default function FinancialJornadaNotice({
     message = 'Para registrar cobros, gastos, pagos, transferencias o ajustes primero debes abrir la jornada.',
     statusData = undefined,
     statusLoading = undefined,
+    statusFetching = undefined,
+    statusFetchedAfterMount = undefined,
 }) {
     const { user } = useAuth()
     const [openModal, setOpenModal] = useState(false)
     const query = useFinancialJornadaStatus()
     const data = statusData ?? query.data
     const isLoading = statusLoading ?? query.isLoading
+    const isFetching = statusFetching ?? query.isFetching
+    const isFetchedAfterMount = statusFetchedAfterMount ?? query.isFetchedAfterMount
     const puedeAbrir = hasActionAccess(user, 'finanzas.jornada_abrir', 'finanzas')
+    const esperandoConfirmacionFresca = !data?.abierta && !isLoading && isFetching && !isFetchedAfterMount
 
-    if (!forceVisible && (isLoading || data?.abierta)) return null
+    useEffect(() => {
+        if (data?.abierta) setOpenModal(false)
+    }, [data?.abierta])
+
+    if (data?.abierta) return null
+
+    if (!forceVisible && (isLoading || esperandoConfirmacionFresca)) return null
 
     return (
         <>
@@ -86,7 +97,11 @@ export default function FinancialJornadaNotice({
                         </div>
                         <div style={{ minWidth: 0 }}>
                             <div style={{ fontWeight: 700, marginBottom: 4 }}>{title}</div>
-                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.45 }}>{message}</div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.45 }}>
+                                {esperandoConfirmacionFresca
+                                    ? 'Estamos verificando si la jornada ya fue abierta para no mostrarte una accion incorrecta.'
+                                    : message}
+                            </div>
                             {data?.resumen && (
                                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                                     <span>Ingresos hoy: {fmtGs(data.resumen.ingresos)}</span>
@@ -97,7 +112,7 @@ export default function FinancialJornadaNotice({
                         </div>
                     </div>
 
-                    {puedeAbrir && (
+                    {puedeAbrir && !esperandoConfirmacionFresca && !data?.abierta && (
                         <button type="button" className="btn btn-primary" onClick={() => setOpenModal(true)}>
                             <CalendarClock size={16} /> Abrir jornada
                         </button>

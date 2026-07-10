@@ -117,6 +117,7 @@ class ConsultaOftalmologica(Base):
     tratamientos = Column(String(200))
     fecha_control = Column(Date)
     agenda_turno_id = Column(Integer, ForeignKey("clinica_turnos.id"), nullable=True)
+    anamnesis_id = Column(Integer, ForeignKey("clinica_cuestionarios.id"), nullable=True)
     av_sc_lejos_od = Column(String(50))
     av_sc_lejos_oi = Column(String(50))
     av_cc_lejos_od = Column(String(50))
@@ -201,6 +202,7 @@ class ConsultaContactologia(Base):
     marca_recomendada = Column(String(200))
     fecha_control = Column(Date)
     agenda_turno_id = Column(Integer, ForeignKey("clinica_turnos.id"), nullable=True)
+    anamnesis_id = Column(Integer, ForeignKey("clinica_cuestionarios.id"), nullable=True)
     observaciones = Column(Text)
 
     paciente_rel = relationship("Paciente", back_populates="consultas_contactologia", lazy="selectin")

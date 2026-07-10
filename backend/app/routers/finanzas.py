@@ -8,6 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_session_for_tenant
 from app.middleware.tenant import get_tenant_slug
@@ -46,6 +47,9 @@ from app.schemas.schemas import (
     MovimientoBancoOut,
     MovimientoCajaOut,
     MovimientosPosterioresUltimoCorteResumenOut,
+    RendicionJornadasMultiplesCreate,
+    RendicionJornadasMultiplesResumenOut,
+    RendicionJornadasMultiplesResumenRequest,
     RendicionJornadaCreate,
     RendicionHistorialOut,
     RendicionHistorialListResponseOut,
@@ -97,6 +101,28 @@ caja_router = APIRouter(prefix="/api/caja", tags=["Caja"])
 banco_router = APIRouter(prefix="/api/bancos", tags=["Bancos"])
 gasto_router = APIRouter(prefix="/api/gastos", tags=["Gastos"])
 logger = logging.getLogger(__name__)
+
+
+def _combinar_desglose_medios(items: list[list[dict]]) -> list[dict]:
+    acumulado: dict[str, dict] = {}
+    for grupo in items:
+        for item in grupo or []:
+            medio = item.get("medio") or "OTRO"
+            bucket = acumulado.setdefault(
+                medio,
+                {
+                    "medio": medio,
+                    "ingresos": 0.0,
+                    "egresos": 0.0,
+                    "neto": 0.0,
+                    "cantidad_movimientos": 0,
+                },
+            )
+            bucket["ingresos"] += float(item.get("ingresos") or 0.0)
+            bucket["egresos"] += float(item.get("egresos") or 0.0)
+            bucket["cantidad_movimientos"] += int(item.get("cantidad_movimientos") or 0)
+            bucket["neto"] = float(bucket["ingresos"] - bucket["egresos"])
+    return sorted(acumulado.values(), key=lambda item: str(item.get("medio") or ""))
 
 
 def _serializar_estado_jornada(
@@ -447,6 +473,12 @@ def abrir_jornada_financiera_actual(
         abrir_jornada_actual(session, current_user, data.observacion)
         session.commit()
         return _serializar_estado_jornada(session)
+    except IntegrityError:
+        session.rollback()
+        jornada = obtener_jornada_actual(session)
+        if jornada and jornada.estado == "ABIERTA":
+            return _serializar_estado_jornada(session)
+        raise HTTPException(status_code=409, detail="La jornada financiera de hoy ya fue abierta por otro usuario.")
     except HTTPException:
         session.rollback()
         raise
@@ -836,6 +868,169 @@ def obtener_filtros_opciones_rendiciones(
                 for u in usuarios
             ],
         }
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/historial/rendiciones-multiples/resumen", response_model=RendicionJornadasMultiplesResumenOut)
+def obtener_resumen_rendiciones_multiples(
+    data: RendicionJornadasMultiplesResumenRequest,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornadas = (
+            session.query(JornadaFinanciera)
+            .filter(JornadaFinanciera.id.in_(data.jornada_ids))
+            .all()
+        )
+        jornadas_map = {int(jornada.id): jornada for jornada in jornadas}
+        faltantes = [jornada_id for jornada_id in data.jornada_ids if jornada_id not in jornadas_map]
+        if faltantes:
+            raise HTTPException(status_code=404, detail=f"Jornadas no encontradas: {', '.join(str(item) for item in faltantes)}")
+
+        total_pendiente = 0.0
+        total_ingresos = 0.0
+        total_egresos = 0.0
+        cantidad_movimientos = 0
+        cuentas_total_pendiente = 0.0
+        cuentas_cantidad_ventas = 0
+        cuentas_total_ventas = 0.0
+        cuentas_total_cobrado = 0.0
+        desglose_partes: list[list[dict]] = []
+
+        for jornada_id in data.jornada_ids:
+            jornada = jornadas_map[jornada_id]
+            cache = cargar_movimientos_jornada_normalizados(session, jornada)
+            pendiente = construir_pendiente_rendicion(session, jornada, movimientos_dia_cache=cache, include_items=False)
+            cuentas = construir_cuentas_por_cobrar_dia(session, jornada)
+
+            total_pendiente += float(pendiente.get("monto_sugerido") or 0.0)
+            total_ingresos += float(pendiente.get("ingresos") or 0.0)
+            total_egresos += float(pendiente.get("egresos") or 0.0)
+            cantidad_movimientos += int(pendiente.get("cantidad_movimientos") or 0)
+            cuentas_total_pendiente += float(cuentas.get("total_pendiente") or 0.0)
+            cuentas_cantidad_ventas += int(cuentas.get("cantidad_ventas") or 0)
+            cuentas_total_ventas += float(cuentas.get("total_ventas") or 0.0)
+            cuentas_total_cobrado += float(cuentas.get("total_cobrado") or 0.0)
+            desglose_partes.append(pendiente.get("desglose_medios") or [])
+
+        return RendicionJornadasMultiplesResumenOut(
+            cantidad_jornadas=len(data.jornada_ids),
+            total_pendiente_rendicion=float(total_pendiente),
+            total_ingresos=float(total_ingresos),
+            total_egresos=float(total_egresos),
+            cantidad_movimientos=int(cantidad_movimientos),
+            desglose_medios=_combinar_desglose_medios(desglose_partes),
+            cuentas_por_cobrar_dia={
+                "total_pendiente": float(cuentas_total_pendiente),
+                "cantidad_ventas": int(cuentas_cantidad_ventas),
+                "total_ventas": float(cuentas_total_ventas),
+                "total_cobrado": float(cuentas_total_cobrado),
+            },
+        )
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/historial/rendiciones-multiples/pendiente", response_model=PendienteRendicionOut)
+def obtener_pendiente_rendiciones_multiples(
+    data: RendicionJornadasMultiplesResumenRequest,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornadas = (
+            session.query(JornadaFinanciera)
+            .filter(JornadaFinanciera.id.in_(data.jornada_ids))
+            .all()
+        )
+        jornadas_map = {int(jornada.id): jornada for jornada in jornadas}
+        faltantes = [jornada_id for jornada_id in data.jornada_ids if jornada_id not in jornadas_map]
+        if faltantes:
+            raise HTTPException(status_code=404, detail=f"Jornadas no encontradas: {', '.join(str(item) for item in faltantes)}")
+
+        total_pendiente = 0.0
+        total_ingresos = 0.0
+        total_egresos = 0.0
+        cantidad_movimientos = 0
+        desglose_partes: list[list[dict]] = []
+        movimientos: list[dict] = []
+        ventas_pendientes: list[dict] = []
+        fechas_desde: list[datetime] = []
+
+        for jornada_id in data.jornada_ids:
+            jornada = jornadas_map[jornada_id]
+            cache = cargar_movimientos_jornada_normalizados(session, jornada)
+            pendiente = construir_pendiente_rendicion(session, jornada, movimientos_dia_cache=cache, include_items=True)
+
+            total_pendiente += float(pendiente.get("monto_sugerido") or 0.0)
+            total_ingresos += float(pendiente.get("ingresos") or 0.0)
+            total_egresos += float(pendiente.get("egresos") or 0.0)
+            cantidad_movimientos += int(pendiente.get("cantidad_movimientos") or 0)
+            desglose_partes.append(pendiente.get("desglose_medios") or [])
+            movimientos.extend(pendiente.get("movimientos") or [])
+            ventas_pendientes.extend(pendiente.get("ventas_pendientes") or [])
+            if pendiente.get("fecha_desde"):
+                fechas_desde.append(pendiente["fecha_desde"])
+
+        movimientos.sort(key=lambda item: str(item.get("fecha") or ""), reverse=True)
+        ventas_pendientes.sort(key=lambda item: (str(item.get("venta_codigo") or ""), int(item.get("venta_id") or 0)))
+
+        return {
+            "monto_sugerido": float(total_pendiente),
+            "cantidad_movimientos": int(cantidad_movimientos),
+            "ingresos": float(total_ingresos),
+            "egresos": float(total_egresos),
+            "fecha_desde": min(fechas_desde) if fechas_desde else None,
+            "desglose_medios": _combinar_desglose_medios(desglose_partes),
+            "movimientos": movimientos,
+            "ventas_pendientes": ventas_pendientes,
+        }
+    finally:
+        session.close()
+
+
+@caja_router.post("/jornada/historial/rendiciones-multiples", response_model=List[RendicionJornadaOut])
+def registrar_rendiciones_multiples_historial(
+    data: RendicionJornadasMultiplesCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("finanzas.jornada_rendir", "finanzas")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        jornadas = (
+            session.query(JornadaFinanciera)
+            .filter(JornadaFinanciera.id.in_(data.jornada_ids))
+            .all()
+        )
+        jornadas_map = {int(jornada.id): jornada for jornada in jornadas}
+        faltantes = [jornada_id for jornada_id in data.jornada_ids if jornada_id not in jornadas_map]
+        if faltantes:
+            raise HTTPException(status_code=404, detail=f"Jornadas no encontradas: {', '.join(str(item) for item in faltantes)}")
+
+        rendiciones = []
+        for jornada_id in data.jornada_ids:
+            jornada = jornadas_map[jornada_id]
+            pendiente = construir_pendiente_rendicion(session, jornada, include_items=False)
+            monto_rendido = float(pendiente.get("monto_sugerido") or 0.0)
+            rendicion = crear_rendicion_jornada_actual(
+                session,
+                jornada,
+                current_user,
+                destinatario_id=data.destinatario_id,
+                monto_rendido=monto_rendido,
+                observacion=data.observacion,
+            )
+            rendiciones.append(rendicion)
+
+        session.commit()
+        return [serializar_rendicion(session, rendicion) for rendicion in rendiciones]
+    except HTTPException:
+        session.rollback()
+        raise
     finally:
         session.close()
 

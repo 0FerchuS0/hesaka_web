@@ -336,6 +336,10 @@ function PagoProveedorModal({ proveedor, onClose }) {
         setMonto(formatGsAmount(montoSugerido))
     }, [montoEditado, montoSugerido])
 
+    useEffect(() => {
+        if (jornadaAbierta) setShowJornadaRecovery(false)
+    }, [jornadaAbierta])
+
     const confirmarPago = event => {
         event.preventDefault()
         if (!jornadaAbierta) {

@@ -86,6 +86,19 @@ def generar_pdf_indicaciones_clinica(empresa_nombre: str, paciente_nombre: str, 
         story.append(Paragraph("Observaciones", section))
         story.append(Paragraph(_texto(consulta.get("observaciones")), normal))
 
+    receta_relacionada = consulta.get("receta_medicamentos_relacionada") or {}
+    detalles_receta = receta_relacionada.get("detalles") or []
+    if detalles_receta:
+        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph("Medicamentos / Modos de uso", section))
+        for index, detalle in enumerate(detalles_receta, start=1):
+            story.append(Paragraph(f"{index}. {_texto(detalle.get('medicamento'))}", ParagraphStyle("MedicamentoIndicaciones", parent=normal, fontName="Helvetica-Bold", fontSize=10.5)))
+            if _has_value(detalle.get("posologia_personalizada")):
+                story.append(Paragraph(f"Modo de uso: {_texto(detalle.get('posologia_personalizada'))}", normal))
+            if _has_value(detalle.get("duracion_tratamiento")):
+                story.append(Paragraph(f"Duracion: {_texto(detalle.get('duracion_tratamiento'))}", normal))
+            story.append(Spacer(1, 0.18 * cm))
+
     doc.build(story)
     pdf = buffer.getvalue()
     buffer.close()

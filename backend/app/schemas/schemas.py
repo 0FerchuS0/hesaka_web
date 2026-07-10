@@ -1334,6 +1334,54 @@ class PendienteRendicionOut(BaseModel):
     ventas_pendientes: List[dict] = Field(default_factory=list)
 
 
+class RendicionJornadasMultiplesResumenRequest(BaseModel):
+    jornada_ids: List[int]
+
+    @field_validator("jornada_ids")
+    @classmethod
+    def validar_jornada_ids_resumen(cls, value: List[int]) -> List[int]:
+        ids = [int(item) for item in (value or []) if int(item) > 0]
+        if not ids:
+            raise ValueError("Debes seleccionar al menos una jornada valida")
+        return list(dict.fromkeys(ids))
+
+
+class RendicionJornadasMultiplesCreate(BaseModel):
+    jornada_ids: List[int]
+    destinatario_id: int
+    observacion: Optional[str] = None
+
+    @field_validator("jornada_ids")
+    @classmethod
+    def validar_jornada_ids_create(cls, value: List[int]) -> List[int]:
+        ids = [int(item) for item in (value or []) if int(item) > 0]
+        if not ids:
+            raise ValueError("Debes seleccionar al menos una jornada valida")
+        return list(dict.fromkeys(ids))
+
+    @field_validator("destinatario_id")
+    @classmethod
+    def validar_destinatario_id_multiple(cls, value: int) -> int:
+        if value is None or int(value) <= 0:
+            raise ValueError("Debe elegir un destinatario valido")
+        return int(value)
+
+    @field_validator("observacion")
+    @classmethod
+    def normalizar_observacion_multiple(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() if value else value
+
+
+class RendicionJornadasMultiplesResumenOut(BaseModel):
+    cantidad_jornadas: int = 0
+    total_pendiente_rendicion: float = 0.0
+    total_ingresos: float = 0.0
+    total_egresos: float = 0.0
+    cantidad_movimientos: int = 0
+    desglose_medios: List[dict] = Field(default_factory=list)
+    cuentas_por_cobrar_dia: JornadaCuentasCobrarOut = Field(default_factory=JornadaCuentasCobrarOut)
+
+
 class DestinatarioRendicionCreate(BaseModel):
     nombre: str
 
@@ -1828,6 +1876,8 @@ class ClinicaConsultaHistorialOut(BaseModel):
     material_lente: Optional[str] = None
     marca_recomendada: Optional[str] = None
     fecha_control: Optional[date] = None
+    anamnesis_id: Optional[int] = None
+    anamnesis_resumen: Optional[str] = None
 
 
 class ClinicaRecetaMedicamentoDetalleHistorialOut(BaseModel):
@@ -2231,6 +2281,7 @@ class ClinicaConsultaOftalmologicaIn(BaseModel):
     doctor_id: Optional[int] = None
     lugar_atencion_id: Optional[int] = None
     agenda_turno_id: Optional[int] = None
+    anamnesis_id: Optional[int] = None
     fecha: Optional[datetime] = None
     motivo: Optional[str] = None
     diagnostico: Optional[str] = None
@@ -2303,6 +2354,7 @@ class ClinicaConsultaContactologiaIn(BaseModel):
     doctor_id: Optional[int] = None
     lugar_atencion_id: Optional[int] = None
     agenda_turno_id: Optional[int] = None
+    anamnesis_id: Optional[int] = None
     fecha: Optional[datetime] = None
     tipo_lente: Optional[str] = None
     diseno: Optional[str] = None
@@ -2320,6 +2372,7 @@ class ClinicaConsultaDetalleOut(BaseModel):
     tipo: str
     fecha: datetime
     agenda_turno_id: Optional[int] = None
+    anamnesis_id: Optional[int] = None
     doctor_id: Optional[int] = None
     doctor_nombre: Optional[str] = None
     lugar_atencion_id: Optional[int] = None
@@ -2395,3 +2448,4 @@ class ClinicaConsultaDetalleOut(BaseModel):
     tiene_receta_lentes_pdf: bool = False
     tiene_indicaciones_pdf: bool = False
     recetas_medicamentos_relacionadas: List[ClinicaRecetaRelacionadaOut] = []
+    anamnesis: Optional[ClinicaCuestionarioOut] = None

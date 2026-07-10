@@ -435,7 +435,7 @@ function buildClinicaTimelineItems(historial) {
         tipo: 'Consulta oftalmologica',
         subtipo: item.tipo || 'OFTALMOLOGIA',
         titulo: item.diagnostico || item.motivo || 'Consulta clinica',
-        resumen: item.plan_tratamiento || item.resumen || item.tipo_lente || '',
+        resumen: item.plan_tratamiento || item.resumen || item.anamnesis_resumen || item.tipo_lente || '',
         control: item.fecha_control,
         doctor: item.doctor_nombre || '',
     }))
@@ -445,7 +445,7 @@ function buildClinicaTimelineItems(historial) {
         tipo: 'Consulta de contactologia',
         subtipo: item.tipo || 'CONTACTOLOGIA',
         titulo: item.diagnostico || item.motivo || 'Consulta clinica',
-        resumen: item.resumen || item.plan_tratamiento || item.marca_recomendada || '',
+        resumen: item.resumen || item.plan_tratamiento || item.anamnesis_resumen || item.marca_recomendada || '',
         control: item.fecha_control,
         doctor: item.doctor_nombre || '',
     }))
@@ -518,6 +518,28 @@ function createEmptyAnamnesisDraft() {
         horas_uso_lc: '',
         molestias_lc: false,
     }
+}
+
+function sanitizeAnamnesisDraft(value) {
+    const base = { ...createEmptyAnamnesisDraft(), ...(value || {}) }
+    delete base.id
+    delete base.fecha
+    delete base.created_at
+    delete base.updated_at
+    delete base.paciente_id
+    return base
+}
+
+function hasAnamnesisContent(value) {
+    const draft = sanitizeAnamnesisDraft(value)
+    return Object.entries(draft).some(([, fieldValue]) => {
+        if (typeof fieldValue === 'boolean') return fieldValue
+        return String(fieldValue || '').trim() !== ''
+    })
+}
+
+function anamnesisDraftEquals(left, right) {
+    return JSON.stringify(sanitizeAnamnesisDraft(left)) === JSON.stringify(sanitizeAnamnesisDraft(right))
 }
 
 const CLINICA_SECTION_TONES = {
@@ -3053,6 +3075,131 @@ function AnamnesisClinicaForm({ value, onChange }) {
     )
 }
 
+function ConsultaHistorialModalContent({
+    consultaModal,
+    pacienteId,
+    doctores,
+    lugares,
+    onSave,
+    onCancel,
+    saving,
+    savingText,
+    renderResources,
+}) {
+    const isEditable = consultaModal?.mode !== 'view'
+    const initialAnamnesis = consultaModal?.initialData?.anamnesis || null
+    const [activeTab, setActiveTab] = useState(isEditable ? 'anamnesis' : 'consulta')
+    const [anamnesisDraft, setAnamnesisDraft] = useState(sanitizeAnamnesisDraft(initialAnamnesis))
+
+    useEffect(() => {
+        setActiveTab(isEditable ? 'anamnesis' : 'consulta')
+        setAnamnesisDraft(sanitizeAnamnesisDraft(initialAnamnesis))
+    }, [consultaModal?.id, consultaModal?.mode, initialAnamnesis, isEditable])
+
+    const anamnesisResumen = buildAnamnesisSummary(anamnesisDraft)
+
+    return (
+        <>
+            {renderResources?.()}
+            {isEditable ? (
+                <>
+                    <div className="flex gap-12" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+                        <button
+                            type="button"
+                            className={activeTab === 'anamnesis' ? 'btn btn-primary' : 'btn btn-secondary'}
+                            onClick={() => setActiveTab('anamnesis')}
+                        >
+                            Anamnesis
+                        </button>
+                        <button
+                            type="button"
+                            className={activeTab === 'consulta' ? 'btn btn-primary' : 'btn btn-secondary'}
+                            onClick={() => setActiveTab('consulta')}
+                        >
+                            Consulta
+                        </button>
+                    </div>
+
+                    {activeTab === 'anamnesis' ? (
+                        <>
+                            <div className="card" style={{ padding: 16, marginBottom: 14, background: 'rgba(255,255,255,0.03)' }}>
+                                <div style={{ fontWeight: 700, marginBottom: 8 }}>Anamnesis asociada a esta consulta</div>
+                                {consultaModal.initialData?.anamnesis?.fecha ? (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 10 }}>
+                                        Ultima version registrada el {fmtDateTime(consultaModal.initialData.anamnesis.fecha)}
+                                    </div>
+                                ) : (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 10 }}>
+                                        Esta consulta todavia no tiene anamnesis vinculada. Puedes cargarla ahora.
+                                    </div>
+                                )}
+                                <div style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                                    {anamnesisResumen || 'Completa los datos de anamnesis para dejarlos visibles dentro de la consulta.'}
+                                </div>
+                            </div>
+                            <AnamnesisClinicaForm value={anamnesisDraft} onChange={setAnamnesisDraft} />
+                            <div className="flex gap-12" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
+                                <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancelar</button>
+                                <button type="button" className="btn btn-primary" onClick={() => setActiveTab('consulta')} disabled={saving}>
+                                    Continuar a consulta
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <ConsultaClinicaForm
+                            type={consultaModal.type}
+                            initialData={consultaModal.initialData}
+                            pacienteId={pacienteId}
+                            doctores={doctores}
+                            lugares={lugares}
+                            onSave={payload => onSave({ ...payload, anamnesis: anamnesisDraft })}
+                            onCancel={onCancel}
+                            saving={saving}
+                            savingText={savingText}
+                        />
+                    )}
+                </>
+            ) : (
+                <>
+                    {consultaModal.initialData?.anamnesis ? (
+                        <div className="card" style={{ padding: 16, marginBottom: 14, background: 'rgba(255,255,255,0.03)' }}>
+                            <div style={{ fontWeight: 700, marginBottom: 8 }}>Anamnesis asociada a esta consulta</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 10 }}>
+                                Registrada el {fmtDateTime(consultaModal.initialData.anamnesis.fecha)}
+                            </div>
+                            {buildAnamnesisSummary(consultaModal.initialData.anamnesis) ? (
+                                <div style={{ lineHeight: 1.6, marginBottom: 10 }}>
+                                    {buildAnamnesisSummary(consultaModal.initialData.anamnesis)}
+                                </div>
+                            ) : null}
+                            <div className="grid-2">
+                                <div><strong>Expectativa:</strong> {consultaModal.initialData.anamnesis.expectativa || '-'}</div>
+                                <div><strong>Actividad laboral:</strong> {consultaModal.initialData.anamnesis.actividad_laboral || '-'}</div>
+                                <div><strong>Horas pantalla:</strong> {consultaModal.initialData.anamnesis.horas_pantalla || '-'}</div>
+                                <div><strong>Conduce:</strong> {consultaModal.initialData.anamnesis.conduce || '-'}</div>
+                                <div><strong>Medicamentos:</strong> {consultaModal.initialData.anamnesis.medicamentos || '-'}</div>
+                                <div><strong>Antecedentes familiares:</strong> {consultaModal.initialData.anamnesis.antecedentes_familiares || '-'}</div>
+                            </div>
+                        </div>
+                    ) : null}
+                    <ConsultaClinicaForm
+                        type={consultaModal.type}
+                        initialData={consultaModal.initialData}
+                        pacienteId={pacienteId}
+                        doctores={doctores}
+                        lugares={lugares}
+                        onSave={payload => onSave(payload)}
+                        onCancel={onCancel}
+                        saving={saving}
+                        savingText={savingText}
+                        readOnly
+                    />
+                </>
+            )}
+        </>
+    )
+}
+
 function ConsultaIntegralModal({
     open,
     patient,
@@ -3068,6 +3215,9 @@ function ConsultaIntegralModal({
     onOpenLentesPdf,
     onOpenIndicacionesPdf,
     onOpenRecetaMedicamentos,
+    linkedReceta,
+    onOpenRecetaMedicamentosPdf,
+    onOpenRecetaIndicacionesPdf,
     onOpenHistory,
     initialAnamnesis,
     anamnesisLoading,
@@ -3397,10 +3547,10 @@ function ConsultaIntegralModal({
                                             </div>
                                         ) : (
                                             <div style={{ display: 'grid', gap: 10 }}>
-                                                <div style={{ color: '#64748b', fontSize: '0.8rem' }}>{fmtDateTime(latestPreviousConsulta.date)}</div>
-                                                <div style={{ fontWeight: 700 }}>{latestPreviousConsulta.title}</div>
+                                                <div style={{ color: '#64748b', fontSize: '0.8rem' }}>{fmtDateTime(latestPreviousConsulta.fecha)}</div>
+                                                <div style={{ fontWeight: 700 }}>{latestPreviousConsulta.titulo}</div>
                                                 <div style={{ color: '#475569', fontSize: '0.84rem', lineHeight: 1.5 }}>
-                                                    {latestPreviousConsulta.summary || 'Sin resumen clinico cargado.'}
+                                                    {latestPreviousConsulta.resumen || 'Sin resumen clinico cargado.'}
                                                 </div>
                                                 <button type="button" className="btn btn-secondary" onClick={() => onOpenHistory?.()}>
                                                     <Eye size={16} /> Ver en historial
@@ -3483,6 +3633,12 @@ function ConsultaIntegralModal({
                                         <button type="button" className="btn btn-secondary" onClick={onOpenIndicacionesPdf} disabled={!documentReady}>
                                             <FileText size={16} /> Indicaciones PDF
                                         </button>
+                                        <button type="button" className="btn btn-secondary" onClick={onOpenRecetaMedicamentosPdf} disabled={!linkedReceta?.id}>
+                                            <FileText size={16} /> PDF receta meds.
+                                        </button>
+                                        <button type="button" className="btn btn-secondary" onClick={onOpenRecetaIndicacionesPdf} disabled={!linkedReceta?.id}>
+                                            <FileText size={16} /> Indicaciones receta
+                                        </button>
                                     </div>
                                 </div>
                                     <div style={{ borderRadius: 20, padding: 16, background: 'rgba(255,255,255,0.96)', border: '1px solid rgba(15,118,110,0.10)', boxShadow: '0 16px 34px rgba(15, 23, 42, 0.06)' }}>
@@ -3556,6 +3712,7 @@ function RecetaMedicamentoForm({
     onOpenIndicacionesPdf,
 }) {
     const recipeAlreadySaved = Boolean(savedReceta?.id)
+    const effectiveReceta = savedReceta?.id ? savedReceta : (initialData?.id ? initialData : null)
     const [form, setForm] = useState(() => ({
         fecha_emision: initialData?.fecha_emision ? String(initialData.fecha_emision).slice(0, 16) : nowBusinessDateTimeLocalValue(),
         doctor_nombre: initialData?.doctor_nombre || '',
@@ -3570,6 +3727,20 @@ function RecetaMedicamentoForm({
     }))
     const [error, setError] = useState('')
     const [showSavedNotice, setShowSavedNotice] = useState(false)
+    const [patologiaSearch, setPatologiaSearch] = useState('')
+    const [patologiaSeleccionada, setPatologiaSeleccionada] = useState(null)
+
+    const patologiasQuery = useQuery({
+        queryKey: ['clinica', 'receta-patologias-simple', patologiaSearch],
+        queryFn: async () => (await api.get(`/clinica/vademecum/patologias/simple?${queryString({ buscar: patologiaSearch, page_size: 12 })}`)).data,
+        enabled: !readOnly,
+    })
+
+    const patologiaDetalleQuery = useQuery({
+        queryKey: ['clinica', 'receta-patologia-detalle', patologiaSeleccionada?.id],
+        queryFn: async () => (await api.get(`/clinica/vademecum/patologias/${patologiaSeleccionada.id}`)).data,
+        enabled: Boolean(patologiaSeleccionada?.id),
+    })
 
     useEffect(() => {
         setForm({
@@ -3650,6 +3821,50 @@ function RecetaMedicamentoForm({
         setForm(prev => ({
             ...prev,
             detalles: prev.detalles.filter(detalle => detalle.key !== key),
+        }))
+    }
+
+    const addSuggestedMedicamento = tratamiento => {
+        if (!tratamiento?.medicamento_id) return
+        setForm(prev => {
+            const alreadyExists = prev.detalles.some(detalle => Number(detalle.medicamento?.id) === Number(tratamiento.medicamento_id))
+            if (alreadyExists) {
+                return {
+                    ...prev,
+                    detalles: prev.detalles.map(detalle => (
+                        Number(detalle.medicamento?.id) === Number(tratamiento.medicamento_id) && !detalle.posologia_personalizada?.trim()
+                            ? { ...detalle, posologia_personalizada: tratamiento.posologia_recomendada || '' }
+                            : detalle
+                    )),
+                }
+            }
+            return {
+                ...prev,
+                detalles: [
+                    ...prev.detalles,
+                    {
+                        key: `tratamiento-${tratamiento.medicamento_id}-${Date.now()}`,
+                        medicamento: {
+                            id: tratamiento.medicamento_id,
+                            nombre_comercial: tratamiento.medicamento_nombre || 'Medicamento',
+                        },
+                        posologia_personalizada: tratamiento.posologia_recomendada || '',
+                        duracion_tratamiento: '',
+                    },
+                ],
+            }
+        })
+    }
+
+    const importarPatologiaEnReceta = () => {
+        const source = patologiaDetalleQuery.data || patologiaSeleccionada
+        if (!source) return
+        setForm(prev => ({
+            ...prev,
+            diagnostico: prev.diagnostico?.trim() ? prev.diagnostico : (source.nombre || ''),
+            observaciones: prev.observaciones?.trim()
+                ? prev.observaciones
+                : [source.descripcion, source.sintomas, source.tratamiento_no_farmacologico].filter(Boolean).join('\n'),
         }))
     }
 
@@ -3766,6 +3981,87 @@ function RecetaMedicamentoForm({
                 </div>
             </div>
 
+            {!readOnly && (
+                <div className="card" style={{ padding: 16, marginTop: 10 }}>
+                    <div className="flex-between" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+                        <div>
+                            <div style={{ fontWeight: 700 }}>Patologia y tratamientos sugeridos</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginTop: 4 }}>
+                                Puedes elegir una patologia para traer sus remedios asociados y usar sus modos de uso recomendados.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="form-group">
+                        <label className="form-label">Patologia</label>
+                        <RemoteSearchSelect
+                            value={patologiaSeleccionada}
+                            onChange={option => setPatologiaSeleccionada(option || null)}
+                            onSearch={setPatologiaSearch}
+                            options={patologiasQuery.data || []}
+                            loading={patologiasQuery.isFetching}
+                            placeholder="Buscar patologia..."
+                            promptMessage="Escriba para buscar patologia"
+                            emptyMessage="Sin patologias"
+                            minChars={0}
+                            floating={false}
+                            getOptionLabel={option => option?.nombre || ''}
+                            getOptionValue={option => option?.id}
+                        />
+                    </div>
+
+                    {patologiaSeleccionada && (
+                        <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                            <div className="flex-between" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                                <div>
+                                    <div style={{ fontWeight: 700 }}>{patologiaDetalleQuery.data?.nombre || patologiaSeleccionada.nombre}</div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+                                        {patologiaDetalleQuery.data?.descripcion || patologiaSeleccionada.descripcion || 'Sin descripcion cargada.'}
+                                    </div>
+                                </div>
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={importarPatologiaEnReceta}>
+                                    Importar a la receta
+                                </button>
+                            </div>
+                            {patologiaDetalleQuery.data?.sintomas && (
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginBottom: 8 }}>
+                                    <strong>Sintomas:</strong> {patologiaDetalleQuery.data.sintomas}
+                                </div>
+                            )}
+                            {patologiaDetalleQuery.data?.tratamiento_no_farmacologico && (
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginBottom: 12 }}>
+                                    <strong>Manejo no farmacologico:</strong> {patologiaDetalleQuery.data.tratamiento_no_farmacologico}
+                                </div>
+                            )}
+                            <div style={{ fontWeight: 700, marginBottom: 10 }}>Remedios asociados</div>
+                            {patologiaDetalleQuery.isLoading ? (
+                                <div style={{ color: 'var(--text-muted)' }}>Cargando tratamientos sugeridos...</div>
+                            ) : patologiaDetalleQuery.data?.tratamientos?.length ? (
+                                <div style={{ display: 'grid', gap: 10 }}>
+                                    {patologiaDetalleQuery.data.tratamientos.map(tratamiento => (
+                                        <div key={`${patologiaSeleccionada.id}-${tratamiento.id}-${tratamiento.medicamento_id}`} className="card" style={{ padding: 12, background: 'rgba(255,255,255,0.02)' }}>
+                                            <div className="flex-between" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                                                <div style={{ minWidth: 0 }}>
+                                                    <div style={{ fontWeight: 700 }}>{tratamiento.medicamento_nombre}</div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+                                                        <strong>Modo de uso sugerido:</strong> {tratamiento.posologia_recomendada || 'Sin posologia recomendada cargada.'}
+                                                    </div>
+                                                </div>
+                                                <button type="button" className="btn btn-secondary btn-sm" onClick={() => addSuggestedMedicamento(tratamiento)}>
+                                                    <Plus size={14} /> Agregar a la receta
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div style={{ color: 'var(--text-muted)' }}>Esta patologia aun no tiene remedios sugeridos cargados.</div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="card" style={{ padding: 16, marginTop: 10 }}>
                 <div className="flex-between" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
                     <div style={{ fontWeight: 700 }}>Medicamentos</div>
@@ -3796,6 +4092,11 @@ function RecetaMedicamentoForm({
                                     getOptionLabel={option => option?.nombre_comercial || ''}
                                     getOptionValue={option => option?.id}
                                 />
+                                {detalle.medicamento?.nombre_comercial && (
+                                    <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                                        Medicamento seleccionado: {detalle.medicamento.nombre_comercial}
+                                    </div>
+                                )}
                             </div>
                             <div className="grid-2">
                                 <div className="form-group">
@@ -3844,7 +4145,7 @@ function RecetaMedicamentoForm({
                     Receta guardada correctamente.
                 </div>
             )}
-            {savedReceta?.id && (
+            {effectiveReceta?.id && (onOpenCompraPdf || onOpenIndicacionesPdf) && (
                 <div
                     className="card"
                     style={{
@@ -3858,12 +4159,16 @@ function RecetaMedicamentoForm({
                 >
                     <div style={{ fontWeight: 700, color: 'var(--success)' }}>Documentos listos para generar</div>
                     <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
-                        <button type="button" className="btn btn-secondary" onClick={onOpenCompraPdf}>
-                            <FileText size={16} /> Receta de medicamentos PDF
-                        </button>
-                        <button type="button" className="btn btn-secondary" onClick={onOpenIndicacionesPdf}>
-                            <FileText size={16} /> Indicaciones de uso PDF
-                        </button>
+                        {onOpenCompraPdf && (
+                            <button type="button" className="btn btn-secondary" onClick={onOpenCompraPdf}>
+                                <FileText size={16} /> Receta de medicamentos PDF
+                            </button>
+                        )}
+                        {onOpenIndicacionesPdf && (
+                            <button type="button" className="btn btn-secondary" onClick={onOpenIndicacionesPdf}>
+                                <FileText size={16} /> Indicaciones de uso PDF
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
@@ -4047,8 +4352,27 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
         mutationFn: async payload => {
             const tipo = consultaModal?.type || 'OFTALMOLOGIA'
             const endpoint = tipo === 'OFTALMOLOGIA' ? '/clinica/consultas/oftalmologia' : '/clinica/consultas/contactologia'
-            if (consultaModal?.mode === 'edit') return (await api.put(`${endpoint}/${consultaModal.id}`, payload)).data
-            return (await api.post(endpoint, payload)).data
+            let consultaPayload = payload?.consulta || payload
+            const anamnesisPayload = sanitizeAnamnesisDraft(payload?.anamnesis)
+            const existingAnamnesis = consultaModal?.initialData?.anamnesis || null
+            const shouldCreateAnamnesis = hasAnamnesisContent(anamnesisPayload)
+                && (!existingAnamnesis || !anamnesisDraftEquals(anamnesisPayload, existingAnamnesis))
+
+            if (shouldCreateAnamnesis) {
+                const anamnesisResponse = await api.post(`/clinica/pacientes/${pacienteId}/anamnesis`, anamnesisPayload)
+                consultaPayload = {
+                    ...consultaPayload,
+                    anamnesis_id: anamnesisResponse.data?.id || null,
+                }
+            } else if (consultaModal?.initialData?.anamnesis_id) {
+                consultaPayload = {
+                    ...consultaPayload,
+                    anamnesis_id: consultaModal.initialData.anamnesis_id,
+                }
+            }
+
+            if (consultaModal?.mode === 'edit') return (await api.put(`${endpoint}/${consultaModal.id}`, consultaPayload)).data
+            return (await api.post(endpoint, consultaPayload)).data
         },
         onMutate: () => {
             setConsultaSavePhase('saving')
@@ -4122,7 +4446,13 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
         if (!selectedId || tab === 'recetas_medicamentos') return
         try {
             const response = await api.get(`/clinica/consultas/${tab}/${selectedId}`)
-            setConsultaModal({ mode, type: tab === 'oftalmologia' ? 'OFTALMOLOGIA' : 'CONTACTOLOGIA', id: selectedId, initialData: response.data })
+            setConsultaModal({
+                mode,
+                type: tab === 'oftalmologia' ? 'OFTALMOLOGIA' : 'CONTACTOLOGIA',
+                id: selectedId,
+                patientName: paciente?.nombre_completo || 'Paciente',
+                initialData: response.data,
+            })
         } catch (error) {
             window.alert(formatError(error, 'No se pudo cargar la consulta.'))
         }
@@ -4364,7 +4694,7 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                                 <tr key={item?.id || `row-${index}`} onClick={() => item?.id && setSelectedId(item.id)} style={{ cursor: 'pointer', background: selectedId === item?.id ? CLINICA_PALETTE.accentSoft : 'transparent' }}>
                                                     <td>{index + 1}</td>
                                                     <td>{fmtDate(tab === 'recetas_medicamentos' ? item?.fecha_emision : item?.fecha)}</td>
-                                                    <td>{tab === 'recetas_medicamentos' ? (item?.doctor_nombre || 'Sin doctor') : (item?.motivo || item?.resumen || item?.plan_tratamiento || '-')}</td>
+                                                    <td>{tab === 'recetas_medicamentos' ? (item?.doctor_nombre || 'Sin doctor') : (item?.motivo || item?.resumen || item?.plan_tratamiento || item?.anamnesis_resumen || '-')}</td>
                                                     <td>{item?.diagnostico || '-'}</td>
                                                 </tr>
                                             )) : <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Sin registros en esta seccion.</td></tr>}
@@ -4416,6 +4746,31 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                                         {tab === 'oftalmologia' && <div><strong>Motivo:</strong> {detalle.motivo || '-'}</div>}
                                         <div><strong>Diagnostico:</strong> {detalle.diagnostico || '-'}</div>
                                         <div><strong>Plan:</strong> {detalle.plan_tratamiento || '-'}</div>
+                                        <div className="card" style={{ padding: 14, background: 'rgba(255,255,255,0.02)' }}>
+                                            <div style={{ fontWeight: 700, marginBottom: 10 }}>Anamnesis asociada</div>
+                                            {detalle.anamnesis ? (
+                                                <div style={{ display: 'grid', gap: 10 }}>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                        Registrada el {fmtDateTime(detalle.anamnesis.fecha)}
+                                                    </div>
+                                                    {buildAnamnesisSummary(detalle.anamnesis) ? (
+                                                        <div style={{ lineHeight: 1.6 }}>{buildAnamnesisSummary(detalle.anamnesis)}</div>
+                                                    ) : null}
+                                                    <div className="grid-2">
+                                                        <div><strong>Expectativa:</strong> {detalle.anamnesis.expectativa || '-'}</div>
+                                                        <div><strong>Actividad laboral:</strong> {detalle.anamnesis.actividad_laboral || '-'}</div>
+                                                        <div><strong>Horas pantalla:</strong> {detalle.anamnesis.horas_pantalla || '-'}</div>
+                                                        <div><strong>Conduce:</strong> {detalle.anamnesis.conduce || '-'}</div>
+                                                        <div><strong>Medicamentos:</strong> {detalle.anamnesis.medicamentos || '-'}</div>
+                                                        <div><strong>Antecedentes familiares:</strong> {detalle.anamnesis.antecedentes_familiares || '-'}</div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div style={{ color: 'var(--text-muted)' }}>
+                                                    No hay anamnesis asociada a esta consulta.
+                                                </div>
+                                            )}
+                                        </div>
                                         <div><strong>Tipo lente:</strong> {detalle.tipo_lente || '-'}</div>
                                         {tab === 'oftalmologia' ? (
                                             <>
@@ -4518,9 +4873,16 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
 
             {consultaModal && (
                 <Modal
-                    title={consultaModal.mode === 'create' ? `Nueva consulta ${consultaModal.type === 'OFTALMOLOGIA' ? 'oftalmologica' : 'de contactologia'}` : consultaModal.mode === 'edit' ? 'Editar consulta' : 'Consulta clinica'}
+                    title={
+                        consultaModal.mode === 'create'
+                            ? `Nueva consulta ${consultaModal.type === 'OFTALMOLOGIA' ? 'oftalmologica' : 'de contactologia'}`
+                            : consultaModal.mode === 'edit'
+                                ? `Editar consulta - ${consultaModal.patientName || 'Paciente'}`
+                                : `Consulta clinica - ${consultaModal.patientName || 'Paciente'}`
+                    }
                     onClose={() => setConsultaModal(null)}
                     maxWidth="920px"
+                    closeOnBackdrop={false}
                     closeDisabled={consultaSavePhase !== 'idle'}
                     onCloseAttempt={() => window.alert('La consulta aun se esta actualizando. Espera a que el historial refleje los cambios antes de cerrar.')}
                 >
@@ -4574,17 +4936,15 @@ function HistorialClinicoModal({ open, pacienteId, onClose, onEditPaciente, onRe
                             openPdfBlob(`/clinica/recetas-medicamentos/${linkedReceta.id}/indicaciones-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de indicaciones.')))
                         }}
                     />
-                    <ConsultaClinicaForm
-                        type={consultaModal.type}
-                        initialData={consultaModal.initialData}
+                    <ConsultaHistorialModalContent
+                        consultaModal={consultaModal}
                         pacienteId={pacienteId}
                         doctores={doctoresQuery.data || []}
                         lugares={lugaresQuery.data || []}
-                        onSave={payload => saveConsultaMutation.mutate(payload.consulta)}
+                        onSave={payload => saveConsultaMutation.mutate(payload)}
                         onCancel={() => setConsultaModal(null)}
                         saving={saveConsultaMutation.isPending || consultaSavePhase === 'refreshing'}
                         savingText={consultaSavePhase === 'refreshing' ? 'Actualizando vista...' : 'Guardando...'}
-                        readOnly={consultaModal.mode === 'view'}
                     />
                 </Modal>
             )}
@@ -5562,29 +5922,55 @@ function NuevaConsultaSection() {
 
     const saveConsultaMutation = useMutation({
         mutationFn: async ({ consulta, anamnesis, recetaSugerida }) => {
+            const recetaDraftVinculada = draftRecetaConsulta?.detalles?.length ? draftRecetaConsulta : null
+            let anamnesisGuardada = null
             if (selectedPatient?.id && anamnesis) {
-                await api.post(`/clinica/pacientes/${selectedPatient.id}/anamnesis`, {
+                anamnesisGuardada = (await api.post(`/clinica/pacientes/${selectedPatient.id}/anamnesis`, {
                     paciente_id: selectedPatient.id,
                     ...anamnesis,
-                })
+                })).data
             }
             const resumen = buildAnamnesisSummary(anamnesis)
             const endpoint = tipo === 'OFTALMOLOGIA' ? '/clinica/consultas/oftalmologia' : '/clinica/consultas/contactologia'
             const consultaFinal = {
                 ...consulta,
                 agenda_turno_id: agendaTurnoId || null,
+                anamnesis_id: anamnesisGuardada?.id || null,
                 motivo: tipo === 'OFTALMOLOGIA'
                     ? ((consulta.motivo || '').trim() || resumen || null)
                     : consulta.motivo,
             }
             const created = (await api.post(endpoint, consultaFinal)).data
-            return { created, recetaSugerida }
+            const recetaFuente = recetaDraftVinculada || recetaSugerida
+            let recetaCreada = null
+            if (created?.id && selectedPatient?.id && recetaFuente?.detalles?.length) {
+                recetaCreada = (await api.post('/clinica/recetas-medicamentos', {
+                    paciente_id: selectedPatient.id,
+                    consulta_id: created.id,
+                    consulta_tipo: tipo,
+                    fecha_emision: serializeDateTimeLocalValue(recetaFuente.fecha_emision) || null,
+                    doctor_nombre: recetaFuente.doctor_nombre || created.doctor_nombre || null,
+                    diagnostico: recetaFuente.diagnostico || created.diagnostico || null,
+                    observaciones: recetaFuente.observaciones || created.plan_tratamiento || null,
+                    detalles: (recetaFuente.detalles || [])
+                        .filter(detalle => detalle?.medicamento_id || detalle?.medicamento?.id)
+                        .map(detalle => ({
+                            medicamento_id: detalle.medicamento_id || detalle.medicamento?.id,
+                            posologia_personalizada: detalle.posologia_personalizada || null,
+                            duracion_tratamiento: detalle.duracion_tratamiento || null,
+                        })),
+                })).data
+            }
+            return { created, recetaSugerida, recetaCreada }
         },
         onSuccess: result => {
             const data = result?.created
+            const recetaCreada = result?.recetaCreada || null
             const trace = consultaTraceRef.current
             setConsultaSaveError('')
             setLastCreated(data)
+            setLastRecetaCreated(recetaCreada)
+            setDraftRecetaConsulta(null)
             markFlowStep(trace, 'consulta_guardada', 'Consulta guardada en backend', {
                 consulta_id: data?.id ?? null,
             })
@@ -5601,7 +5987,7 @@ function NuevaConsultaSection() {
                     consultaId: data.id,
                     type: tipo,
                     patientId: selectedPatient.id,
-                    recetaInicial: {
+                    recetaInicial: recetaCreada || {
                         fecha_emision: nowBusinessDateTimeLocalValue(),
                         doctor_nombre: result?.recetaSugerida?.doctor_nombre || data?.doctor_nombre || '',
                         diagnostico: result?.recetaSugerida?.diagnostico || data?.diagnostico || '',
@@ -5823,6 +6209,14 @@ function NuevaConsultaSection() {
                                     <button type="button" className="btn btn-secondary" onClick={() => openPdfBlob(`/clinica/consultas/${tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'}/${lastCreated.id}/indicaciones-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de indicaciones.')))}>
                                         <FileText size={16} />
                                         Indicaciones
+                                    </button>
+                                    <button type="button" className="btn btn-secondary" onClick={() => openPdfBlob(`/clinica/recetas-medicamentos/${lastRecetaCreated.id}/compra-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de receta.')))} disabled={!lastRecetaCreated?.id}>
+                                        <FileText size={16} />
+                                        Receta meds.
+                                    </button>
+                                    <button type="button" className="btn btn-secondary" onClick={() => openPdfBlob(`/clinica/recetas-medicamentos/${lastRecetaCreated.id}/indicaciones-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de indicaciones de la receta.')))} disabled={!lastRecetaCreated?.id}>
+                                        <FileText size={16} />
+                                        Indicaciones receta
                                     </button>
                                 </>
                             ) : null}
@@ -6172,6 +6566,9 @@ function NuevaConsultaSection() {
                 successData={lastCreated}
                 onOpenLentesPdf={() => openPdfBlob(`/clinica/consultas/oftalmologia/${lastCreated?.id}/pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar la receta optica.')))}
                 onOpenIndicacionesPdf={() => openPdfBlob(`/clinica/consultas/${tipo === 'OFTALMOLOGIA' ? 'oftalmologia' : 'contactologia'}/${lastCreated?.id}/indicaciones-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de indicaciones.')))}
+                linkedReceta={lastRecetaCreated}
+                onOpenRecetaMedicamentosPdf={() => openPdfBlob(`/clinica/recetas-medicamentos/${lastRecetaCreated?.id}/compra-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de receta.')))}
+                onOpenRecetaIndicacionesPdf={() => openPdfBlob(`/clinica/recetas-medicamentos/${lastRecetaCreated?.id}/indicaciones-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de indicaciones de la receta.')))}
                 onOpenRecetaMedicamentos={({ consultaSaved, initialData }) => {
                     setLastRecetaCreated(null)
                     setRecetaModal({
@@ -6497,10 +6894,29 @@ function HistorialClinicoGeneralSection() {
     const saveConsultaMutation = useMutation({
         mutationFn: async payload => {
             if (!consultaModal?.id) throw new Error('Consulta no seleccionada.')
+            let consultaPayload = payload?.consulta || payload
+            const anamnesisPayload = sanitizeAnamnesisDraft(payload?.anamnesis)
+            const existingAnamnesis = consultaModal?.initialData?.anamnesis || null
+            const shouldCreateAnamnesis = hasAnamnesisContent(anamnesisPayload)
+                && (!existingAnamnesis || !anamnesisDraftEquals(anamnesisPayload, existingAnamnesis))
+
+            if (shouldCreateAnamnesis) {
+                const anamnesisResponse = await api.post(`/clinica/pacientes/${consultaModal.patientId}/anamnesis`, anamnesisPayload)
+                consultaPayload = {
+                    ...consultaPayload,
+                    anamnesis_id: anamnesisResponse.data?.id || null,
+                }
+            } else if (consultaModal?.initialData?.anamnesis_id) {
+                consultaPayload = {
+                    ...consultaPayload,
+                    anamnesis_id: consultaModal.initialData.anamnesis_id,
+                }
+            }
+
             const endpoint = consultaModal.type === 'OFTALMOLOGIA'
                 ? `/clinica/consultas/oftalmologia/${consultaModal.id}`
                 : `/clinica/consultas/contactologia/${consultaModal.id}`
-            return (await api.put(endpoint, payload)).data
+            return (await api.put(endpoint, consultaPayload)).data
         },
         onMutate: () => {
             setConsultaSavePhase('saving')
@@ -6575,6 +6991,7 @@ function HistorialClinicoGeneralSection() {
                 id: targetEntry.id,
                 type: targetEntry.tipo,
                 patientId: targetEntry.paciente_id,
+                patientName: targetEntry.paciente_nombre || 'Paciente',
                 initialData: response.data,
             })
         } catch (error) {
@@ -7124,9 +7541,12 @@ function HistorialClinicoGeneralSection() {
 
             {consultaModal && (
                 <Modal
-                    title={consultaModal.mode === 'edit' ? 'Editar consulta' : 'Consulta clinica'}
+                    title={consultaModal.mode === 'edit'
+                        ? `Editar consulta - ${consultaModal.patientName || 'Paciente'}`
+                        : `Consulta clinica - ${consultaModal.patientName || 'Paciente'}`}
                     onClose={() => setConsultaModal(null)}
                     maxWidth="920px"
+                    closeOnBackdrop={false}
                     closeDisabled={consultaSavePhase !== 'idle'}
                     onCloseAttempt={() => window.alert('La consulta aun se esta procesando. Espera a que termine antes de cerrar.')}
                 >
@@ -7183,17 +7603,15 @@ function HistorialClinicoGeneralSection() {
                             openPdfBlobByEndpoint(`/clinica/recetas-medicamentos/${linkedReceta.id}/indicaciones-pdf`, 'No se pudo generar el PDF de indicaciones.')
                         }}
                     />
-                    <ConsultaClinicaForm
-                        type={consultaModal.type}
-                        initialData={consultaModal.initialData}
+                    <ConsultaHistorialModalContent
+                        consultaModal={consultaModal}
                         pacienteId={consultaModal.patientId}
                         doctores={doctoresQuery.data || []}
                         lugares={lugaresQuery.data || []}
-                        onSave={payload => saveConsultaMutation.mutate(payload.consulta)}
+                        onSave={payload => saveConsultaMutation.mutate(payload)}
                         onCancel={() => setConsultaModal(null)}
                         saving={saveConsultaMutation.isPending || consultaSavePhase === 'refreshing'}
                         savingText={consultaSavePhase === 'refreshing' ? 'Actualizando vista...' : 'Guardando...'}
-                        readOnly={consultaModal.mode === 'view'}
                     />
                 </Modal>
             )}
@@ -7219,6 +7637,9 @@ function HistorialClinicoGeneralSection() {
                         saving={saveRecetaMutation.isPending}
                         readOnly={recetaModal.mode === 'view'}
                         recentMedicamento={recentCreatedMedicamento}
+                        savedReceta={recetaModal.initialData}
+                        onOpenCompraPdf={() => openPdfBlob(`/clinica/recetas-medicamentos/${recetaModal.id || recetaModal.initialData?.id}/compra-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de receta.')))}
+                        onOpenIndicacionesPdf={() => openPdfBlob(`/clinica/recetas-medicamentos/${recetaModal.id || recetaModal.initialData?.id}/indicaciones-pdf`).catch(error => window.alert(formatError(error, 'No se pudo generar el PDF de indicaciones.')))}
                     />
                 </Modal>
             )}

@@ -15,6 +15,7 @@ import {
     useJornadaDetalleOperativo,
     useCrearRendicionJornada,
     useCrearRendicionJornadaHistorial,
+    useCrearRendicionesJornadasMultiplesHistorial,
     useDestinatariosRendicionCatalog,
     useJornadaPanelInicial,
     useHistorialJornadas,
@@ -23,6 +24,7 @@ import {
     useMovimientosPosterioresUltimoCorteResumen,
     useOpcionesFiltrosRendiciones,
     usePendienteRendicionHistorial,
+    usePendienteRendicionJornadasMultiples,
     useRendicionDetalle,
     useRendicionesJornadaHistorica,
     useRendicionesJornadaActual,
@@ -40,6 +42,20 @@ function useMarkJornadaBenchRow(show, t0Ref, key, isSuccess, dataUpdatedAt, setM
             return { ...prev, [key]: Math.round(performance.now() - t0Ref.current) }
         })
     }, [show, key, isSuccess, dataUpdatedAt, setMs])
+}
+
+function beginJornadaBenchFlow(show, t0Ref, setMs, label) {
+    if (!show) return
+    t0Ref.current = performance.now()
+    setMs({ [label]: 0 })
+}
+
+function markJornadaBenchStep(show, t0Ref, setMs, label) {
+    if (!show || !t0Ref.current) return
+    setMs(prev => {
+        if (prev[label] != null) return prev
+        return { ...prev, [label]: Math.round(performance.now() - t0Ref.current) }
+    })
 }
 
 const JORNADA_BENCH_STORAGE = 'hesaka_jornada_bench'
@@ -956,6 +972,483 @@ function RendirModalHistorial({ jornadaId, jornadaFecha, onClose }) {
     )
 }
 
+function RendirJornadasMultiplesSelectorModal({ jornadas = [], onClose, onConfirm }) {
+    const jornadasPendientes = useMemo(
+        () => (jornadas || []).filter(item => Math.abs(Number(item?.pendiente_rendicion || 0)) > 0.009),
+        [jornadas],
+    )
+    const [selectedIds, setSelectedIds] = useState(() => jornadasPendientes.map(item => item.jornada_id))
+
+    useEffect(() => {
+        setSelectedIds(jornadasPendientes.map(item => item.jornada_id))
+    }, [jornadasPendientes])
+
+    const selectedJornadas = useMemo(
+        () => jornadasPendientes.filter(item => selectedIds.includes(item.jornada_id)),
+        [jornadasPendientes, selectedIds],
+    )
+    const allSelected = Boolean(jornadasPendientes.length) && selectedIds.length === jornadasPendientes.length
+
+    const toggleSelected = jornadaId => {
+        setSelectedIds(prev => (
+            prev.includes(jornadaId)
+                ? prev.filter(id => id !== jornadaId)
+                : [...prev, jornadaId]
+        ))
+    }
+
+    const toggleSelectAll = () => {
+        setSelectedIds(allSelected ? [] : jornadasPendientes.map(item => item.jornada_id))
+    }
+
+    return (
+        <Modal title="Seleccionar jornadas a rendir" onClose={onClose} maxWidth="980px" closeOnBackdrop={false}>
+            <div>
+                <div className="card" style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <div>
+                            <div style={{ fontWeight: 700 }}>Jornadas pendientes de cierre</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+                                Selecciona las jornadas que quieres rendir. Después se abrirá el modal completo de rendición con el detalle consolidado.
+                            </div>
+                        </div>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={toggleSelectAll} disabled={!jornadasPendientes.length}>
+                            {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                        </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                        <span>Jornadas visibles: <strong>{jornadasPendientes.length}</strong></span>
+                        <span>Seleccionadas: <strong>{selectedJornadas.length}</strong></span>
+                        <span>Pendiente total visible: <strong style={{ color: 'var(--warning)' }}>{fmtGs(selectedJornadas.reduce((acc, item) => acc + Number(item.pendiente_rendicion || 0), 0))}</strong></span>
+                    </div>
+                </div>
+
+                <div className="table-wrapper" style={{ overflow: 'auto', marginBottom: 16, maxHeight: 360 }}>
+                    <table className="table">
+                        <thead>
+                            <tr>
+                                <th style={{ width: 48, textAlign: 'center' }}>
+                                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} disabled={!jornadasPendientes.length} />
+                                </th>
+                                <th>Fecha</th>
+                                <th>Estado</th>
+                                <th style={{ textAlign: 'right' }}>Pendiente</th>
+                                <th style={{ textAlign: 'center' }}>Mov. pend.</th>
+                                <th style={{ textAlign: 'right' }}>Ya rendido</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {jornadasPendientes.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+                                        No hay jornadas con pendiente de rendición para procesar en lote.
+                                    </td>
+                                </tr>
+                            ) : (
+                                jornadasPendientes.map(jornada => (
+                                    <tr key={`multi-rendir-${jornada.jornada_id}`}>
+                                        <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.includes(jornada.jornada_id)}
+                                                onChange={() => toggleSelected(jornada.jornada_id)}
+                                            />
+                                        </td>
+                                        <td style={{ whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{jornada.fecha}</td>
+                                        <td style={{ whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{jornada.estado}</td>
+                                        <td style={{ textAlign: 'right', color: (jornada.pendiente_rendicion || 0) < 0 ? 'var(--danger)' : 'var(--warning)', fontWeight: 700, verticalAlign: 'middle' }}>
+                                            {fmtGs(jornada.pendiente_rendicion)}
+                                        </td>
+                                        <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>{jornada.cantidad_movimientos_pendientes || 0}</td>
+                                        <td style={{ textAlign: 'right', color: 'var(--info)', fontWeight: 700, verticalAlign: 'middle' }}>
+                                            {fmtGs(jornada.total_rendido)}
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={!selectedJornadas.length}
+                        onClick={() => onConfirm?.(selectedIds)}
+                    >
+                        Continuar a rendir
+                    </button>
+                </div>
+            </div>
+        </Modal>
+    )
+}
+
+function RendirJornadasMultiplesDetalleModal({ jornadaIds = [], jornadas = [], onClose }) {
+    const crearRendicionesMultiples = useCrearRendicionesJornadasMultiplesHistorial()
+    const pendienteQuery = usePendienteRendicionJornadasMultiples(jornadaIds, { enabled: jornadaIds.length > 0 })
+    const jornadasSeleccionadas = useMemo(
+        () => (jornadas || []).filter(item => jornadaIds.includes(item.jornada_id)),
+        [jornadas, jornadaIds],
+    )
+    const titulo = `Rendir ${jornadasSeleccionadas.length} jornada${jornadasSeleccionadas.length === 1 ? '' : 's'}`
+    const crearRendicionAdapter = useMemo(() => ({
+        ...crearRendicionesMultiples,
+        mutate: (payload, options) => crearRendicionesMultiples.mutate({
+            jornada_ids: jornadaIds,
+            destinatario_id: payload.destinatario_id,
+            monto_rendido: payload.monto_rendido,
+            observacion: payload.observacion,
+        }, options),
+    }), [crearRendicionesMultiples, jornadaIds])
+
+    if (pendienteQuery.isLoading || !pendienteQuery.data) {
+        return (
+            <Modal title={titulo} onClose={onClose} maxWidth="620px" closeOnBackdrop={false}>
+                <div className="flex-center" style={{ padding: 40 }}>
+                    <div className="spinner" style={{ width: 28, height: 28 }} />
+                </div>
+            </Modal>
+        )
+    }
+
+    if (pendienteQuery.isError) {
+        return (
+            <Modal title={titulo} onClose={onClose} maxWidth="780px" closeOnBackdrop={false}>
+                <div style={{ color: '#f87171', fontSize: '0.9rem', lineHeight: 1.5 }}>
+                    {formatApiError(pendienteQuery.error, 'No se pudo cargar el detalle consolidado de las jornadas seleccionadas.')}
+                </div>
+            </Modal>
+        )
+    }
+
+    return (
+        <RendirModalInner
+            pendiente={pendienteQuery.data}
+            crearRendicion={crearRendicionAdapter}
+            onClose={onClose}
+            titulo={titulo}
+        />
+    )
+}
+
+function RendirJornadasMultiplesBenchModal({
+    jornadaIds = [],
+    jornadas = [],
+    onClose,
+    benchEnabled = false,
+    benchT0Ref,
+    setBenchRows,
+    onBenchMutationSuccess,
+}) {
+    const crearRendicionesMultiples = useCrearRendicionesJornadasMultiplesHistorial()
+    const pendienteQuery = usePendienteRendicionJornadasMultiples(jornadaIds, { enabled: jornadaIds.length > 0 })
+    const jornadasSeleccionadas = useMemo(
+        () => (jornadas || []).filter(item => jornadaIds.includes(item.jornada_id)),
+        [jornadas, jornadaIds],
+    )
+    const titulo = `Rendir ${jornadasSeleccionadas.length} jornada${jornadasSeleccionadas.length === 1 ? '' : 's'}`
+
+    useEffect(() => {
+        if (!jornadaIds.length) return
+        markJornadaBenchStep(benchEnabled, benchT0Ref, setBenchRows, '03. Solicitud detalle consolidado')
+    }, [benchEnabled, benchT0Ref, jornadaIds, setBenchRows])
+
+    useEffect(() => {
+        if (pendienteQuery.isSuccess) {
+            markJornadaBenchStep(benchEnabled, benchT0Ref, setBenchRows, '04. Detalle consolidado cargado')
+        }
+    }, [benchEnabled, benchT0Ref, pendienteQuery.isSuccess, setBenchRows])
+
+    const crearRendicionAdapter = useMemo(() => ({
+        ...crearRendicionesMultiples,
+        mutate: (payload, options) => {
+            markJornadaBenchStep(benchEnabled, benchT0Ref, setBenchRows, '05. Confirmacion enviada')
+            return crearRendicionesMultiples.mutate({
+                jornada_ids: jornadaIds,
+                destinatario_id: payload.destinatario_id,
+                monto_rendido: payload.monto_rendido,
+                observacion: payload.observacion,
+            }, {
+                ...options,
+                onSuccess: result => {
+                    markJornadaBenchStep(benchEnabled, benchT0Ref, setBenchRows, '06. Backend registro rendiciones')
+                    onBenchMutationSuccess?.()
+                    options?.onSuccess?.(result)
+                },
+                onError: error => {
+                    markJornadaBenchStep(benchEnabled, benchT0Ref, setBenchRows, '06. Error al registrar rendiciones')
+                    options?.onError?.(error)
+                },
+            })
+        },
+    }), [benchEnabled, benchT0Ref, crearRendicionesMultiples, jornadaIds, onBenchMutationSuccess, setBenchRows])
+
+    if (pendienteQuery.isLoading || !pendienteQuery.data) {
+        return (
+            <Modal title={titulo} onClose={onClose} maxWidth="620px" closeOnBackdrop={false}>
+                <div className="flex-center" style={{ padding: 40 }}>
+                    <div className="spinner" style={{ width: 28, height: 28 }} />
+                </div>
+            </Modal>
+        )
+    }
+
+    if (pendienteQuery.isError) {
+        return (
+            <Modal title={titulo} onClose={onClose} maxWidth="780px" closeOnBackdrop={false}>
+                <div style={{ color: '#f87171', fontSize: '0.9rem', lineHeight: 1.5 }}>
+                    {formatApiError(pendienteQuery.error, 'No se pudo cargar el detalle consolidado de las jornadas seleccionadas.')}
+                </div>
+            </Modal>
+        )
+    }
+
+    return (
+        <RendirModalInner
+            pendiente={pendienteQuery.data}
+            crearRendicion={crearRendicionAdapter}
+            onClose={onClose}
+            titulo={titulo}
+        />
+    )
+}
+
+function LegacyRendirJornadasMultiplesModal({ jornadas = [], onClose }) {
+    const crearRendicionesMultiples = useCrearRendicionesJornadasMultiplesHistorial()
+    const { data: destinatariosRaw = [], isLoading: loadingDest } = useDestinatariosRendicionCatalog()
+    const destinatariosActivos = useMemo(
+        () => (destinatariosRaw || []).filter(item => item.activo),
+        [destinatariosRaw],
+    )
+    const jornadasPendientes = useMemo(
+        () => (jornadas || []).filter(item => Math.abs(Number(item?.pendiente_rendicion || 0)) > 0.009),
+        [jornadas],
+    )
+    const [selectedIds, setSelectedIds] = useState(() => jornadasPendientes.map(item => item.jornada_id))
+    const [destinatarioId, setDestinatarioId] = useState('')
+    const [observacion, setObservacion] = useState('')
+    const [submitMessage, setSubmitMessage] = useState('')
+
+    useEffect(() => {
+        setSelectedIds(jornadasPendientes.map(item => item.jornada_id))
+        setSubmitMessage('')
+    }, [jornadasPendientes])
+
+    const selectedJornadas = useMemo(
+        () => jornadasPendientes.filter(item => selectedIds.includes(item.jornada_id)),
+        [jornadasPendientes, selectedIds],
+    )
+    const resumenMultiplesQuery = useResumenRendicionesJornadasMultiples(selectedIds, { enabled: selectedIds.length > 0 })
+    const resumenMultiples = resumenMultiplesQuery.data
+    const desgloseMedios = resumenMultiples?.desglose_medios || []
+    const totalSeleccionado = Number(resumenMultiples?.total_pendiente_rendicion || 0)
+    const totalEfectivo = useMemo(
+        () => desgloseMedios
+            .filter(item => item.medio === 'EFECTIVO')
+            .reduce((acc, item) => acc + Number(item.neto || 0), 0),
+        [desgloseMedios],
+    )
+    const totalBancos = useMemo(
+        () => desgloseMedios
+            .filter(item => ['TARJETA', 'TRANSFERENCIA', 'BANCO', 'DEPOSITO', 'CHEQUE'].includes(item.medio))
+            .reduce((acc, item) => acc + Number(item.neto || 0), 0),
+        [desgloseMedios],
+    )
+    const totalPendienteCobro = Number(resumenMultiples?.cuentas_por_cobrar_dia?.total_pendiente || 0)
+    const allSelected = Boolean(jornadasPendientes.length) && selectedIds.length === jornadasPendientes.length
+
+    const toggleSelected = jornadaId => {
+        setSubmitMessage('')
+        setSelectedIds(prev => (
+            prev.includes(jornadaId)
+                ? prev.filter(id => id !== jornadaId)
+                : [...prev, jornadaId]
+        ))
+    }
+
+    const toggleSelectAll = () => {
+        setSubmitMessage('')
+        setSelectedIds(allSelected ? [] : jornadasPendientes.map(item => item.jornada_id))
+    }
+
+    const handleSubmit = event => {
+        event.preventDefault()
+        const destinatarioNum = Number(destinatarioId)
+        if (!destinatarioNum || !selectedJornadas.length) return
+
+        crearRendicionesMultiples.mutate(
+            {
+                destinatario_id: destinatarioNum,
+                observacion: observacion.trim() || null,
+                jornada_ids: selectedIds,
+            },
+            {
+                onSuccess: result => {
+                    setSubmitMessage(`Se registraron ${Array.isArray(result) ? result.length : 0} rendiciones correctamente.`)
+                    onClose()
+                },
+                onError: error => {
+                    setSubmitMessage(formatApiError(error, 'No se pudieron registrar las rendiciones seleccionadas.'))
+                },
+            },
+        )
+    }
+
+    return (
+        <Modal title="Rendir varias jornadas" onClose={onClose} maxWidth="980px" closeOnBackdrop={false}>
+            <form onSubmit={handleSubmit}>
+                <div className="card" style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <div>
+                            <div style={{ fontWeight: 700 }}>Jornadas pendientes de cierre</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+                                Selecciona las jornadas a rendir. Cada una se registrará con su pendiente actual como monto rendido.
+                            </div>
+                        </div>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={toggleSelectAll} disabled={!jornadasPendientes.length || crearRendicionesMultiples.isPending}>
+                            {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                        </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                        <span>Jornadas visibles: <strong>{jornadasPendientes.length}</strong></span>
+                        <span>Seleccionadas: <strong>{selectedJornadas.length}</strong></span>
+                        <span>Total a rendir: <strong style={{ color: 'var(--warning)' }}>{fmtGs(totalSeleccionado)}</strong></span>
+                    </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
+                    <EstadoCard label="Total a Rendir" value={resumenMultiplesQuery.isLoading ? '...' : fmtGs(totalSeleccionado)} color="var(--warning)" />
+                    <EstadoCard label="Efectivo" value={resumenMultiplesQuery.isLoading ? '...' : fmtGs(totalEfectivo)} color="var(--success)" />
+                    <EstadoCard label="Bancos / Tarjeta / Transferencia" value={resumenMultiplesQuery.isLoading ? '...' : fmtGs(totalBancos)} color="var(--info)" />
+                    <EstadoCard label="Pendiente de Cobro" value={resumenMultiplesQuery.isLoading ? '...' : fmtGs(totalPendienteCobro)} color="#f59e0b" />
+                </div>
+
+                <div className="card" style={{ marginBottom: 16 }}>
+                    {resumenMultiplesQuery.isLoading ? (
+                        <div className="flex-center" style={{ padding: 18 }}>
+                            <div className="spinner" style={{ width: 22, height: 22 }} />
+                        </div>
+                    ) : resumenMultiplesQuery.isError ? (
+                        <div style={{ color: '#f87171', fontSize: '0.84rem', lineHeight: 1.45 }}>
+                            {formatApiError(resumenMultiplesQuery.error, 'No se pudo calcular el resumen consolidado.')}
+                        </div>
+                    ) : (
+                        <div style={{ display: 'grid', gap: 8, fontSize: '0.84rem' }}>
+                            <div>Movimientos a rendir: <strong>{resumenMultiples?.cantidad_movimientos || 0}</strong></div>
+                            <div>Ingresos incluidos: <strong style={{ color: 'var(--success)' }}>{fmtGs(resumenMultiples?.total_ingresos || 0)}</strong></div>
+                            <div>Egresos incluidos: <strong style={{ color: 'var(--danger)' }}>{fmtGs(resumenMultiples?.total_egresos || 0)}</strong></div>
+                            <div>Ventas pendientes de cobro: <strong>{resumenMultiples?.cuentas_por_cobrar_dia?.cantidad_ventas || 0}</strong></div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="table-wrapper" style={{ overflow: 'auto', marginBottom: 16, maxHeight: 360 }}>
+                    <table className="table">
+                        <thead>
+                            <tr>
+                                <th style={{ width: 48, textAlign: 'center' }}>
+                                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} disabled={!jornadasPendientes.length || crearRendicionesMultiples.isPending} />
+                                </th>
+                                <th>Fecha</th>
+                                <th>Estado</th>
+                                <th style={{ textAlign: 'right' }}>Pendiente</th>
+                                <th style={{ textAlign: 'center' }}>Mov. pend.</th>
+                                <th style={{ textAlign: 'right' }}>Ya rendido</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {jornadasPendientes.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+                                        No hay jornadas con pendiente de rendición para procesar en lote.
+                                    </td>
+                                </tr>
+                            ) : (
+                                jornadasPendientes.map(jornada => (
+                                    <tr key={`multi-rendir-${jornada.jornada_id}`}>
+                                        <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.includes(jornada.jornada_id)}
+                                                onChange={() => toggleSelected(jornada.jornada_id)}
+                                                disabled={crearRendicionesMultiples.isPending}
+                                            />
+                                        </td>
+                                        <td style={{ whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{jornada.fecha}</td>
+                                        <td style={{ whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{jornada.estado}</td>
+                                        <td style={{ textAlign: 'right', color: (jornada.pendiente_rendicion || 0) < 0 ? 'var(--danger)' : 'var(--warning)', fontWeight: 700, verticalAlign: 'middle' }}>
+                                            {fmtGs(jornada.pendiente_rendicion)}
+                                        </td>
+                                        <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>{jornada.cantidad_movimientos_pendientes || 0}</td>
+                                        <td style={{ textAlign: 'right', color: 'var(--info)', fontWeight: 700, verticalAlign: 'middle' }}>
+                                            {fmtGs(jornada.total_rendido)}
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label">Rendido a *</label>
+                    <select
+                        className="form-input"
+                        value={destinatarioId}
+                        onChange={event => setDestinatarioId(event.target.value)}
+                        required
+                        disabled={loadingDest || crearRendicionesMultiples.isPending}
+                    >
+                        <option value="">{loadingDest ? 'Cargando destinatarios...' : 'Seleccionar destinatario...'}</option>
+                        {destinatariosActivos.map(item => (
+                            <option key={item.id} value={String(item.id)}>{item.nombre}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label">Observación general</label>
+                    <textarea
+                        className="form-input"
+                        rows={3}
+                        value={observacion}
+                        onChange={event => setObservacion(event.target.value)}
+                        placeholder="Opcional. Se aplicará a todas las rendiciones creadas en este lote."
+                        disabled={crearRendicionesMultiples.isPending}
+                        style={{ resize: 'vertical' }}
+                    />
+                </div>
+
+                {submitMessage ? (
+                    <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#fbbf24' }}>
+                        {submitMessage}
+                    </div>
+                ) : null}
+
+                {crearRendicionesMultiples.isError && !submitMessage ? (
+                    <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: '0.82rem', color: '#f87171' }}>
+                        {formatApiError(crearRendicionesMultiples.error, 'No se pudieron registrar las rendiciones seleccionadas.')}
+                    </div>
+                ) : null}
+
+                <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onClose} disabled={crearRendicionesMultiples.isPending}>Cancelar</button>
+                    <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={crearRendicionesMultiples.isPending || resumenMultiplesQuery.isLoading || !selectedJornadas.length || !destinatarioId || !destinatariosActivos.length}
+                    >
+                        {crearRendicionesMultiples.isPending ? 'Registrando rendiciones...' : `Rendir ${selectedJornadas.length} jornada${selectedJornadas.length === 1 ? '' : 's'}`}
+                    </button>
+                </div>
+            </form>
+        </Modal>
+    )
+}
+
 function VerRendicionModal({ rendicionId, onClose, puedeEditar, onEditar }) {
     const { data: rendicion, isLoading, isError, error } = useRendicionDetalle(rendicionId)
 
@@ -1306,7 +1799,10 @@ export default function JornadaRendicionesPage() {
     const [fechaJornadaHistorial, setFechaJornadaHistorial] = useState('')
     const [jornadaHistorialSeleccionada, setJornadaHistorialSeleccionada] = useState(null)
     const [jornadaVerRendiciones, setJornadaVerRendiciones] = useState(null)
+    const [showRendirMultiplesModal, setShowRendirMultiplesModal] = useState(false)
+    const [jornadasMultiplesSeleccionadas, setJornadasMultiplesSeleccionadas] = useState([])
     const [filtroMovimientosJornada, setFiltroMovimientosJornada] = useState('TODOS')
+    const jornadasMultiplesBenchRef = useRef(null)
 
     const jornadaLoadT0 = useRef(null)
     const [jornadaLoadMs, setJornadaLoadMs] = useState({})
@@ -1521,6 +2017,29 @@ export default function JornadaRendicionesPage() {
     }, [movimientosDetalle, ventasPendientesJornada.length])
     const historialRendicionesFiltradas = historialRendiciones
     const rendicionesDeJornadaSeleccionada = rendicionesJornadaData || []
+    const jornadasPendientesMultiples = useMemo(
+        () => historialJornadas.filter(jornada => Math.abs(Number(jornada?.pendiente_rendicion || 0)) > 0.009),
+        [historialJornadas],
+    )
+
+    useEffect(() => {
+        const bench = jornadasMultiplesBenchRef.current
+        if (!bench || !historialJornadasQuery.isSuccess) return
+        const rows = Array.isArray(historialJornadas) ? historialJornadas : []
+        const ready = bench.selectedIds.every(id => {
+            const current = rows.find(item => Number(item.jornada_id) === Number(id))
+            const previous = bench.beforeById[id]
+            if (!current || !previous) return false
+            return (
+                Number(current.cantidad_rendiciones || 0) > Number(previous.cantidad_rendiciones || 0)
+                || Math.abs(Number(current.total_rendido || 0) - Number(previous.total_rendido || 0)) > 0.009
+                || Math.abs(Number(current.pendiente_rendicion || 0) - Number(previous.pendiente_rendicion || 0)) > 0.009
+            )
+        })
+        if (!ready) return
+        markJornadaBenchStep(showJornadaLoadBench, jornadaLoadT0, setJornadaLoadMs, '07. Historial jornadas actualizado')
+        jornadasMultiplesBenchRef.current = null
+    }, [historialJornadas, historialJornadasQuery.isSuccess, setJornadaLoadMs, showJornadaLoadBench])
 
     const handleCrearCorte = () => {
         crearCorte.mutate()
@@ -1763,7 +2282,7 @@ export default function JornadaRendicionesPage() {
                     <div className="card" style={{ marginBottom: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                             <Wallet size={18} style={{ color: '#f59e0b' }} />
-                            <div style={{ fontWeight: 700 }}>Cuentas a cobrar del dÃ­a</div>
+                            <div style={{ fontWeight: 700 }}>Cuentas a cobrar del día</div>
                         </div>
                         <div style={{ display: 'grid', gap: 8, fontSize: '0.86rem' }}>
                             <div>Saldo pendiente: <strong style={{ color: '#f59e0b' }}>{fmtGs(cuentasPorCobrar.total_pendiente || 0)}</strong></div>
@@ -2028,8 +2547,22 @@ export default function JornadaRendicionesPage() {
                         >
                             Limpiar búsqueda
                         </button>
+                        {puedeRendir && jornadasPendientesMultiples.length > 0 ? (
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => {
+                                    beginJornadaBenchFlow(showJornadaLoadBench, jornadaLoadT0, setJornadaLoadMs, '00. Click en Rendir múltiples')
+                                    markJornadaBenchStep(showJornadaLoadBench, jornadaLoadT0, setJornadaLoadMs, '01. Selector de jornadas abierto')
+                                    setShowRendirMultiplesModal(true)
+                                }}
+                            >
+                                <HandCoins size={16} /> Rendir múltiples
+                            </button>
+                        ) : null}
                         <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                             {fechaJornadaHistorial ? 'Mostrando la jornada de la fecha seleccionada.' : 'Mostrando las jornadas recientes.'}
+                            {puedeRendir && jornadasPendientesMultiples.length > 0 ? ` Hay ${jornadasPendientesMultiples.length} jornada(s) con pendiente para rendir en lote.` : ''}
                         </div>
                     </div>
                 )}
@@ -2247,6 +2780,43 @@ export default function JornadaRendicionesPage() {
             {showPosterioresModal && (
                 <MovimientosPosterioresModal onClose={() => setShowPosterioresModal(false)} />
             )}
+            {showRendirMultiplesModal && (
+                <RendirJornadasMultiplesSelectorModal
+                    jornadas={jornadasPendientesMultiples}
+                    onClose={() => setShowRendirMultiplesModal(false)}
+                    onConfirm={selectedIds => {
+                        markJornadaBenchStep(showJornadaLoadBench, jornadaLoadT0, setJornadaLoadMs, '02. Selección confirmada')
+                        setJornadasMultiplesSeleccionadas(selectedIds)
+                        setShowRendirMultiplesModal(false)
+                    }}
+                />
+            )}
+            {jornadasMultiplesSeleccionadas.length > 0 && (
+                <RendirJornadasMultiplesBenchModal
+                    jornadaIds={jornadasMultiplesSeleccionadas}
+                    jornadas={jornadasPendientesMultiples}
+                    onClose={() => setJornadasMultiplesSeleccionadas([])}
+                    benchEnabled={showJornadaLoadBench}
+                    benchT0Ref={jornadaLoadT0}
+                    setBenchRows={setJornadaLoadMs}
+                    onBenchMutationSuccess={() => {
+                        const beforeById = {}
+                        jornadasPendientesMultiples.forEach(item => {
+                            if (jornadasMultiplesSeleccionadas.includes(item.jornada_id)) {
+                                beforeById[item.jornada_id] = {
+                                    cantidad_rendiciones: Number(item.cantidad_rendiciones || 0),
+                                    total_rendido: Number(item.total_rendido || 0),
+                                    pendiente_rendicion: Number(item.pendiente_rendicion || 0),
+                                }
+                            }
+                        })
+                        jornadasMultiplesBenchRef.current = {
+                            selectedIds: [...jornadasMultiplesSeleccionadas],
+                            beforeById,
+                        }
+                    }}
+                />
+            )}
             {showRendirModal && (
                 <RendirModal
                     pendiente={pendiente}
@@ -2336,10 +2906,10 @@ export default function JornadaRendicionesPage() {
                         lineHeight: 1.4,
                     }}
                 >
-                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Diagnóstico: primera carga (Jornada)</div>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Diagnóstico de tiempos (Jornadas y rendiciones)</div>
                     <div style={{ color: 'var(--text-secondary)', marginBottom: 10 }}>
-                        T0 = montaje de esta pantalla. Cada fila: milisegundos hasta la <strong>primera</strong> respuesta OK de ese GET
-                        (en paralelo: panel-inicial + rendiciones; el historial de jornadas solo carga al abrir esa pestaña).
+                        T0 = inicio de la medición actual. Cada fila muestra los milisegundos acumulados hasta ese paso.
+                        Incluye la carga inicial y también el flujo de rendición múltiple hasta que el historial de jornadas se refresca y figure como rendido.
                         Si React Query tenía caché, puede figurar un número muy bajo.
                         El spinner principal espera sobre todo a <code style={{ fontSize: '0.72rem' }}>panel-inicial</code> (estado + cortes, una sola carga de movimientos en servidor).
                         Si abriste el panel después de cargar, pulsá <strong>F5</strong> para medir bien esta entrada al menú.
@@ -2359,7 +2929,7 @@ export default function JornadaRendicionesPage() {
                         <table className="table" style={{ fontSize: '0.74rem' }}>
                             <thead>
                                 <tr>
-                                    <th>Paso (GET)</th>
+                                    <th>Paso</th>
                                     <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>ms desde T0</th>
                                 </tr>
                             </thead>
@@ -2385,11 +2955,11 @@ export default function JornadaRendicionesPage() {
                             className="btn btn-secondary btn-sm"
                             onClick={() => {
                                 const payload = {
-                                    t0: 'montaje JornadaRendicionesPage',
-                                    primera_respuesta_ok_ms: jornadaLoadMs,
-                                    mas_lenta_ms: jornadaBenchMaxMs,
-                                    bloquea_spinner_inicial_ms: jornadaLoadMs['GET /caja/jornada/panel-inicial'] ?? null,
-                                    nota: 'panel-inicial agrupa estado+cortes (una carga de movimientos). Historial jornadas al elegir pestaña.',
+                                    t0: 'inicio de la medicion actual en JornadaRendicionesPage',
+                                    pasos_ms: jornadaLoadMs,
+                                    paso_mas_lento_ms: jornadaBenchMaxMs,
+                                    carga_inicial_panel_ms: jornadaLoadMs['GET /caja/jornada/panel-inicial'] ?? null,
+                                    nota: 'Incluye carga inicial y, si se ejecuta, el flujo de rendicion multiple hasta que el historial se actualiza.',
                                 }
                                 void navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
                             }}

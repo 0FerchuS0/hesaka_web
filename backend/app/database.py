@@ -325,6 +325,7 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         oft_column_info = {column["name"]: column for column in inspector.get_columns("clinica_consultas_oftalmologicas")}
         oft_columns = set(oft_column_info.keys())
         oft_additions = {
+            "anamnesis_id": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN anamnesis_id INTEGER REFERENCES clinica_cuestionarios(id)",
             "tipo_lente": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN tipo_lente VARCHAR(100)",
             "material_lente": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN material_lente VARCHAR(100)",
             "tratamientos": "ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN tratamientos VARCHAR(200)",
@@ -479,6 +480,8 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 connection.execute(text("ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN fecha_control DATE"))
             if "agenda_turno_id" not in oft_columns:
                 connection.execute(text("ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN agenda_turno_id INTEGER REFERENCES clinica_turnos(id)"))
+            if "anamnesis_id" not in oft_columns:
+                connection.execute(text("ALTER TABLE clinica_consultas_oftalmologicas ADD COLUMN anamnesis_id INTEGER REFERENCES clinica_cuestionarios(id)"))
 
     if "clinica_consultas_contactologia" in table_names:
         cont_columns = {column["name"] for column in inspector.get_columns("clinica_consultas_contactologia")}
@@ -487,6 +490,7 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 connection.execute(text("ALTER TABLE clinica_consultas_contactologia ADD COLUMN agenda_turno_id INTEGER REFERENCES clinica_turnos(id)"))
             
             cont_additions = {
+                "anamnesis_id": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN anamnesis_id INTEGER REFERENCES clinica_cuestionarios(id)",
                 "tipo_lente": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN tipo_lente VARCHAR(100)",
                 "diseno": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN diseno VARCHAR(100)",
                 "diagnostico": "ALTER TABLE clinica_consultas_contactologia ADD COLUMN diagnostico TEXT",

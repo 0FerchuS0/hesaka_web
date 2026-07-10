@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, ImagePlus, Save } from 'lucide-react'
 
 import { api, useAuth } from '../context/AuthContext'
+import { getEditionLabel, getReleaseNotes } from '../utils/appReleaseNotes'
+import { getTenantEditionSlug } from '../utils/appEdition'
 
 function sanitizeError(error, fallback) {
     return error?.response?.data?.detail || fallback
@@ -59,6 +61,8 @@ export default function ConfiguracionGeneralPage() {
 
     const role = String(user?.rol || '').toUpperCase()
     const canEdit = role === 'ADMIN'
+    const editionLabel = useMemo(() => getEditionLabel(getTenantEditionSlug()), [])
+    const releaseNotes = useMemo(() => getReleaseNotes(), [])
 
     const { data, isLoading, isError, error } = useQuery({
         queryKey: ['configuracion-general'],
@@ -391,6 +395,32 @@ export default function ConfiguracionGeneralPage() {
                             <li>Ese nombre crea o actualiza el canal principal.</li>
                             <li>Luego ya puedes trabajar con vendedores, canales adicionales, presupuestos y ventas.</li>
                         </ul>
+                    </div>
+
+                    <div className="card" style={{ border: '1px solid rgba(34,197,94,0.18)', background: 'linear-gradient(180deg, rgba(34,197,94,0.08), rgba(15,23,42,0.0))' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+                            <h3 style={{ fontSize: '1rem', margin: 0 }}>Version y cambios</h3>
+                            <span className="badge badge-green">{editionLabel}</span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 14 }}>
+                            Aqui puedes ver que edicion del sistema estas usando y las mejoras visibles mas recientes.
+                        </div>
+                        <div style={{ display: 'grid', gap: 12 }}>
+                            {releaseNotes.map(item => (
+                                <div key={`${item.version}-${item.date}`} style={{ border: '1px solid var(--border-color)', borderRadius: 12, padding: '12px 14px', background: 'rgba(2,6,23,0.18)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+                                        <strong>{item.title}</strong>
+                                        <span style={{ color: 'var(--primary-light)', fontWeight: 700 }}>v{item.version}</span>
+                                    </div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: 8 }}>
+                                        Actualizado el {item.date}
+                                    </div>
+                                    <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-muted)', lineHeight: 1.6, fontSize: '0.82rem' }}>
+                                        {item.changes.map(change => <li key={change}>{change}</li>)}
+                                    </ul>
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
                     {data && (

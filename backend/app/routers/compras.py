@@ -564,6 +564,17 @@ def _revertir_pago_compra(session, pago: PagoCompra):
                 banco.saldo_actual -= movimiento.monto
         session.delete(movimiento)
 
+    movimientos_caja = session.query(MovimientoCaja).filter(MovimientoCaja.pago_compra_id == pago.id).all()
+    if movimientos_caja:
+        caja = session.query(ConfiguracionCaja).first()
+        for movimiento in movimientos_caja:
+            if caja:
+                if movimiento.tipo == "EGRESO":
+                    caja.saldo_actual += movimiento.monto
+                else:
+                    caja.saldo_actual -= movimiento.monto
+            session.delete(movimiento)
+
 
 def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra, monto: float, metodo_pago: str, banco: Optional[Banco], fecha_pago: datetime):
     jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago")
@@ -623,16 +634,6 @@ def _anular_pago_compra(session, pago: PagoCompra):
         compra.saldo = min(float(compra.total or 0), float(compra.saldo or 0) + float(pago.monto or 0))
         _recalcular_estado_compra(session, compra)
     pago.estado = "ANULADO"
-
-    movimientos_caja = session.query(MovimientoCaja).filter(MovimientoCaja.pago_compra_id == pago.id).all()
-    caja = session.query(ConfiguracionCaja).first()
-    for movimiento in movimientos_caja:
-        if caja:
-            if movimiento.tipo == "EGRESO":
-                caja.saldo_actual += movimiento.monto
-            else:
-                caja.saldo_actual -= movimiento.monto
-        session.delete(movimiento)
 
 
 def _obtener_pagos_grupo(session, grupo_id: str) -> List[PagoCompra]:

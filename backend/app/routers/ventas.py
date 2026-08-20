@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import List, Optional
 from datetime import date, datetime
 from math import ceil
+import re
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from app.database import get_session_for_tenant
 from app.models.models import (
     Venta, Presupuesto, PresupuestoItem, Pago,
@@ -45,10 +47,17 @@ def _obtener_canal_venta_default(session):
 
 
 def _get_siguiente_codigo(session, modelo, prefijo: str) -> str:
-    """Genera el siguiente cÃ³digo correlativo (PRE0001, VEN0001, etc.)."""
-    from sqlalchemy import func
-    count = session.query(func.count(modelo.id)).scalar() or 0
-    return f"{prefijo}{str(count + 1).zfill(4)}"
+    """Genera el siguiente código correlativo según el mayor código existente."""
+    pattern = re.compile(rf"^{re.escape(prefijo)}(\d+)$")
+    max_num = 0
+
+    for (codigo_actual,) in session.query(modelo.codigo).filter(modelo.codigo.like(f"{prefijo}%")).all():
+        match = pattern.match(str(codigo_actual or "").strip())
+        if not match:
+            continue
+        max_num = max(max_num, int(match.group(1)))
+
+    return f"{prefijo}{max_num + 1:04d}"
 
 
 def _resolver_fecha_operacion(session, value: Optional[datetime] = None) -> datetime:

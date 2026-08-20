@@ -202,7 +202,7 @@ function PresupuestoRowActions({
 }
 
 // Sub-formulario de ítem — con buscador de producto y precio visible
-function ItemRow({ item, idx, onUpdate, onRemove, onApplyPaquete }) {
+function ItemRow({ item, idx, onUpdate, onRemove }) {
     const [buscarProd, setBuscarProd] = useState(item.busq || '')
     const [showList, setShowList] = useState(false)
     const [categoriaId, setCategoriaId] = useState('')
@@ -240,29 +240,6 @@ function ItemRow({ item, idx, onUpdate, onRemove, onApplyPaquete }) {
         retry: false,
         enabled: showList,
     })
-
-    const { data: paquetes = [] } = useQuery({
-        queryKey: ['paquetes-venta-select', buscarProd],
-        queryFn: () => {
-            const params = new URLSearchParams({ activo: 'true' })
-            if (buscarProd.trim()) params.append('buscar', buscarProd.trim())
-            return api.get(`/presupuestos/paquetes-venta?${params.toString()}`).then(r => r.data)
-        },
-        retry: false,
-        enabled: showList,
-    })
-
-    const seleccionarPaquete = (paquete) => {
-        if (!paquete.items || paquete.items.length === 0) return
-        flushSync(() => {
-            setBuscarProd(paquete.items[0].nombre)
-            setShowList(false)
-        })
-        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur()
-        }
-        onApplyPaquete(idx, paquete)
-    }
 
     const seleccionarProducto = (prod) => {
         flushSync(() => {
@@ -302,7 +279,7 @@ function ItemRow({ item, idx, onUpdate, onRemove, onApplyPaquete }) {
                     <input
                         className="form-input"
                         style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                        placeholder="Buscar producto o kit rápido..."
+                        placeholder="Buscar producto..."
                         value={buscarProd}
                         onFocus={() => setShowList(true)}
                         onChange={e => { setBuscarProd(e.target.value); setShowList(true); if (!e.target.value) onUpdate(idx, { ...item, busq: '', producto_id: '', precio_unitario: 0, costo_unitario: 0, costo_variable: false, subtotal: 0 }) }}
@@ -325,21 +302,7 @@ function ItemRow({ item, idx, onUpdate, onRemove, onApplyPaquete }) {
                                     ))}
                                 </select>
                             </div>
-                            {paquetes.map(paquete => (
-                                <div
-                                    key={`paquete-${paquete.id}`}
-                                    onClick={() => seleccionarPaquete(paquete)}
-                                    style={{ padding: '11px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(96,165,250,0.08)' }}
-                                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(96,165,250,0.18)'}
-                                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(96,165,250,0.08)'}
-                                >
-                                    <Zap size={14} style={{ color: '#60a5fa', flexShrink: 0 }} />
-                                    <span style={{ fontSize: '0.84rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                        <strong>Kit rápido:</strong> {paquete.nombre}
-                                    </span>
-                                </div>
-                            ))}
-                            {filtrados.length === 0 && paquetes.length === 0 ? (
+                            {filtrados.length === 0 ? (
                                 <div style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>Sin resultados</div>
                             ) : filtrados.map(prod => (
                                 <div
@@ -416,6 +379,36 @@ function ItemRow({ item, idx, onUpdate, onRemove, onApplyPaquete }) {
             <td style={{ fontWeight: 600, color: 'var(--primary-light)', whiteSpace: 'nowrap' }}>Gs. {fmt(item.subtotal)}</td>
             <td><button type="button" className="btn btn-danger btn-sm btn-icon" onClick={() => onRemove(idx)}><X size={13} /></button></td>
         </tr>
+    )
+}
+
+function KitRapidoSelect({ onSeleccionar }) {
+    const { data: paquetes = [] } = useQuery({
+        queryKey: ['paquetes-venta-todos'],
+        queryFn: () => api.get('/presupuestos/paquetes-venta?activo=true').then(r => r.data),
+    })
+    const [valor, setValor] = useState('')
+
+    if (paquetes.length === 0) return null
+
+    return (
+        <select
+            className="form-select btn-sm"
+            style={{ maxWidth: 220, borderColor: 'rgba(96,165,250,0.4)' }}
+            value={valor}
+            onChange={e => {
+                const id = e.target.value
+                setValor('')
+                if (!id) return
+                const paquete = paquetes.find(p => String(p.id) === id)
+                if (paquete) onSeleccionar(paquete)
+            }}
+        >
+            <option value="">⚡ Elegir kit rápido...</option>
+            {paquetes.map(paquete => (
+                <option key={paquete.id} value={paquete.id}>{paquete.nombre}</option>
+            ))}
+        </select>
     )
 }
 
@@ -1096,7 +1089,8 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const addItem = () => setItems(p => [...p, blankItem()])
     const updItem = (idx, v) => { const a = [...items]; a[idx] = v; setItems(a) }
     const remItem = idx => setItems(p => p.filter((_, i) => i !== idx))
-    const aplicarPaqueteEnFila = (idx, paquete) => {
+    const aplicarPaquete = (paquete) => {
+        if (!paquete.items || paquete.items.length === 0) return
         const refItem = ref => sanitizeItemFinancials({
             ...blankItem(),
             busq: ref.nombre,
@@ -1105,12 +1099,11 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             costo_unitario: ref.costo_variable ? 0 : (ref.costo || 0),
             costo_variable: ref.costo_variable,
         })
-        if (!paquete.items || paquete.items.length === 0) return
-        const nuevosItems = [...items]
-        nuevosItems[idx] = refItem(paquete.items[0])
-        const extras = paquete.items.slice(1).map(refItem)
-        nuevosItems.splice(idx + 1, 0, ...extras)
-        setItems(nuevosItems)
+        const filasNuevas = paquete.items.map(refItem)
+        setItems(p => {
+            const sinFilasVacias = p.filter(i => i.producto_id || i.busq)
+            return [...sinFilasVacias, ...filasNuevas]
+        })
     }
 
     const handleSubmit = e => {
@@ -1340,7 +1333,10 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
             <div style={{ marginBottom: 16 }}>
                 <div className="flex-between mb-16">
                     <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>Ítems del Presupuesto</p>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Agregar ítem</button>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <KitRapidoSelect onSeleccionar={aplicarPaquete} />
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Agregar ítem</button>
+                    </div>
                 </div>
                 <div className="table-container">
                     <table>
@@ -1349,7 +1345,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
                         </thead>
                         <tbody>
                             {items.map((item, idx) => (
-                                <ItemRow key={idx} item={item} idx={idx} onUpdate={updItem} onRemove={remItem} onApplyPaquete={aplicarPaqueteEnFila} />
+                                <ItemRow key={idx} item={item} idx={idx} onUpdate={updItem} onRemove={remItem} />
                             ))}
                         </tbody>
                     </table>

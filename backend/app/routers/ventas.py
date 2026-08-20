@@ -756,6 +756,7 @@ def convertir_presupuesto_a_venta(
     - Crea comisión automática si el presupuesto tiene referidor
     - Procesa los pagos iniciales con efectos en caja/banco
     """
+
     session = get_session_for_tenant(tenant_slug)
     try:
         pre = session.query(Presupuesto).filter(Presupuesto.id == pre_id).first()

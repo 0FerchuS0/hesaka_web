@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
-import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList, Clock } from 'lucide-react'
+import { FileText, Plus, Search, ShoppingBag, X, AlertCircle, ClipboardList, Clock, Zap } from 'lucide-react'
 import { useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
@@ -37,6 +37,14 @@ const formatDateTimeLocalValue = value => {
     return `${year}-${month}-${day}`
 }
 const buildDatePatchValue = value => (value ? `${value}T12:00:00` : null)
+function orderCategoriasItem(categories, parentId = null, level = 0) {
+    return categories
+        .filter(category => (category.categoria_padre_id ?? null) === parentId)
+        .flatMap(category => [
+            { ...category, nivel: level },
+            ...orderCategoriasItem(categories, category.id, level + 1),
+        ])
+}
 const addMonthsToDateInput = (baseValue, months) => {
     const baseDate = baseValue ? new Date(`${baseValue}T12:00:00`) : new Date()
     if (Number.isNaN(baseDate.getTime())) return ''
@@ -194,21 +202,67 @@ function PresupuestoRowActions({
 }
 
 // Sub-formulario de ítem — con buscador de producto y precio visible
-function ItemRow({ item, idx, onUpdate, onRemove }) {
+function ItemRow({ item, idx, onUpdate, onRemove, onApplyPaquete }) {
     const [buscarProd, setBuscarProd] = useState(item.busq || '')
     const [showList, setShowList] = useState(false)
+    const [categoriaId, setCategoriaId] = useState('')
+    const [proveedorId, setProveedorId] = useState('')
     const upd = (k, v) => onUpdate(idx, { ...item, [k]: v })
+
+    // Cuando un kit rápido inserta/reemplaza filas ajenas a esta instancia (splice en el array
+    // del padre), React reutiliza el componente por índice — hay que resincronizar el texto
+    // visible del buscador con el nombre real del producto que quedó en esa fila.
+    useEffect(() => {
+        setBuscarProd(item.busq || '')
+    }, [item.busq, item.producto_id])
+
     const p = { nombre: item.busq || buscarProd || '' }
+
+    const { data: categorias = [] } = useQuery({
+        queryKey: ['categorias'],
+        queryFn: () => api.get('/categorias/').then(r => r.data),
+    })
+    const { data: proveedores = [] } = useQuery({
+        queryKey: ['proveedores'],
+        queryFn: () => api.get('/proveedores/').then(r => r.data),
+    })
+    const categoriasOrdenadas = orderCategoriasItem(categorias)
+
     const { data: filtrados = [] } = useQuery({
-        queryKey: ['productos-select', buscarProd],
+        queryKey: ['productos-select', buscarProd, categoriaId, proveedorId],
         queryFn: () => {
             const params = new URLSearchParams({ page: '1', page_size: '30', solo_activos: 'true' })
             if (buscarProd.trim()) params.append('buscar', buscarProd.trim())
+            if (categoriaId) params.append('categoria_id', categoriaId)
+            if (proveedorId) params.append('proveedor_id', proveedorId)
             return api.get(`/productos/listado-optimizado?${params.toString()}`).then(r => r.data.items || [])
         },
         retry: false,
         enabled: showList,
     })
+
+    const { data: paquetes = [] } = useQuery({
+        queryKey: ['paquetes-venta-select', buscarProd],
+        queryFn: () => {
+            const params = new URLSearchParams({ activo: 'true' })
+            if (buscarProd.trim()) params.append('buscar', buscarProd.trim())
+            return api.get(`/presupuestos/paquetes-venta?${params.toString()}`).then(r => r.data)
+        },
+        retry: false,
+        enabled: showList,
+    })
+
+    const seleccionarPaquete = (paquete) => {
+        if (!paquete.items || paquete.items.length === 0) return
+        flushSync(() => {
+            setBuscarProd(paquete.items[0].nombre)
+            setShowList(false)
+        })
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur()
+        }
+        onApplyPaquete(idx, paquete)
+    }
 
     const seleccionarProducto = (prod) => {
         flushSync(() => {
@@ -248,16 +302,44 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                     <input
                         className="form-input"
                         style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                        placeholder="Buscar producto..."
+                        placeholder="Buscar producto o kit rápido..."
                         value={buscarProd}
                         onFocus={() => setShowList(true)}
                         onChange={e => { setBuscarProd(e.target.value); setShowList(true); if (!e.target.value) onUpdate(idx, { ...item, busq: '', producto_id: '', precio_unitario: 0, costo_unitario: 0, costo_variable: false, subtotal: 0 }) }}
                     />
                     {showList && (
-                        <div style={{ position: 'absolute', zIndex: 999, top: '100%', left: 0, minWidth: 380, background: '#1a1d27', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, maxHeight: 300, overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}
-                            onMouseDown={e => e.preventDefault()}
+                        <div style={{ position: 'absolute', zIndex: 999, top: '100%', left: 0, minWidth: 380, background: '#1a1d27', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, maxHeight: 340, overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}
+                            onMouseDown={e => { if (e.target.tagName !== 'SELECT') e.preventDefault() }}
                         >
-                            {filtrados.length === 0 ? (
+                            <div style={{ display: 'flex', gap: 4, padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <select className="form-select" style={{ flex: 1, padding: '4px 6px', fontSize: '0.74rem' }} value={categoriaId} onChange={e => setCategoriaId(e.target.value)}>
+                                    <option value="">Todas las categorías</option>
+                                    {categoriasOrdenadas.map(cat => (
+                                        <option key={cat.id} value={cat.id}>{'—'.repeat(cat.nivel)} {cat.nombre}</option>
+                                    ))}
+                                </select>
+                                <select className="form-select" style={{ flex: 1, padding: '4px 6px', fontSize: '0.74rem' }} value={proveedorId} onChange={e => setProveedorId(e.target.value)}>
+                                    <option value="">Todos los proveedores</option>
+                                    {proveedores.map(prov => (
+                                        <option key={prov.id} value={prov.id}>{prov.nombre}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            {paquetes.map(paquete => (
+                                <div
+                                    key={`paquete-${paquete.id}`}
+                                    onClick={() => seleccionarPaquete(paquete)}
+                                    style={{ padding: '11px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(96,165,250,0.08)' }}
+                                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(96,165,250,0.18)'}
+                                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(96,165,250,0.08)'}
+                                >
+                                    <Zap size={14} style={{ color: '#60a5fa', flexShrink: 0 }} />
+                                    <span style={{ fontSize: '0.84rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                        <strong>Kit rápido:</strong> {paquete.nombre}
+                                    </span>
+                                </div>
+                            ))}
+                            {filtrados.length === 0 && paquetes.length === 0 ? (
                                 <div style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>Sin resultados</div>
                             ) : filtrados.map(prod => (
                                 <div
@@ -1014,6 +1096,22 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
     const addItem = () => setItems(p => [...p, blankItem()])
     const updItem = (idx, v) => { const a = [...items]; a[idx] = v; setItems(a) }
     const remItem = idx => setItems(p => p.filter((_, i) => i !== idx))
+    const aplicarPaqueteEnFila = (idx, paquete) => {
+        const refItem = ref => sanitizeItemFinancials({
+            ...blankItem(),
+            busq: ref.nombre,
+            producto_id: ref.id,
+            precio_unitario: ref.precio_venta,
+            costo_unitario: ref.costo_variable ? 0 : (ref.costo || 0),
+            costo_variable: ref.costo_variable,
+        })
+        if (!paquete.items || paquete.items.length === 0) return
+        const nuevosItems = [...items]
+        nuevosItems[idx] = refItem(paquete.items[0])
+        const extras = paquete.items.slice(1).map(refItem)
+        nuevosItems.splice(idx + 1, 0, ...extras)
+        setItems(nuevosItems)
+    }
 
     const handleSubmit = e => {
         e.preventDefault()
@@ -1251,7 +1349,7 @@ function NuevoPresupuestoModal({ onClose, presupuesto, onBusyChange }) {
                         </thead>
                         <tbody>
                             {items.map((item, idx) => (
-                                <ItemRow key={idx} item={item} idx={idx} onUpdate={updItem} onRemove={remItem} />
+                                <ItemRow key={idx} item={item} idx={idx} onUpdate={updItem} onRemove={remItem} onApplyPaquete={aplicarPaqueteEnFila} />
                             ))}
                         </tbody>
                     </table>

@@ -37,6 +37,7 @@ const ProductosPage = lazy(() => import('./pages/ProductosPage'))
 const ProveedoresPage = lazy(() => import('./pages/ProveedoresPage'))
 const DestinatariosRendicionPage = lazy(() => import('./pages/DestinatariosRendicionPage'))
 const PlantillasWhatsappPage = lazy(() => import('./pages/PlantillasWhatsappPage'))
+const PaquetesVentaPage = lazy(() => import('./pages/PaquetesVentaPage'))
 const PresupuestosPage = lazy(() => import('./pages/PresupuestosPage'))
 const VentasPage = lazy(() => import('./pages/VentasPage'))
 const ComprasPage = lazy(() => import('./pages/ComprasPage'))
@@ -434,9 +435,10 @@ function AppLayout() {
                             <Route path="/atributos" element={<RoleRoute allowedRoles="catalogos"><AtributosPage /></RoleRoute>} />
                             <Route path="/marcas" element={<RoleRoute allowedRoles="catalogos"><MarcasPage /></RoleRoute>} />
                             <Route path="/productos" element={<RoleRoute allowedRoles="catalogos"><ProductosPage /></RoleRoute>} />
-                            <Route path="/proveedores" element={<RoleRoute allowedRoles="catalogos"><ProveedoresPage /></RoleRoute>} />
+                            <Route path="/proveedores" element={<RoleRoute allowedRoles="proveedores"><ProveedoresPage /></RoleRoute>} />
                             <Route path="/catalogos/destinatarios-rendicion" element={<RoleRoute allowedRoles="catalogos"><DestinatariosRendicionPage /></RoleRoute>} />
                             <Route path="/catalogos/plantillas-whatsapp" element={<RoleRoute allowedRoles="catalogos"><PlantillasWhatsappPage /></RoleRoute>} />
+                            <Route path="/catalogos/paquetes-venta" element={<RoleRoute allowedRoles="catalogos"><PaquetesVentaPage /></RoleRoute>} />
                             <Route path="/presupuestos" element={<RoleRoute allowedRoles="presupuestos"><PresupuestosPage /></RoleRoute>} />
                             <Route path="/ventas" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><VentasPage /></RouteErrorBoundary></RoleRoute>} />
                             <Route path="/ventas/ajustes" element={<RoleRoute allowedRoles="ventas"><RouteErrorBoundary><ReporteAjustesVentasPage /></RouteErrorBoundary></RoleRoute>} />

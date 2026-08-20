@@ -834,7 +834,8 @@ def _aplicar_items_compra(session, compra: Compra, items_data) -> dict[int, floa
         if item_data.producto_id:
             producto = session.query(Producto).filter(Producto.id == item_data.producto_id).first()
             if producto:
-                producto.stock_actual = (producto.stock_actual or 0) + item_data.cantidad
+                if producto.controla_stock:
+                    producto.stock_actual = (producto.stock_actual or 0) + item_data.cantidad
                 costo_real = (item_data.subtotal / item_data.cantidad) if item_data.cantidad > 0 else item_data.costo_unitario
                 costos_reales[item_data.producto_id] = costo_real
     return costos_reales
@@ -2010,7 +2011,7 @@ def editar_compra(
         for item in list(compra.items):
             if item.producto_id:
                 producto = session.query(Producto).filter(Producto.id == item.producto_id).first()
-                if producto:
+                if producto and producto.controla_stock:
                     producto.stock_actual = (producto.stock_actual or 0) - item.cantidad
             session.delete(item)
 
@@ -2100,7 +2101,7 @@ def eliminar_compra(
         for item in list(compra.items):
             if item.producto_id:
                 producto = session.query(Producto).filter(Producto.id == item.producto_id).first()
-                if producto:
+                if producto and producto.controla_stock:
                     producto.stock_actual = (producto.stock_actual or 0) - item.cantidad
 
         session.delete(compra)

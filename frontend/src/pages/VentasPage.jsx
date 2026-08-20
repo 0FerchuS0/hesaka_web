@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
+import DetalleVentaContent from '../components/DetalleVentaContent'
 import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye, MessageCircle, RotateCcw } from 'lucide-react'
 import { hasActionAccess } from '../utils/roles'
@@ -477,6 +478,116 @@ function AjusteVentaModal({ venta, onClose, onSaved, onBusyChange }) {
     )
 }
 
+function CorreccionVentaCerradaModal({ venta, onClose, onSaved, onBusyChange }) {
+    const [saving, setSaving] = useState(false)
+    const [error, setError] = useState('')
+    const [resultado, setResultado] = useState(null)
+    const [form, setForm] = useState({
+        motivo: 'Cambio de producto solicitado por el cliente',
+        observacion: '',
+        devolver_stock_original: true,
+    })
+    const confirmNavigation = usePendingNavigationGuard(saving, 'La correccion de venta cerrada aun se esta procesando. ¿Seguro que desea salir de esta vista?')
+    const cobrado = Math.max(0, Number(venta?.total || 0) - Number(venta?.saldo || 0))
+
+    useEffect(() => {
+        onBusyChange?.(saving)
+        return () => onBusyChange?.(false)
+    }, [onBusyChange, saving])
+
+    const submit = async (event) => {
+        event.preventDefault()
+        try {
+            setSaving(true)
+            setError('')
+            const response = await api.post(`/ventas/${venta.id}/corregir-cerrada`, form)
+            setResultado(response.data)
+            await onSaved?.(response.data)
+        } catch (err) {
+            setError(getErrorText(err, 'No se pudo generar la correccion de venta cerrada.'))
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    return (
+        <form onSubmit={submit}>
+            <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{venta.codigo}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.5 }}>
+                    Cliente: {venta.cliente_nombre || '-'}<br />
+                    Fecha: {fmtDate(venta.fecha)}<br />
+                    Total original: {gs(venta.total)}<br />
+                    Cobrado hasta hoy: {gs(cobrado)}<br />
+                    Saldo pendiente actual: {gs(venta.saldo)}
+                </div>
+            </div>
+
+            <div style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.18)', borderRadius: 12, padding: '14px 16px', marginBottom: 16, color: 'var(--text-secondary)', lineHeight: 1.5, fontSize: '0.9rem' }}>
+                Esta accion <strong>no anula ni borra</strong> la venta historica. El sistema va a generar un <strong>presupuesto nuevo de correccion</strong> para que trabajemos el cambio del producto sin tocar los cobros de la jornada original.
+            </div>
+
+            <div className="form-group">
+                <label className="form-label">Motivo</label>
+                <textarea
+                    className="form-input"
+                    rows={3}
+                    value={form.motivo}
+                    onChange={e => setForm(prev => ({ ...prev, motivo: e.target.value }))}
+                    placeholder="Ej: El cliente cambio de cristal / armazon"
+                    style={{ resize: 'vertical' }}
+                    required
+                />
+            </div>
+
+            <div className="form-group">
+                <label className="form-label">Observacion interna</label>
+                <textarea
+                    className="form-input"
+                    rows={3}
+                    value={form.observacion}
+                    onChange={e => setForm(prev => ({ ...prev, observacion: e.target.value }))}
+                    placeholder="Ej: Mantener anticipo ya cobrado y rehacer presupuesto"
+                    style={{ resize: 'vertical' }}
+                />
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16, cursor: 'pointer' }}>
+                <input
+                    type="checkbox"
+                    checked={form.devolver_stock_original}
+                    onChange={e => setForm(prev => ({ ...prev, devolver_stock_original: e.target.checked }))}
+                    disabled={saving}
+                    style={{ marginTop: 3 }}
+                />
+                <span style={{ color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                    Devolver al stock los productos del presupuesto original al generar la correccion.
+                </span>
+            </label>
+
+            {resultado && (
+                <div style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 10, padding: '12px 14px', marginBottom: 14, color: '#86efac', fontSize: '0.88rem', lineHeight: 1.45 }}>
+                    Presupuesto de correccion generado: <strong>{resultado.presupuesto_nuevo_codigo}</strong>.
+                    El credito ya cobrado quedo asentado en las observaciones del nuevo presupuesto para continuar el cambio sin tocar la jornada historica.
+                </div>
+            )}
+
+            {error && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, color: '#f87171', fontSize: '0.84rem' }}>
+                    {error}
+                </div>
+            )}
+
+            <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => { if (confirmNavigation()) onClose() }} disabled={saving}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                    {saving ? 'Generando correccion...' : 'Generar presupuesto de correccion'}
+                </button>
+            </div>
+        </form>
+    )
+}
+
 const downloadPDF = async (url) => {
     try {
         // Obtenemos el blob con el header Auth correspondiente
@@ -937,6 +1048,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
 }
 
 function ClienteFichaModal({ clienteId, onClose }) {
+    const [ventaDetalleId, setVentaDetalleId] = useState(null)
     const { data, isLoading, isError, error } = useQuery({
         queryKey: ['cliente-ficha', clienteId],
         queryFn: () => api.get(`/clientes/${clienteId}/ficha`).then(r => r.data),
@@ -986,11 +1098,12 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                 <th className="text-right">Total</th>
                                 <th className="text-right">Saldo</th>
                                 <th>Estado</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
                             {ventas_pendientes.length === 0 ? (
-                                <tr><td colSpan="5" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin deudas pendientes.</td></tr>
+                                <tr><td colSpan="6" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin deudas pendientes.</td></tr>
                             ) : ventas_pendientes.map(item => (
                                 <tr key={item.venta_id}>
                                     <td>{fmtDate(item.fecha)}</td>
@@ -998,6 +1111,11 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                     <td className="text-right">{gs(item.total)}</td>
                                     <td className="text-right" style={{ color: 'var(--warning)', fontWeight: 700 }}>{gs(item.saldo)}</td>
                                     <td>{item.estado}</td>
+                                    <td>
+                                        <button type="button" className="btn btn-secondary btn-sm btn-icon" title="Ver detalle de venta" onClick={() => setVentaDetalleId(item.venta_id)}>
+                                            <Eye size={13} />
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -1017,11 +1135,12 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                 <th className="text-right">Debito</th>
                                 <th className="text-right">Credito</th>
                                 <th className="text-right">Saldo</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
                             {movimientos.length === 0 ? (
-                                <tr><td colSpan="6" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin movimientos.</td></tr>
+                                <tr><td colSpan="7" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin movimientos.</td></tr>
                             ) : movimientos.map((mov, index) => (
                                 <tr key={`${mov.fecha}-${mov.tipo}-${index}`}>
                                     <td>{fmtDate(mov.fecha)}</td>
@@ -1030,6 +1149,13 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                     <td className="text-right">{gs(mov.debito)}</td>
                                     <td className="text-right">{gs(mov.credito)}</td>
                                     <td className="text-right" style={{ fontWeight: 700 }}>{gs(mov.saldo_acumulado)}</td>
+                                    <td>
+                                        {mov.venta_id && (
+                                            <button type="button" className="btn btn-secondary btn-sm btn-icon" title="Ver detalle de venta" onClick={() => setVentaDetalleId(mov.venta_id)}>
+                                                <Eye size={13} />
+                                            </button>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -1078,16 +1204,23 @@ function ClienteFichaModal({ clienteId, onClose }) {
             <div className="flex gap-12" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={onClose}>Cerrar</button>
             </div>
+
+            {ventaDetalleId && (
+                <Modal title="Detalle de Venta" onClose={() => setVentaDetalleId(null)} maxWidth="800px">
+                    <DetalleVentaContent ventaId={ventaDetalleId} onClose={() => setVentaDetalleId(null)} />
+                </Modal>
+            )}
         </div>
     )
 }
 
 // ─── Componente Menú de Acciones ───────────────────────────────────────────────
-function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onCorregirFecha, onAnular, onWhatsappRetiro, onWhatsappComprobante, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
+function VentasRowActions({ venta, onVerDetalle, onPagar, onVerFicha, onAjustar, onCorregirFecha, onCorregirCerrada, onAnular, onWhatsappRetiro, onWhatsappComprobante, qc, anularMutation, user, anularBusyId, whatsappBusyId }) {
     const [open, setOpen] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [menuPosition, setMenuPosition] = useState(null)
     const triggerRef = useRef(null)
+    const menuRef = useRef(null)
     const puedeCobrar = hasActionAccess(user, 'ventas.cobrar', 'ventas')
     const puedeAjustar = hasActionAccess(user, 'ventas.ajustar', 'ventas')
     const puedeEntrega = hasActionAccess(user, 'ventas.entrega', 'ventas')
@@ -1128,17 +1261,35 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onCorregirFec
         const updatePosition = () => {
             if (!triggerRef.current) return
             const rect = triggerRef.current.getBoundingClientRect()
+            const menuRect = menuRef.current?.getBoundingClientRect()
+            const viewportWidth = window.innerWidth
+            const viewportHeight = window.innerHeight
+            const padding = 12
+            const gap = 6
+            const menuWidth = Math.max(210, Math.ceil(menuRect?.width || 260))
+            const menuHeight = Math.ceil(menuRect?.height || 0)
+            const availableBelow = Math.max(180, viewportHeight - rect.bottom - gap - padding)
+            const availableAbove = Math.max(180, rect.top - gap - padding)
+            const shouldOpenAbove = menuHeight > 0 && menuHeight > availableBelow && availableAbove > availableBelow
+            let left = rect.right - menuWidth
+            left = Math.min(Math.max(padding, left), Math.max(padding, viewportWidth - menuWidth - padding))
+            let top = shouldOpenAbove
+                ? Math.max(padding, rect.top - gap - Math.min(menuHeight || availableAbove, availableAbove))
+                : Math.min(viewportHeight - padding - 180, rect.bottom + gap)
+
             setMenuPosition({
-                top: Math.max(12, rect.top - 6),
-                left: Math.max(12, rect.right),
+                top,
+                left,
+                maxHeight: shouldOpenAbove ? availableAbove : availableBelow,
             })
         }
 
-        updatePosition()
+        const raf = window.requestAnimationFrame(updatePosition)
         window.addEventListener('resize', updatePosition)
         window.addEventListener('scroll', updatePosition, true)
 
         return () => {
+            window.cancelAnimationFrame(raf)
             window.removeEventListener('resize', updatePosition)
             window.removeEventListener('scroll', updatePosition, true)
         }
@@ -1159,7 +1310,27 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onCorregirFec
             {open && menuPosition && (
                 <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setOpen(false)} />
-                    <div style={{ position: 'fixed', top: menuPosition.top, left: menuPosition.left, transform: 'translate(-100%, -100%)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', padding: '4px 0', minWidth: 210, zIndex: 100 }}>
+                    <div
+                        ref={menuRef}
+                        style={{
+                            position: 'fixed',
+                            top: menuPosition.top,
+                            left: menuPosition.left,
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 8,
+                            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                            padding: '4px 0',
+                            minWidth: 210,
+                            maxWidth: 280,
+                            maxHeight: menuPosition.maxHeight,
+                            overflowY: 'auto',
+                            zIndex: 100,
+                        }}
+                    >
+                        <button className="dropdown-item" onClick={() => handleAction(() => onVerDetalle(venta))} disabled={actionBusy}>
+                            <Eye size={14} style={{ marginRight: 8 }} /> Ver Detalles Venta
+                        </button>
                         <button className="dropdown-item" onClick={() => handleAction(() => onVerFicha(venta))} disabled={actionBusy}>
                             <Eye size={14} style={{ marginRight: 8 }} /> Ficha cliente
                         </button>
@@ -1191,7 +1362,13 @@ function VentasRowActions({ venta, onPagar, onVerFicha, onAjustar, onCorregirFec
                                 <Settings size={14} style={{ marginRight: 8 }} /> Ajustar venta
                             </button>
                         )}
-                        {(puedeEntrega || puedeAnular) && <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />}
+                        {(puedeAjustar || puedeEntrega || puedeAnular) && <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />}
+
+                        {puedeAjustar && venta.presupuesto_id && venta.estado !== 'ANULADA' && (
+                            <button className="dropdown-item" onClick={() => handleAction(() => onCorregirCerrada(venta))} disabled={actionBusy}>
+                                <RotateCcw size={14} style={{ marginRight: 8 }} /> Corregir venta cerrada
+                            </button>
+                        )}
 
                         {puedeEntrega && venta.estado !== 'ANULADA' && venta.estado_entrega !== 'ENTREGADO' && (
                             <button className="dropdown-item" style={{ color: 'var(--success)' }} onClick={() => handleAction(() => toggleEntrega.mutate('ENTREGADO'))} disabled={actionBusy}>
@@ -1235,9 +1412,12 @@ export default function VentasPage() {
     const [soloPendientes, setSoloPendientes] = useState(false)
     const [ventaPagos, setVentaPagos] = useState(null)
     const [ventaAjuste, setVentaAjuste] = useState(null)
+    const [ventaCorreccion, setVentaCorreccion] = useState(null)
     const [clienteFichaId, setClienteFichaId] = useState(null)
+    const [ventaDetalle, setVentaDetalle] = useState(null)
     const [ventaPagosModalBusy, setVentaPagosModalBusy] = useState(false)
     const [ventaAjusteModalBusy, setVentaAjusteModalBusy] = useState(false)
+    const [ventaCorreccionModalBusy, setVentaCorreccionModalBusy] = useState(false)
     const [ventaFecha, setVentaFecha] = useState(null)
     const [ventaFechaModalBusy, setVentaFechaModalBusy] = useState(false)
     const [seleccionadas, setSeleccionadas] = useState([])
@@ -1258,7 +1438,7 @@ export default function VentasPage() {
     const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
     const { data: whatsappTemplates = [] } = useWhatsappTemplatesCatalog()
     const actualizarWhatsappTemplate = useActualizarWhatsappTemplate()
-    const confirmPageNavigation = usePendingNavigationGuard(Boolean(pdfConjuntoBusy || anularBusyId), 'Hay una accion de venta aun en proceso. ¿Seguro que desea salir de esta vista?')
+    const confirmPageNavigation = usePendingNavigationGuard(Boolean(pdfConjuntoBusy || anularBusyId || ventaCorreccionModalBusy), 'Hay una accion de venta aun en proceso. ¿Seguro que desea salir de esta vista?')
 
     useEffect(() => {
         const retiroTemplate = getWhatsappTemplateByCode(whatsappTemplates, RETIRO_TEMPLATE_CODE, DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
@@ -1594,9 +1774,11 @@ export default function VentasPage() {
                                                 venta={v}
                                                 onPagar={setVentaPagos}
                                                 onAjustar={setVentaAjuste}
+                                                onCorregirCerrada={setVentaCorreccion}
                                                 onCorregirFecha={setVentaFecha}
                                                 onWhatsappRetiro={abrirWhatsappRetiro}
                                                 onWhatsappComprobante={abrirWhatsappComprobante}
+                                                onVerDetalle={setVentaDetalle}
                                                 onVerFicha={(venta) => setClienteFichaId(venta.cliente_id)}
                                                 onAnular={(ventaId) => {
                                                     setAnularBusyId(ventaId)
@@ -1658,6 +1840,29 @@ export default function VentasPage() {
                     />
                 </Modal>
             )}
+            {ventaCorreccion && (
+                <Modal
+                    title={`Corregir venta cerrada: ${ventaCorreccion.codigo}`}
+                    onClose={() => setVentaCorreccion(null)}
+                    maxWidth="720px"
+                    closeDisabled={ventaCorreccionModalBusy}
+                    onCloseAttempt={() => window.alert('La correccion de venta cerrada aun se esta procesando. Espera a que termine antes de cerrar.')}
+                >
+                    <CorreccionVentaCerradaModal
+                        venta={ventaCorreccion}
+                        onClose={() => setVentaCorreccion(null)}
+                        onBusyChange={setVentaCorreccionModalBusy}
+                        onSaved={async () => {
+                            await Promise.all([
+                                qc.invalidateQueries(['ventas']),
+                                qc.invalidateQueries(['ventas-optimizado']),
+                                qc.invalidateQueries(['presupuestos']),
+                                qc.invalidateQueries(['presupuestos-optimizado']),
+                            ])
+                        }}
+                    />
+                </Modal>
+            )}
             {ventaFecha && (
                 <Modal
                     title={`Corregir fecha: ${ventaFecha.codigo}`}
@@ -1672,6 +1877,11 @@ export default function VentasPage() {
             {clienteFichaId && (
                 <Modal title="Ficha de Cliente" onClose={() => setClienteFichaId(null)} maxWidth="980px">
                     <ClienteFichaModal clienteId={clienteFichaId} onClose={() => setClienteFichaId(null)} />
+                </Modal>
+            )}
+            {ventaDetalle && (
+                <Modal title={`Detalle de Venta: ${ventaDetalle.codigo}`} onClose={() => setVentaDetalle(null)} maxWidth="800px">
+                    <DetalleVentaContent ventaId={ventaDetalle.id} onClose={() => setVentaDetalle(null)} />
                 </Modal>
             )}
             {whatsappRetiro && (

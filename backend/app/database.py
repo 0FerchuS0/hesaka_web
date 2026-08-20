@@ -151,6 +151,10 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         tablas_catalogo_comercial.append(models.PlantillaWhatsapp.__table__)
     if "rendiciones_jornada_financiera" not in table_names:
         tablas_catalogo_comercial.append(models.RendicionJornadaFinanciera.__table__)
+    if "paquetes_venta" not in table_names:
+        tablas_catalogo_comercial.append(models.PaqueteVenta.__table__)
+    if "paquete_venta_items" not in table_names:
+        tablas_catalogo_comercial.append(models.PaqueteVentaItem.__table__)
     if tablas_catalogo_comercial:
         Base.metadata.create_all(bind=engine, tables=tablas_catalogo_comercial)
         inspector = inspect(engine)
@@ -161,6 +165,14 @@ def ensure_tenant_schema(engine, tenant_slug: str):
         with engine.begin() as connection:
             if "fecha_nacimiento" not in cliente_columns:
                 connection.execute(text("ALTER TABLE clientes ADD COLUMN fecha_nacimiento DATE"))
+
+    if "productos" in table_names:
+        producto_columns = {column["name"] for column in inspector.get_columns("productos")}
+        with engine.begin() as connection:
+            if "requiere_laboratorio" not in producto_columns:
+                connection.execute(text("ALTER TABLE productos ADD COLUMN requiere_laboratorio BOOLEAN DEFAULT TRUE"))
+            if "controla_stock" not in producto_columns:
+                connection.execute(text("ALTER TABLE productos ADD COLUMN controla_stock BOOLEAN DEFAULT TRUE"))
 
     if "presupuestos" in table_names:
         presupuesto_columns = {column["name"] for column in inspector.get_columns("presupuestos")}

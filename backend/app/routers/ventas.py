@@ -13,19 +13,22 @@ from app.models.models import (
     Venta, Presupuesto, PresupuestoItem, Pago,
     Cliente, ConfiguracionCaja, MovimientoCaja, MovimientoBanco,
     Banco, Comision, Referidor, Producto, CompraDetalle, AjusteVenta,
-    Vendedor, CanalVenta, ConfiguracionEmpresa
+    Vendedor, CanalVenta, ConfiguracionEmpresa, CorreccionVentaCerrada,
+    PaqueteVenta, PaqueteVentaItem
 )
 from app.utils.auth import get_current_user, require_action
 from app.utils.configuracion_general import obtener_canal_principal
 from app.middleware.tenant import get_tenant_slug
 from app.schemas.schemas import (
     VentaOut, VentaCreate, PresupuestoOut, PresupuestoCreate,
-    PagoCreate, PagoOut, PagoMultipleCreate, PagoMultipleItem, GrupoPagoOut,
+    PagoCreate, PagoOut, PagoMultipleCreate, PagoMultipleItem, GrupoPagoOut, VentaItemOut,
     VentaListItemOut, VentaListResponseOut,
     PresupuestoListItemOut, PresupuestoListResponseOut,
     VentasPdfMultipleRequest, AjusteVentaCreate, AjusteVentaUpdate,
     AjusteVentaOut, AjusteVentaListResponseOut, PresupuestoAsignacionComercialIn,
-    PresupuestoFechaUpdate, VentaFechaUpdate,
+    PresupuestoFechaUpdate, VentaFechaUpdate, CorreccionVentaCerradaCreate,
+    CorreccionVentaCerradaOut,
+    PaqueteVentaIn, PaqueteVentaOut, PaqueteVentaProductoRefOut,
 )
 from fastapi.responses import StreamingResponse
 from app.utils.pdf_recibos_venta import (
@@ -46,8 +49,132 @@ def _obtener_canal_venta_default(session):
     return obtener_canal_principal(session)
 
 
+# ─── Paquetes de venta (kits rápidos para armar presupuestos) ──────────────────
+
+def _build_paquete_venta_out(paquete: PaqueteVenta) -> PaqueteVentaOut:
+    return PaqueteVentaOut(
+        id=paquete.id,
+        nombre=paquete.nombre,
+        activo=paquete.activo,
+        items=[PaqueteVentaProductoRefOut.model_validate(item.producto_rel) for item in paquete.items],
+    )
+
+
+@pre_router.get("/paquetes-venta", response_model=List[PaqueteVentaOut])
+def listar_paquetes_venta(
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+    buscar: Optional[str] = Query(None),
+    activo: Optional[bool] = Query(None),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        query = session.query(PaqueteVenta)
+        if activo is not None:
+            query = query.filter(PaqueteVenta.activo == activo)
+        if buscar and buscar.strip():
+            query = query.filter(PaqueteVenta.nombre.ilike(f"%{buscar.strip()}%"))
+        paquetes = query.order_by(PaqueteVenta.nombre).all()
+        return [_build_paquete_venta_out(p) for p in paquetes]
+    finally:
+        session.close()
+
+
+@pre_router.post("/paquetes-venta", response_model=PaqueteVentaOut)
+def crear_paquete_venta(
+    payload: PaqueteVentaIn,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    if not payload.producto_ids:
+        raise HTTPException(status_code=422, detail="El paquete debe tener al menos un producto.")
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        paquete = PaqueteVenta(nombre=payload.nombre, activo=payload.activo)
+        paquete.items = [PaqueteVentaItem(producto_id=pid) for pid in payload.producto_ids]
+        session.add(paquete)
+        session.commit()
+        session.refresh(paquete)
+        return _build_paquete_venta_out(paquete)
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un paquete de venta con ese nombre.")
+    finally:
+        session.close()
+
+
+@pre_router.put("/paquetes-venta/{paquete_id}", response_model=PaqueteVentaOut)
+def actualizar_paquete_venta(
+    paquete_id: int,
+    payload: PaqueteVentaIn,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    if not payload.producto_ids:
+        raise HTTPException(status_code=422, detail="El paquete debe tener al menos un producto.")
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        paquete = session.query(PaqueteVenta).filter(PaqueteVenta.id == paquete_id).first()
+        if not paquete:
+            raise HTTPException(status_code=404, detail="Paquete de venta no encontrado.")
+        paquete.nombre = payload.nombre
+        paquete.activo = payload.activo
+        paquete.items = [PaqueteVentaItem(producto_id=pid) for pid in payload.producto_ids]
+        session.commit()
+        session.refresh(paquete)
+        return _build_paquete_venta_out(paquete)
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un paquete de venta con ese nombre.")
+    finally:
+        session.close()
+
+
+@pre_router.delete("/paquetes-venta/{paquete_id}")
+def eliminar_paquete_venta(
+    paquete_id: int,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(get_current_user),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        paquete = session.query(PaqueteVenta).filter(PaqueteVenta.id == paquete_id).first()
+        if not paquete:
+            raise HTTPException(status_code=404, detail="Paquete de venta no encontrado.")
+        session.delete(paquete)
+        session.commit()
+        return {"detail": "Paquete de venta eliminado."}
+    finally:
+        session.close()
+
+
+def _descontar_stock_venta(session, items) -> None:
+    """Al concretarse una venta, resta del stock lo vendido (puede quedar negativo,
+    indicando que se debe reponer con una compra). anular_venta / la correccion de
+    venta cerrada ya devuelven este stock, asi que este descuento es lo que las
+    vuelve simetricas."""
+    for item in items:
+        if not item.producto_id:
+            continue
+        producto = item.producto_rel or session.query(Producto).filter(Producto.id == item.producto_id).first()
+        if producto and producto.controla_stock:
+            producto.stock_actual = (producto.stock_actual or 0) - int(item.cantidad or 0)
+
+
+def _estado_entrega_inicial(items) -> str:
+    """Si ningún ítem del presupuesto requiere laboratorio (ej. un armazón solo,
+    sin cristal ni adaptación), la venta nace directamente ENTREGADO en vez de
+    pasar por el flujo de laboratorio."""
+    requiere_lab = any(
+        getattr(item.producto_rel, "requiere_laboratorio", True)
+        for item in items
+        if item.producto_rel is not None
+    )
+    return "EN_LABORATORIO" if requiere_lab else "ENTREGADO"
+
+
 def _get_siguiente_codigo(session, modelo, prefijo: str) -> str:
-    """Genera el siguiente c�digo correlativo seg�n el mayor c�digo existente."""
+    """Genera el siguiente código correlativo según el mayor código existente."""
     pattern = re.compile(rf"^{re.escape(prefijo)}(\d+)$")
     max_num = 0
 
@@ -300,6 +427,112 @@ def _serializar_ajuste(ajuste: AjusteVenta) -> AjusteVentaOut:
     )
 
 
+def _serializar_correccion_venta(correccion: CorreccionVentaCerrada) -> CorreccionVentaCerradaOut:
+    venta = correccion.venta_origen_rel
+    presupuesto = correccion.presupuesto_nuevo_rel
+    cliente = venta.cliente_rel if venta else None
+    return CorreccionVentaCerradaOut(
+        id=correccion.id,
+        fecha=correccion.fecha,
+        estado=correccion.estado or "ACTIVA",
+        venta_origen_id=correccion.venta_origen_id,
+        venta_origen_codigo=venta.codigo if venta else "N/A",
+        presupuesto_nuevo_id=correccion.presupuesto_nuevo_id,
+        presupuesto_nuevo_codigo=presupuesto.codigo if presupuesto else "N/A",
+        cliente_nombre=cliente.nombre if cliente else None,
+        motivo=correccion.motivo or "",
+        observacion=correccion.observacion,
+        devolver_stock_original=bool(correccion.devolver_stock_original),
+        monto_cobrado_original=float(correccion.monto_cobrado_original or 0.0),
+        saldo_original=float(correccion.saldo_original or 0.0),
+        usuario=correccion.usuario,
+    )
+
+
+def _clonar_presupuesto_para_correccion(
+    session,
+    venta: Venta,
+    *,
+    motivo: str,
+    observacion: Optional[str],
+    monto_cobrado_original: float,
+) -> Presupuesto:
+    presupuesto_origen = venta.presupuesto_rel
+    if not presupuesto_origen:
+        raise HTTPException(status_code=422, detail="La venta no tiene un presupuesto asociado para generar una correccion.")
+
+    codigo_nuevo = _get_siguiente_codigo(session, Presupuesto, "PRE")
+    fecha_nueva = _resolver_fecha_operacion(session)
+    referencia = (
+        f"Presupuesto de correccion generado desde venta {venta.codigo} "
+        f"el {fecha_nueva.strftime('%d/%m/%Y %H:%M')}."
+    )
+    nota_credito = None
+    if monto_cobrado_original > 0:
+        monto_legible = f"{int(round(monto_cobrado_original)):,}".replace(",", ".")
+        nota_credito = f"Credito a favor ya cobrado en venta original: Gs. {monto_legible}"
+    observaciones = " | ".join(
+        part for part in [
+            referencia,
+            f"Motivo: {motivo}",
+            observacion,
+            nota_credito,
+            presupuesto_origen.observaciones,
+        ] if part
+    )
+
+    nuevo_presupuesto = Presupuesto(
+        codigo=codigo_nuevo,
+        fecha=fecha_nueva,
+        estado="BORRADOR",
+        cliente_id=presupuesto_origen.cliente_id,
+        total=float(presupuesto_origen.total or 0.0),
+        graduacion_od_esfera=presupuesto_origen.graduacion_od_esfera,
+        graduacion_od_cilindro=presupuesto_origen.graduacion_od_cilindro,
+        graduacion_od_eje=presupuesto_origen.graduacion_od_eje,
+        graduacion_od_adicion=presupuesto_origen.graduacion_od_adicion,
+        graduacion_oi_esfera=presupuesto_origen.graduacion_oi_esfera,
+        graduacion_oi_cilindro=presupuesto_origen.graduacion_oi_cilindro,
+        graduacion_oi_eje=presupuesto_origen.graduacion_oi_eje,
+        graduacion_oi_adicion=presupuesto_origen.graduacion_oi_adicion,
+        doctor_receta=presupuesto_origen.doctor_receta,
+        observaciones=observaciones,
+        fecha_receta=presupuesto_origen.fecha_receta,
+        fecha_proximo_control=presupuesto_origen.fecha_proximo_control,
+        no_requiere_proximo_control=bool(presupuesto_origen.no_requiere_proximo_control),
+        consulta_clinica_id=presupuesto_origen.consulta_clinica_id,
+        consulta_clinica_tipo=presupuesto_origen.consulta_clinica_tipo,
+        vendedor_id=presupuesto_origen.vendedor_id,
+        canal_venta_id=presupuesto_origen.canal_venta_id,
+        referidor_id=presupuesto_origen.referidor_id,
+        comision_monto=float(presupuesto_origen.comision_monto or 0.0),
+        grupo_id=presupuesto_origen.grupo_id,
+    )
+    session.add(nuevo_presupuesto)
+    session.flush()
+
+    total_nuevo = 0.0
+    for item in presupuesto_origen.items or []:
+        subtotal = float(item.subtotal or 0.0)
+        total_nuevo += subtotal
+        session.add(PresupuestoItem(
+            presupuesto_id=nuevo_presupuesto.id,
+            producto_id=item.producto_id,
+            cantidad=int(item.cantidad or 0),
+            precio_unitario=float(item.precio_unitario or 0.0),
+            costo_unitario=float(item.costo_unitario or 0.0),
+            descuento=float(item.descuento or 0.0),
+            subtotal=subtotal,
+            descripcion_personalizada=item.descripcion_personalizada,
+            codigo_armazon=item.codigo_armazon,
+            medidas_armazon=item.medidas_armazon,
+        ))
+
+    nuevo_presupuesto.total = total_nuevo
+    session.flush()
+    return nuevo_presupuesto
+
+
 # ─── Presupuestos ──────────────────────────────────────────────────────────────
 
 def _build_presupuesto_out(p):
@@ -519,7 +752,7 @@ def convertir_presupuesto_a_venta(
 ):
     """
     Convierte un Presupuesto en Venta con todos los efectos automáticos:
-    - Estado de entrega: EN_LABORATORIO
+    - Estado de entrega: EN_LABORATORIO, salvo que ningún ítem requiera laboratorio (ahí nace ENTREGADO).
     - Crea comisión automática si el presupuesto tiene referidor
     - Procesa los pagos iniciales con efectos en caja/banco
     """
@@ -550,7 +783,7 @@ def convertir_presupuesto_a_venta(
             total=pre.total,
             saldo=saldo_inicial,
             estado="PAGADO" if saldo_inicial == 0 else "PENDIENTE",
-            estado_entrega="EN_LABORATORIO",
+            estado_entrega=_estado_entrega_inicial(pre.items),
             referidor_id=pre.referidor_id,
             vendedor_id=pre.vendedor_id,
             canal_venta_id=canal_venta_id,
@@ -562,6 +795,7 @@ def convertir_presupuesto_a_venta(
         session.flush()
 
         pre.estado = "VENDIDO"
+        _descontar_stock_venta(session, pre.items)
 
         if pre.referidor_id and pre.comision_monto and pre.comision_monto > 0:
             comision = Comision(
@@ -651,6 +885,18 @@ def crear_presupuesto(data: PresupuestoCreate, tenant_slug: str = Depends(get_te
         session.commit()
         session.refresh(presupuesto)
         return _build_presupuesto_out(presupuesto)
+    except HTTPException:
+        session.rollback()
+        raise
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo guardar el presupuesto porque el código generado ya existe. Vuelve a intentar.",
+        )
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear presupuesto: {str(e)}")
     finally:
         session.close()
 
@@ -1127,6 +1373,7 @@ def listar_ventas_optimizado(
                 Venta.id,
                 Venta.codigo,
                 Venta.fecha,
+                Venta.presupuesto_id,
                 Venta.cliente_id,
                 Cliente.nombre.label("cliente_nombre"),
                 Venta.total,
@@ -1183,6 +1430,7 @@ def listar_ventas_optimizado(
                 id=row.id,
                 codigo=row.codigo,
                 fecha=row.fecha,
+                presupuesto_id=row.presupuesto_id,
                 cliente_id=row.cliente_id,
                 cliente_nombre=row.cliente_nombre or "N/A",
                 vendedor_nombre=row.vendedor_nombre,
@@ -1222,6 +1470,42 @@ def obtener_venta(venta_id: int, tenant_slug: str = Depends(get_tenant_slug), cu
             vo.cliente_nombre = "N/A"
         vo.vendedor_nombre = v.vendedor_rel.nombre if getattr(v, "vendedor_rel", None) else None
         vo.canal_venta_nombre = v.canal_venta_rel.nombre if getattr(v, "canal_venta_rel", None) else None
+        vo.pagos = [
+            PagoOut(
+                **{**PagoOut.model_validate(p).model_dump(), "banco_nombre": p.banco_rel.nombre_banco if p.banco_rel else None}
+            )
+            for p in v.pagos
+        ]
+
+        pre = v.presupuesto_rel
+        if pre:
+            vo.items = [
+                VentaItemOut(
+                    id=item.id,
+                    producto_id=item.producto_id,
+                    producto_nombre=item.producto_rel.nombre if item.producto_rel else None,
+                    cantidad=item.cantidad,
+                    precio_unitario=item.precio_unitario,
+                    costo_unitario=item.costo_unitario,
+                    descuento=item.descuento,
+                    subtotal=item.subtotal,
+                    descripcion_personalizada=item.descripcion_personalizada,
+                    iva=item.producto_rel.impuesto if item.producto_rel else None,
+                )
+                for item in pre.items
+            ]
+            vo.observaciones = pre.observaciones
+            vo.doctor_receta = pre.doctor_receta
+            vo.fecha_receta = pre.fecha_receta
+            vo.fecha_proximo_control = pre.fecha_proximo_control
+            vo.graduacion_od_esfera = pre.graduacion_od_esfera
+            vo.graduacion_od_cilindro = pre.graduacion_od_cilindro
+            vo.graduacion_od_eje = pre.graduacion_od_eje
+            vo.graduacion_od_adicion = pre.graduacion_od_adicion
+            vo.graduacion_oi_esfera = pre.graduacion_oi_esfera
+            vo.graduacion_oi_cilindro = pre.graduacion_oi_cilindro
+            vo.graduacion_oi_eje = pre.graduacion_oi_eje
+            vo.graduacion_oi_adicion = pre.graduacion_oi_adicion
         return vo
     finally:
         session.close()
@@ -1233,7 +1517,7 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
     Crea una Venta a partir de un Presupuesto.
     Efectos automáticos:
     - Marca el Presupuesto como VENDIDO.
-    - Estado de entrega inicial: EN_LABORATORIO.
+    - Estado de entrega inicial: EN_LABORATORIO, salvo que ningún ítem requiera laboratorio (ahí nace ENTREGADO).
     - Si hay referidor con comisión, genera registro en tabla Comision.
     - Si hay pagos iniciales, aplica los movimientos de caja/banco/tarjeta.
     """
@@ -1248,9 +1532,16 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
 
         venta_data["fecha"] = _resolver_fecha_operacion(session, venta_data.get("fecha"))
 
+        estado_entrega_inicial = "EN_LABORATORIO"
+        presupuesto_id = venta_data.get("presupuesto_id")
+        if presupuesto_id:
+            pre_origen = session.query(Presupuesto).filter(Presupuesto.id == presupuesto_id).first()
+            if pre_origen:
+                estado_entrega_inicial = _estado_entrega_inicial(pre_origen.items)
+
         venta = Venta(
             codigo=codigo,
-            estado_entrega="EN_LABORATORIO",  # Estado inicial siempre
+            estado_entrega=estado_entrega_inicial,
             **venta_data
         )
         pagado_inicial = sum(p.monto for p in pagos_data)
@@ -1264,6 +1555,7 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
             pre = session.query(Presupuesto).filter(Presupuesto.id == venta.presupuesto_id).first()
             if pre:
                 pre.estado = "VENDIDO"
+                _descontar_stock_venta(session, pre.items)
 
         # 2. Crear comisión automática para el referidor
         if venta.referidor_id and venta.comision_monto and venta.comision_monto > 0:
@@ -1430,7 +1722,7 @@ def anular_venta(
             for item in items:
                 if item.producto_id:
                     prod = session.query(Producto).filter(Producto.id == item.producto_id).first()
-                    if prod and prod.stock_actual is not None:
+                    if prod and prod.stock_actual is not None and prod.controla_stock:
                         prod.stock_actual += item.cantidad
 
         # 4. Revertir estado del presupuesto
@@ -1794,6 +2086,86 @@ def crear_ajuste_venta(
         session.close()
 
 
+@router.post("/{venta_id:int}/corregir-cerrada", response_model=CorreccionVentaCerradaOut)
+def corregir_venta_cerrada(
+    venta_id: int,
+    data: CorreccionVentaCerradaCreate,
+    tenant_slug: str = Depends(get_tenant_slug),
+    current_user=Depends(require_action("ventas.ajustar", "ventas")),
+):
+    session = get_session_for_tenant(tenant_slug)
+    try:
+        require_jornada_abierta(session)
+        venta = session.query(Venta).filter(Venta.id == venta_id).first()
+        if not venta:
+            raise HTTPException(status_code=404, detail="Venta no encontrada.")
+        if venta.estado in {"ANULADA", "ANULADO"}:
+            raise HTTPException(status_code=422, detail="No se puede corregir una venta anulada.")
+        if not venta.presupuesto_id or not venta.presupuesto_rel:
+            raise HTTPException(status_code=422, detail="La venta no tiene presupuesto asociado para generar el cambio.")
+
+        correccion_existente = (
+            session.query(CorreccionVentaCerrada)
+            .filter(
+                CorreccionVentaCerrada.venta_origen_id == venta.id,
+                CorreccionVentaCerrada.estado == "ACTIVA",
+            )
+            .first()
+        )
+        if correccion_existente:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Esta venta ya tiene una correccion activa vinculada al presupuesto {correccion_existente.presupuesto_nuevo_rel.codigo if correccion_existente.presupuesto_nuevo_rel else correccion_existente.presupuesto_nuevo_id}.",
+            )
+
+        monto_cobrado_original = float(sum(float(p.monto or 0.0) for p in (venta.pagos or [])))
+        saldo_original = float(venta.saldo or 0.0)
+        nuevo_presupuesto = _clonar_presupuesto_para_correccion(
+            session,
+            venta,
+            motivo=data.motivo,
+            observacion=data.observacion,
+            monto_cobrado_original=monto_cobrado_original,
+        )
+
+        if data.devolver_stock_original:
+            for item in venta.presupuesto_rel.items or []:
+                if not item.producto_id:
+                    continue
+                producto = session.query(Producto).filter(Producto.id == item.producto_id).first()
+                if producto and producto.stock_actual is not None and producto.controla_stock:
+                    producto.stock_actual += int(item.cantidad or 0)
+
+        usuario_nombre = (
+            getattr(current_user, "nombre_completo", None)
+            or getattr(current_user, "nombre", None)
+            or getattr(current_user, "email", None)
+            or "Sistema"
+        )
+        correccion = CorreccionVentaCerrada(
+            venta_origen_id=venta.id,
+            presupuesto_nuevo_id=nuevo_presupuesto.id,
+            motivo=data.motivo,
+            observacion=data.observacion,
+            devolver_stock_original=bool(data.devolver_stock_original),
+            monto_cobrado_original=monto_cobrado_original,
+            saldo_original=saldo_original,
+            usuario=usuario_nombre,
+        )
+        session.add(correccion)
+        session.commit()
+        session.refresh(correccion)
+        return _serializar_correccion_venta(correccion)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al corregir venta cerrada: {str(e)}")
+    finally:
+        session.close()
+
+
 @router.get("/ajustes/{ajuste_id:int}", response_model=AjusteVentaOut)
 def obtener_ajuste_venta(
     ajuste_id: int,
@@ -1927,7 +2299,6 @@ def _registrar_comision_tarjeta_grupal(
         fecha=gasto.fecha,
     )
     gasto.movimiento_banco_id = mov.id
-
 
 
 

@@ -102,6 +102,8 @@ class Producto(TimestampMixin, Base):
     descripcion = Column(Text)
     activo = Column(Boolean, default=True)
     bajo_pedido = Column(Boolean, default=False)
+    requiere_laboratorio = Column(Boolean, default=True)
+    controla_stock = Column(Boolean, default=True)
     atributos = relationship("Atributo", secondary=producto_atributos, back_populates="productos", lazy='selectin')
 
 
@@ -167,6 +169,23 @@ class Cliente(TimestampMixin, Base):
 
 
 # ─── Presupuestos ──────────────────────────────────────────────────────────────
+
+class PaqueteVenta(TimestampMixin, Base):
+    __tablename__ = 'paquetes_venta'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nombre = Column(String(150), unique=True, nullable=False)
+    activo = Column(Boolean, default=True)
+    items = relationship("PaqueteVentaItem", back_populates="paquete_rel", cascade="all, delete-orphan", lazy='selectin')
+
+
+class PaqueteVentaItem(TimestampMixin, Base):
+    __tablename__ = 'paquete_venta_items'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paquete_id = Column(Integer, ForeignKey('paquetes_venta.id'), nullable=False)
+    paquete_rel = relationship("PaqueteVenta", back_populates="items", lazy='selectin')
+    producto_id = Column(Integer, ForeignKey('productos.id'), nullable=False)
+    producto_rel = relationship("Producto", lazy='selectin')
+
 
 class PresupuestoGrupo(TimestampMixin, Base):
     __tablename__ = 'presupuesto_grupos'
@@ -319,6 +338,29 @@ class AjusteVentaItem(TimestampMixin, Base):
     item_id = Column(Integer, ForeignKey('presupuesto_items.id'), nullable=False)
     item_rel = relationship("PresupuestoItem", lazy='selectin')
     monto_descuento = Column(Float, nullable=False)
+
+
+class CorreccionVentaCerrada(TimestampMixin, Base):
+    __tablename__ = 'correcciones_venta_cerrada'
+    __table_args__ = (
+        Index('idx_corr_venta_origen', 'venta_origen_id'),
+        Index('idx_corr_presupuesto_nuevo', 'presupuesto_nuevo_id'),
+        Index('idx_corr_fecha', 'fecha'),
+        Index('idx_corr_estado', 'estado'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    venta_origen_id = Column(Integer, ForeignKey('ventas.id'), nullable=False)
+    venta_origen_rel = relationship("Venta", lazy='selectin', foreign_keys=[venta_origen_id])
+    presupuesto_nuevo_id = Column(Integer, ForeignKey('presupuestos.id'), nullable=False)
+    presupuesto_nuevo_rel = relationship("Presupuesto", lazy='selectin', foreign_keys=[presupuesto_nuevo_id])
+    fecha = Column(DateTime, default=_business_now, nullable=False)
+    motivo = Column(Text, nullable=False)
+    observacion = Column(Text, nullable=True)
+    estado = Column(String(20), default='ACTIVA', nullable=False)
+    devolver_stock_original = Column(Boolean, default=True, nullable=False)
+    monto_cobrado_original = Column(Float, default=0.0, nullable=False)
+    saldo_original = Column(Float, default=0.0, nullable=False)
+    usuario = Column(String(100), nullable=True)
 
 
 class Comision(TimestampMixin, Base):

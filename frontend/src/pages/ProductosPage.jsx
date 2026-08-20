@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Edit2, Package, Plus, Search, Tag, ToggleLeft, ToggleRight } from 'lucide-react'
 
 import Modal from '../components/Modal'
-import { api } from '../context/AuthContext'
+import { useAuth, api } from '../context/AuthContext'
+import { hasActionAccess } from '../utils/roles'
 
 function fmt(value) {
     return new Intl.NumberFormat('es-PY').format(value ?? 0)
@@ -42,7 +43,7 @@ function orderCategorias(categories, parentId = null, level = 0) {
     ])
 }
 
-function ProductoForm({ initial = {}, onSave, onCancel, loading }) {
+function ProductoForm({ initial = {}, onSave, onCancel, loading, canViewCosts }) {
     const isEditing = Boolean(initial.id)
     const [formError, setFormError] = useState('')
     const [formData, setFormData] = useState({
@@ -60,6 +61,8 @@ function ProductoForm({ initial = {}, onSave, onCancel, loading }) {
         descripcion: initial.descripcion || '',
         activo: initial.activo ?? true,
         bajo_pedido: Boolean(initial.bajo_pedido),
+        requiere_laboratorio: initial.requiere_laboratorio ?? true,
+        controla_stock: initial.controla_stock ?? true,
         atributos_ids: initial.atributos?.map(attr => attr.id) || [],
     })
 
@@ -281,19 +284,21 @@ function ProductoForm({ initial = {}, onSave, onCancel, loading }) {
                     />
                 </div>
 
-                <div className="form-group">
-                    <label className="form-label">Costo (Gs.)</label>
-                    <input
-                        className="form-input"
-                        type="number"
-                        value={formData.costo}
-                        onChange={event => setField('costo', event.target.value)}
-                        disabled={formData.costo_variable}
-                        min="0"
-                        step="100"
-                        placeholder={formData.costo_variable ? 'Variable' : '0'}
-                    />
-                </div>
+                {canViewCosts && (
+                    <div className="form-group">
+                        <label className="form-label">Costo (Gs.)</label>
+                        <input
+                            className="form-input"
+                            type="number"
+                            value={formData.costo}
+                            onChange={event => setField('costo', event.target.value)}
+                            disabled={formData.costo_variable}
+                            min="0"
+                            step="100"
+                            placeholder={formData.costo_variable ? 'Variable' : '0'}
+                        />
+                    </div>
+                )}
 
                 <div className="form-group">
                     <label className="form-label">Stock actual</label>
@@ -324,6 +329,8 @@ function ProductoForm({ initial = {}, onSave, onCancel, loading }) {
                 {[
                     { key: 'costo_variable', label: 'Costo variable' },
                     { key: 'bajo_pedido', label: 'Bajo pedido' },
+                    { key: 'requiere_laboratorio', label: 'Requiere laboratorio' },
+                    { key: 'controla_stock', label: 'Controla stock' },
                     { key: 'activo', label: 'Activo' },
                 ].map(({ key, label }) => (
                     <label
@@ -437,11 +444,13 @@ function ProductoForm({ initial = {}, onSave, onCancel, loading }) {
 }
 
 export default function ProductosPage() {
+    const { user } = useAuth()
     const queryClient = useQueryClient()
     const [buscar, setBuscar] = useState('')
     const [buscarDebounced, setBuscarDebounced] = useState('')
     const [categoriaFiltro, setCategoriaFiltro] = useState('')
     const [marcaFiltro, setMarcaFiltro] = useState('')
+    const [proveedorFiltro, setProveedorFiltro] = useState('')
     const [modal, setModal] = useState(null)
     const [soloActivos, setSoloActivos] = useState(true)
     const [page, setPage] = useState(1)
@@ -460,10 +469,10 @@ export default function ProductosPage() {
 
     useEffect(() => {
         setPage(1)
-    }, [buscarDebounced, categoriaFiltro, marcaFiltro, soloActivos, pageSize])
+    }, [buscarDebounced, categoriaFiltro, marcaFiltro, proveedorFiltro, soloActivos, pageSize])
 
     const { data, isLoading, isError, error } = useQuery({
-        queryKey: ['productos-optimizado', buscarDebounced, categoriaFiltro, marcaFiltro, soloActivos, page, pageSize],
+        queryKey: ['productos-optimizado', buscarDebounced, categoriaFiltro, marcaFiltro, proveedorFiltro, soloActivos, page, pageSize],
         queryFn: () => {
             const params = new URLSearchParams({
                 page: String(page),
@@ -478,6 +487,9 @@ export default function ProductosPage() {
             }
             if (marcaFiltro) {
                 params.append('marca_id', marcaFiltro)
+            }
+            if (proveedorFiltro) {
+                params.append('proveedor_id', proveedorFiltro)
             }
             return api.get(`/productos/listado-optimizado?${params.toString()}`).then(response => response.data)
         },
@@ -502,6 +514,13 @@ export default function ProductosPage() {
         retry: false,
     })
 
+    const { data: proveedores = [] } = useQuery({
+        queryKey: ['proveedores'],
+        queryFn: () => api.get('/proveedores/').then(response => response.data),
+        enabled: loadSecondaryFilters,
+        retry: false,
+    })
+
     const editingProductId = modal && modal !== 'nuevo' ? modal.id : null
     const {
         data: editingProductDetail,
@@ -515,6 +534,7 @@ export default function ProductosPage() {
     })
 
     const categoriasOrdenadas = useMemo(() => orderCategorias(categorias), [categorias])
+    const canViewCosts = hasActionAccess(user, 'productos.ver_costos', 'catalogos')
 
     const crear = useMutation({
         mutationFn: payload => api.post('/productos/', payload),
@@ -612,6 +632,14 @@ export default function ProductosPage() {
                             </option>
                         ))}
                     </select>
+                    <select className="form-select" style={{ flex: '0 0 200px', width: 200 }} value={proveedorFiltro} onChange={event => setProveedorFiltro(event.target.value)}>
+                        <option value="">Todos los proveedores</option>
+                        {proveedores.map(proveedor => (
+                            <option key={proveedor.id} value={proveedor.id}>
+                                {proveedor.nombre}
+                            </option>
+                        ))}
+                    </select>
                     <select
                         className="form-select"
                         style={{ flex: '0 0 120px', width: 120 }}
@@ -646,7 +674,7 @@ export default function ProductosPage() {
                     </div>
                 ) : (
                     <div className="table-container" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
-                        <table style={{ minWidth: 1180, tableLayout: 'fixed' }}>
+                        <table style={{ minWidth: canViewCosts ? 1180 : 1060, tableLayout: 'fixed' }}>
                             <thead>
                                 <tr>
                                     <th style={{ width: 120 }}>Codigo</th>
@@ -654,8 +682,8 @@ export default function ProductosPage() {
                                     <th style={{ width: 160 }}>Marca</th>
                                     <th style={{ width: 180 }}>Categoria</th>
                                     <th style={{ width: 120 }}>Precio</th>
-                                    <th style={{ width: 120 }}>Costo</th>
-                                    <th style={{ width: 90 }}>Margen</th>
+                                    {canViewCosts && <th style={{ width: 120 }}>Costo</th>}
+                                    {canViewCosts && <th style={{ width: 90 }}>Margen</th>}
                                     <th style={{ width: 80 }}>Stock</th>
                                     <th style={{ width: 70 }}>IVA</th>
                                     <th style={{ width: 120 }}>Estado</th>
@@ -674,6 +702,8 @@ export default function ProductosPage() {
                                             <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                                                 {producto.costo_variable && <span className="badge badge-gray">Costo variable</span>}
                                                 {producto.bajo_pedido && <span className="badge badge-blue">Bajo pedido</span>}
+                                                {producto.requiere_laboratorio === false && <span className="badge badge-gray">Sin laboratorio</span>}
+                                                {producto.controla_stock === false && <span className="badge badge-gray">Sin stock</span>}
                                             </div>
                                         </td>
                                         <td style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>
@@ -686,10 +716,12 @@ export default function ProductosPage() {
                                             </span>
                                         </td>
                                         <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Gs. {fmt(producto.precio_venta)}</td>
-                                        <td style={{ color: 'var(--text-secondary)' }}>
-                                            {producto.costo ? `Gs. ${fmt(producto.costo)}` : '-'}
-                                        </td>
-                                        <td style={{ fontWeight: 600, color: margenColor(producto) }}>{margen(producto)}</td>
+                                        {canViewCosts && (
+                                            <td style={{ color: 'var(--text-secondary)' }}>
+                                                {producto.costo ? `Gs. ${fmt(producto.costo)}` : '-'}
+                                            </td>
+                                        )}
+                                        {canViewCosts && <td style={{ fontWeight: 600, color: margenColor(producto) }}>{margen(producto)}</td>}
                                         <td>
                                             <span style={{ color: producto.stock_actual <= 0 ? 'var(--danger)' : producto.stock_actual < 5 ? 'var(--warning)' : 'var(--success)', fontWeight: 600 }}>
                                                 {producto.stock_actual}
@@ -751,6 +783,7 @@ export default function ProductosPage() {
                             onSave={handleSave}
                             onCancel={() => setModal(null)}
                             loading={crear.isPending || editar.isPending}
+                            canViewCosts={canViewCosts}
                         />
                     )}
                 </Modal>

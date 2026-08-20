@@ -166,6 +166,7 @@ class MovimientoFichaOut(BaseModel):
     debito: float
     credito: float
     saldo_acumulado: float
+    venta_id: Optional[int] = None
 
 
 class VentaPendienteFichaOut(BaseModel):
@@ -660,6 +661,7 @@ def _build_cliente_ficha(session, cliente: Cliente):
             "debito": float(venta.total or 0.0),
             "credito": 0.0,
             "orden": 0,
+            "venta_id": venta.id,
         })
     for pago in pagos:
         codigo = pago.venta_rel.codigo if pago.venta_rel else f"#{pago.venta_id}"
@@ -671,6 +673,7 @@ def _build_cliente_ficha(session, cliente: Cliente):
             "debito": 0.0,
             "credito": float(pago.monto or 0.0),
             "orden": 1,
+            "venta_id": pago.venta_id,
         })
 
     # Orden logico para lectura de estado de cuenta:
@@ -687,6 +690,7 @@ def _build_cliente_ficha(session, cliente: Cliente):
             debito=item["debito"],
             credito=item["credito"],
             saldo_acumulado=saldo,
+            venta_id=item.get("venta_id"),
         ))
 
     ventas_pendientes = [

@@ -15,6 +15,7 @@ export const moduleRoles = {
     cobros: ['ADMIN', 'CAJERO'],
     compras: ['ADMIN', 'OPERADOR', 'CAJERO'],
     catalogos: ['ADMIN', 'OPERADOR', 'CAJERO'],
+    proveedores: ['ADMIN', 'OPERADOR', 'CAJERO'],
     finanzas: ['ADMIN', 'CAJERO'],
     cuentas_por_pagar: ['ADMIN', 'CAJERO'],
     reportes_comercial: ['ADMIN', 'OPERADOR', 'CAJERO'],
@@ -51,6 +52,7 @@ export const actionRoles = {
     'catalogos.crear': ['ADMIN', 'OPERADOR', 'CAJERO'],
     'catalogos.editar': ['ADMIN', 'OPERADOR', 'CAJERO'],
     'catalogos.eliminar': ['ADMIN'],
+    'productos.ver_costos': ['ADMIN', 'OPERADOR', 'CAJERO'],
 
     'finanzas.transferencias': ['ADMIN', 'CAJERO'],
     'finanzas.conciliar': ['ADMIN', 'CAJERO'],
@@ -153,8 +155,10 @@ export const permissionCatalog = [
                     { key: 'catalogos.crear', label: 'Crear registros' },
                     { key: 'catalogos.editar', label: 'Editar registros' },
                     { key: 'catalogos.eliminar', label: 'Eliminar registros' },
+                    { key: 'productos.ver_costos', label: 'Ver costos de productos' },
                 ],
             },
+            { key: 'proveedores', label: 'Modulo de proveedores' },
         ],
     },
     {

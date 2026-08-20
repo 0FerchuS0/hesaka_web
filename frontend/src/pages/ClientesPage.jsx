@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../context/AuthContext'
 import { parseBackendDateTime } from '../utils/formatters'
 import Modal from '../components/Modal'
+import DetalleVentaContent from '../components/DetalleVentaContent'
 import { Users, Plus, Search, Edit2, Phone, User, Eye } from 'lucide-react'
 import { exportReportBlob } from '../utils/reportExports'
 import { completeTrackedFlow, failTrackedFlow, markFlowStep, startTrackedFlow, waitForNextPaint } from '../utils/performanceMonitor'
@@ -155,6 +156,7 @@ function ClienteForm({ initial = {}, onSave, onCancel, loading }) {
 
 function ClienteFichaModal({ clienteId, onClose }) {
     const [exportandoPdf, setExportandoPdf] = useState(false)
+    const [ventaDetalleId, setVentaDetalleId] = useState(null)
     const { data, isLoading, isError, error } = useQuery({
         queryKey: ['cliente-ficha', clienteId],
         queryFn: () => api.get(`/clientes/${clienteId}/ficha`).then(r => r.data),
@@ -218,11 +220,12 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                 <th className="text-right">Pagado</th>
                                 <th className="text-right">Saldo</th>
                                 <th>Estado</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
                             {ventas_pendientes.length === 0 ? (
-                                <tr><td colSpan="6" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin deudas pendientes.</td></tr>
+                                <tr><td colSpan="7" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin deudas pendientes.</td></tr>
                             ) : ventas_pendientes.map(item => (
                                 <tr key={item.venta_id}>
                                     <td>{fmt(item.fecha)}</td>
@@ -231,6 +234,11 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                     <td className="text-right" style={{ color: 'var(--success)' }}>{gs(item.pagado)}</td>
                                     <td className="text-right" style={{ color: 'var(--warning)', fontWeight: 700 }}>{gs(item.saldo)}</td>
                                     <td>{item.estado}</td>
+                                    <td>
+                                        <button type="button" className="btn btn-secondary btn-sm btn-icon" title="Ver detalle de venta" onClick={() => setVentaDetalleId(item.venta_id)}>
+                                            <Eye size={13} />
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -250,11 +258,12 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                 <th className="text-right">Debito</th>
                                 <th className="text-right">Credito</th>
                                 <th className="text-right">Saldo</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
                             {movimientos.length === 0 ? (
-                                <tr><td colSpan="6" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin movimientos.</td></tr>
+                                <tr><td colSpan="7" className="text-center" style={{ padding: 20, color: 'var(--text-muted)' }}>Sin movimientos.</td></tr>
                             ) : movimientos.map((mov, index) => (
                                 <tr key={`${mov.fecha}-${mov.tipo}-${index}`}>
                                     <td>{fmt(mov.fecha)}</td>
@@ -263,6 +272,13 @@ function ClienteFichaModal({ clienteId, onClose }) {
                                     <td className="text-right">{gs(mov.debito)}</td>
                                     <td className="text-right">{gs(mov.credito)}</td>
                                     <td className="text-right" style={{ fontWeight: 700 }}>{gs(mov.saldo_acumulado)}</td>
+                                    <td>
+                                        {mov.venta_id && (
+                                            <button type="button" className="btn btn-secondary btn-sm btn-icon" title="Ver detalle de venta" onClick={() => setVentaDetalleId(mov.venta_id)}>
+                                                <Eye size={13} />
+                                            </button>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -314,6 +330,12 @@ function ClienteFichaModal({ clienteId, onClose }) {
                 </button>
                 <button type="button" className="btn btn-secondary" onClick={onClose}>Cerrar</button>
             </div>
+
+            {ventaDetalleId && (
+                <Modal title="Detalle de Venta" onClose={() => setVentaDetalleId(null)} maxWidth="800px">
+                    <DetalleVentaContent ventaId={ventaDetalleId} onClose={() => setVentaDetalleId(null)} />
+                </Modal>
+            )}
         </div>
     )
 }

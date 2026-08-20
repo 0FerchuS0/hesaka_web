@@ -21,6 +21,7 @@ import {
     UserRoundPlus,
     FolderTree,
     Layers3,
+    PackagePlus,
     Tag,
     Landmark,
     Shield,
@@ -94,6 +95,7 @@ const navGroups = [
             { to: '/proveedores', icon: Building2, label: 'Proveedores' },
             { to: '/catalogos/destinatarios-rendicion', icon: UserRoundPlus, label: 'Destinatarios rendicion' },
             { to: '/catalogos/plantillas-whatsapp', icon: MessageCircle, label: 'Plantillas WhatsApp' },
+            { to: '/catalogos/paquetes-venta', icon: PackagePlus, label: 'Paquetes de venta' },
         ]
     },
     {
@@ -274,7 +276,10 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen = fals
                         })
                         return { ...item, subItems }
                     }
-                    if (['/referidores', '/vendedores', '/canales-venta', '/categorias', '/atributos', '/marcas', '/productos', '/proveedores', '/catalogos/destinatarios-rendicion'].includes(item.to)) {
+                    if (item.to === '/proveedores') {
+                        return hasModuleAccess(user, 'proveedores') ? item : null
+                    }
+                    if (['/referidores', '/vendedores', '/canales-venta', '/categorias', '/atributos', '/marcas', '/productos', '/catalogos/destinatarios-rendicion', '/catalogos/plantillas-whatsapp', '/catalogos/paquetes-venta'].includes(item.to)) {
                         return hasModuleAccess(user, 'catalogos') ? item : null
                     }
                     if (item.to === '/caja') {

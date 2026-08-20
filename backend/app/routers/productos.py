@@ -57,6 +57,8 @@ def _build_producto_list_item(producto: Producto) -> ProductoListItemOut:
         impuesto=producto.impuesto,
         activo=producto.activo,
         bajo_pedido=producto.bajo_pedido,
+        requiere_laboratorio=producto.requiere_laboratorio,
+        controla_stock=producto.controla_stock,
     )
 
 
@@ -545,6 +547,7 @@ def listar_productos_optimizado(
     buscar: Optional[str] = Query(None),
     categoria_id: Optional[int] = Query(None),
     marca_id: Optional[int] = Query(None),
+    proveedor_id: Optional[int] = Query(None),
     solo_activos: bool = Query(True),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
@@ -569,6 +572,8 @@ def listar_productos_optimizado(
                 Producto.impuesto,
                 Producto.activo,
                 Producto.bajo_pedido,
+                Producto.requiere_laboratorio,
+                Producto.controla_stock,
             )
             .outerjoin(Categoria, Categoria.id == Producto.categoria_id)
             .outerjoin(Marca, Marca.id == Producto.marca_id)
@@ -579,6 +584,8 @@ def listar_productos_optimizado(
             query = query.filter(Producto.categoria_id == categoria_id)
         if marca_id:
             query = query.filter(Producto.marca_id == marca_id)
+        if proveedor_id:
+            query = query.filter(Producto.proveedor_id == proveedor_id)
         if buscar and buscar.strip():
             term = f"%{buscar.strip()}%"
             query = query.filter(
@@ -619,6 +626,8 @@ def listar_productos_optimizado(
                     impuesto=row.impuesto,
                     activo=row.activo,
                     bajo_pedido=row.bajo_pedido,
+                    requiere_laboratorio=row.requiere_laboratorio,
+                    controla_stock=row.controla_stock,
                 )
                 for row in rows
             ],

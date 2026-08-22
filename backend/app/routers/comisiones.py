@@ -9,7 +9,12 @@ from app.middleware.tenant import get_tenant_slug
 from app.models.models import Banco, Comision, ConfiguracionCaja, MovimientoBanco, MovimientoCaja, Venta
 from app.schemas.schemas import ComisionOut, ComisionPagoCreate
 from app.utils.auth import get_current_user, require_roles
-from app.utils.jornada import ahora_negocio, require_jornada_abierta, require_jornada_abierta_para_fecha
+from app.utils.jornada import (
+    ahora_negocio,
+    aplicar_autorizacion_post_rendicion,
+    require_jornada_abierta,
+    require_jornada_abierta_para_fecha,
+)
 
 router = APIRouter(prefix="/api/comisiones", tags=["Comisiones"])
 
@@ -165,7 +170,7 @@ def pagar_comision(
             fecha_mov = datetime.combine(data.fecha_pago, datetime.now().time()).replace(microsecond=0)
         else:
             fecha_mov = ahora_negocio(session)
-        jornada = require_jornada_abierta_para_fecha(session, fecha_mov, accion="registrar un pago de comision")
+        jornada = require_jornada_abierta_para_fecha(session, fecha_mov, accion="registrar un pago de comision", current_user=current_user)
 
         metodo_pago = data.metodo_pago
         banco = None
@@ -198,6 +203,7 @@ def pagar_comision(
                 saldo_nuevo=caja.saldo_actual,
                 jornada_id=jornada.id,
             )
+            aplicar_autorizacion_post_rendicion(jornada, movimiento)
             session.add(movimiento)
             session.flush()
             comision.movimiento_caja_id = movimiento.id
@@ -214,6 +220,7 @@ def pagar_comision(
                 saldo_nuevo=banco.saldo_actual,
                 jornada_id=jornada.id,
             )
+            aplicar_autorizacion_post_rendicion(jornada, movimiento)
             session.add(movimiento)
             session.flush()
             comision.movimiento_banco_id = movimiento.id

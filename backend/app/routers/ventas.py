@@ -38,7 +38,12 @@ from app.utils.pdf_recibos_venta import (
 )
 from app.utils.pdf_presupuestos import generar_pdf_presupuesto
 from app.utils.filename_utils import sanitize_filename_component
-from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta, require_jornada_abierta_para_fecha
+from app.utils.jornada import (
+    aplicar_autorizacion_post_rendicion,
+    normalizar_fecha_negocio,
+    require_jornada_abierta,
+    require_jornada_abierta_para_fecha,
+)
 from app.utils.timezone import ahora_negocio
 
 router = APIRouter(prefix="/api/ventas", tags=["Ventas"])
@@ -232,9 +237,10 @@ def _registrar_en_caja(
     pago_venta_id: Optional[int] = None,
     grupo_pago_id: Optional[str] = None,
     fecha: Optional[datetime] = None,
+    current_user=None,
 ):
     """Registra un ingreso de efectivo en caja, actualizando el saldo."""
-    jornada = require_jornada_abierta_para_fecha(session, fecha, accion="registrar un cobro")
+    jornada = require_jornada_abierta_para_fecha(session, fecha, accion="registrar un cobro", current_user=current_user)
     caja = session.query(ConfiguracionCaja).first()
     if not caja:
         caja = ConfiguracionCaja(id=1, saldo_actual=0.0)
@@ -252,6 +258,7 @@ def _registrar_en_caja(
         pago_venta_id=pago_venta_id,
         jornada_id=jornada.id,
     )
+    aplicar_autorizacion_post_rendicion(jornada, mov)
     session.add(mov)
     return mov
 
@@ -265,9 +272,10 @@ def _registrar_en_banco(
     pago_venta_id: Optional[int] = None,
     grupo_pago_id: Optional[str] = None,
     fecha: Optional[datetime] = None,
+    current_user=None,
 ):
     """Registra un movimiento bancario (ingreso o egreso), actualizando el saldo del banco."""
-    jornada = require_jornada_abierta_para_fecha(session, fecha, accion="registrar un cobro")
+    jornada = require_jornada_abierta_para_fecha(session, fecha, accion="registrar un cobro", current_user=current_user)
     banco = session.query(Banco).filter(Banco.id == banco_id).first()
     if not banco:
         raise HTTPException(status_code=404, detail=f"Banco ID {banco_id} no encontrado.")
@@ -288,6 +296,7 @@ def _registrar_en_banco(
         grupo_pago_id=grupo_pago_id,
         jornada_id=jornada.id,
     )
+    aplicar_autorizacion_post_rendicion(jornada, mov)
     session.add(mov)
     session.flush()
     return mov
@@ -300,6 +309,7 @@ def _registrar_comision_tarjeta(
     codigo_venta: str,
     pago_id: int,
     fecha: Optional[datetime] = None,
+    current_user=None,
 ):
     """Crea un GastoOperativo automático por comisión de tarjeta y lo descuenta del banco."""
     from app.models.models import GastoOperativo, CategoriaGasto, ConfiguracionEmpresa
@@ -336,18 +346,19 @@ def _registrar_comision_tarjeta(
         tipo="EGRESO",
         pago_venta_id=pago_id,
         fecha=gasto.fecha,
+        current_user=current_user,
     )
     gasto.movimiento_banco_id = mov.id
 
 
-def _procesar_pago(session, pago: Pago, venta_codigo: str):
+def _procesar_pago(session, pago: Pago, venta_codigo: str, current_user=None):
     """Aplica los efectos financieros de un pago (caja / banco / comisión tarjeta)."""
     pago.fecha = normalizar_fecha_negocio(session, pago.fecha)
     if pago.metodo_pago == "EFECTIVO":
         concepto = f"Pago venta {venta_codigo}"
         if pago.nota:
             concepto += f" ({pago.nota})"
-        _registrar_en_caja(session, pago.monto, concepto, pago_venta_id=pago.id, fecha=pago.fecha)
+        _registrar_en_caja(session, pago.monto, concepto, pago_venta_id=pago.id, fecha=pago.fecha, current_user=current_user)
 
     elif pago.metodo_pago in ("TRANSFERENCIA", "TARJETA"):
         if not pago.banco_id:
@@ -355,10 +366,10 @@ def _procesar_pago(session, pago: Pago, venta_codigo: str):
         concepto = f"Cobro venta {venta_codigo} - {pago.metodo_pago}"
         if pago.nota:
             concepto += f" ({pago.nota})"
-        _registrar_en_banco(session, pago.banco_id, pago.monto, concepto, pago_venta_id=pago.id, fecha=pago.fecha)
+        _registrar_en_banco(session, pago.banco_id, pago.monto, concepto, pago_venta_id=pago.id, fecha=pago.fecha, current_user=current_user)
 
         if pago.metodo_pago == "TARJETA":
-            _registrar_comision_tarjeta(session, pago.banco_id, pago.monto, venta_codigo, pago.id, fecha=pago.fecha)
+            _registrar_comision_tarjeta(session, pago.banco_id, pago.monto, venta_codigo, pago.id, fecha=pago.fecha, current_user=current_user)
 
 
 def _revertir_pago(session, pago: Pago, venta_codigo: str):
@@ -814,7 +825,7 @@ def convertir_presupuesto_a_venta(
             pago = Pago(venta_id=venta.id, **pago_dict)
             session.add(pago)
             session.flush()
-            _procesar_pago(session, pago, codigo)
+            _procesar_pago(session, pago, codigo, current_user=current_user)
 
         session.commit()
         session.refresh(venta)
@@ -1576,7 +1587,7 @@ def crear_venta(data: VentaCreate, tenant_slug: str = Depends(get_tenant_slug), 
             pago = Pago(venta_id=venta.id, **pago_dict)
             session.add(pago)
             session.flush()  # Necesario para tener pago.id
-            _procesar_pago(session, pago, codigo)
+            _procesar_pago(session, pago, codigo, current_user=current_user)
 
         session.commit()
         session.refresh(venta)
@@ -1624,13 +1635,13 @@ def registrar_pago(
             pago_dict["fecha"] = _resolver_fecha_operacion(session)
         else:
             pago_dict["fecha"] = _resolver_fecha_operacion(session, pago_dict["fecha"])
-        require_jornada_abierta_para_fecha(session, pago_dict["fecha"], accion="registrar un cobro")
+        require_jornada_abierta_para_fecha(session, pago_dict["fecha"], accion="registrar un cobro", current_user=current_user)
 
         pago = Pago(venta_id=venta_id, **pago_dict)
         session.add(pago)
         session.flush()
 
-        _procesar_pago(session, pago, venta.codigo)
+        _procesar_pago(session, pago, venta.codigo, current_user=current_user)
 
         venta.saldo = max(0.0, venta.saldo - pago_data.monto)
         venta.estado = "PAGADO" if venta.saldo == 0 else "PENDIENTE"
@@ -1934,7 +1945,7 @@ def registrar_cobro_multiple(
     try:
         grupo_id = str(uuid.uuid4())
         fecha_pago = normalizar_fecha_negocio(session, data.fecha)
-        require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un cobro")
+        require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un cobro", current_user=current_user)
         pagos_orm = []
         total_acumulado = 0.0
 
@@ -1966,7 +1977,7 @@ def registrar_cobro_multiple(
 
             # Si es EFECTIVO, registramos movimiento individual en caja (como hacía el legacy)
             if data.metodo_pago == "EFECTIVO":
-                _registrar_en_caja(session, item.monto, f"Cobro Múltiple - Venta {venta.codigo}", pago.id, fecha=fecha_pago)
+                _registrar_en_caja(session, item.monto, f"Cobro Múltiple - Venta {venta.codigo}", pago.id, fecha=fecha_pago, current_user=current_user)
 
         # Si es BANCO, registramos UN SOLO movimiento agrupado
         if data.metodo_pago in ("TRANSFERENCIA", "TARJETA"):
@@ -1978,15 +1989,16 @@ def registrar_cobro_multiple(
                 concepto += f" - {data.nota}"
             
             _registrar_en_banco(
-                session, data.banco_id, total_acumulado, concepto, 
-                tipo="INGRESO", pago_venta_id=None, grupo_pago_id=grupo_id, fecha=fecha_pago
+                session, data.banco_id, total_acumulado, concepto,
+                tipo="INGRESO", pago_venta_id=None, grupo_pago_id=grupo_id, fecha=fecha_pago,
+                current_user=current_user,
             )
 
             if data.metodo_pago == "TARJETA":
                 # La comisión de tarjeta en cobro múltiple es un tema complejo.
-                # En el legacy se aplicaba por el total del grupo? 
+                # En el legacy se aplicaba por el total del grupo?
                 # Reaplicamos lógica: por el total del grupo.
-                _registrar_comision_tarjeta_grupal(session, data.banco_id, total_acumulado, grupo_id, fecha=fecha_pago)
+                _registrar_comision_tarjeta_grupal(session, data.banco_id, total_acumulado, grupo_id, fecha=fecha_pago, current_user=current_user)
 
         session.commit()
         return {"ok": True, "grupo_pago_id": grupo_id, "cantidad_pagos": len(pagos_orm)}
@@ -2265,6 +2277,7 @@ def _registrar_comision_tarjeta_grupal(
     monto_total: float,
     grupo_id: str,
     fecha: Optional[datetime] = None,
+    current_user=None,
 ):
     """Versión grupal de la comisión de tarjeta."""
     from app.models.models import GastoOperativo, CategoriaGasto, ConfiguracionEmpresa
@@ -2298,6 +2311,7 @@ def _registrar_comision_tarjeta_grupal(
         pago_venta_id=None,
         grupo_pago_id=grupo_id,
         fecha=gasto.fecha,
+        current_user=current_user,
     )
     gasto.movimiento_banco_id = mov.id
 

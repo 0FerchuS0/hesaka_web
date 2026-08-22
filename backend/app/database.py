@@ -114,6 +114,20 @@ def ensure_tenant_schema(engine, tenant_slug: str):
                 SET business_timezone = COALESCE(NULLIF(TRIM(business_timezone), ''), 'America/Asuncion')
                 """
             ))
+    if "movimientos_caja" in table_names:
+        mc_columns = {column["name"] for column in inspector.get_columns("movimientos_caja")}
+        with engine.begin() as connection:
+            if "autorizado_post_rendicion_por_id" not in mc_columns:
+                connection.execute(text("ALTER TABLE movimientos_caja ADD COLUMN autorizado_post_rendicion_por_id INTEGER REFERENCES usuarios(id)"))
+            if "autorizado_post_rendicion_por_nombre" not in mc_columns:
+                connection.execute(text("ALTER TABLE movimientos_caja ADD COLUMN autorizado_post_rendicion_por_nombre VARCHAR(100)"))
+    if "movimientos_banco" in table_names:
+        mb_columns = {column["name"] for column in inspector.get_columns("movimientos_banco")}
+        with engine.begin() as connection:
+            if "autorizado_post_rendicion_por_id" not in mb_columns:
+                connection.execute(text("ALTER TABLE movimientos_banco ADD COLUMN autorizado_post_rendicion_por_id INTEGER REFERENCES usuarios(id)"))
+            if "autorizado_post_rendicion_por_nombre" not in mb_columns:
+                connection.execute(text("ALTER TABLE movimientos_banco ADD COLUMN autorizado_post_rendicion_por_nombre VARCHAR(100)"))
     with engine.begin() as connection:
         if "pagos_compras" in table_names:
             connection.execute(text(

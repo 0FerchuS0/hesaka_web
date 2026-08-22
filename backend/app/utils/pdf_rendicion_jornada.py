@@ -160,6 +160,41 @@ def generar_pdf_rendicion_jornada(
     detail_table.setStyle(TableStyle(detail_style))
     elements.append(detail_table)
 
+    post_rendicion = list(getattr(resumen, "movimientos_post_rendicion", []) or [])
+    if post_rendicion:
+        elements.append(Spacer(1, 0.6 * cm))
+        alerta_style = ParagraphStyle(
+            "RendicionAlerta",
+            parent=section_style,
+            textColor=colors.HexColor("#b91c1c"),
+        )
+        elements.append(Paragraph("MOVIMIENTOS AGREGADOS DESPUES DE ESTA RENDICION", alerta_style))
+        elements.append(Paragraph(
+            "Ya estan incluidos en los totales de arriba, pero se cargaron con esta fecha "
+            "DESPUES de que la rendicion ya se habia hecho — quien la recibio no los conto.",
+            cell_style,
+        ))
+        elements.append(Spacer(1, 0.2 * cm))
+        post_data = [["Fecha", "Concepto", "Monto", "Autorizo"]]
+        for movimiento in post_rendicion:
+            post_data.append([
+                Paragraph(movimiento.fecha.strftime("%d/%m/%Y %H:%M"), cell_style),
+                Paragraph(movimiento.concepto or "-", cell_style),
+                Paragraph(_gs(movimiento.monto), cell_style),
+                Paragraph(movimiento.autorizado_post_rendicion_por_nombre or "-", cell_style),
+            ])
+        post_table = Table(post_data, colWidths=[2.5 * cm, 6.5 * cm, 3 * cm, 4 * cm])
+        post_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#b91c1c")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fef2f2")]),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(post_table)
+
     doc.build(elements)
     buffer.seek(0)
     return buffer

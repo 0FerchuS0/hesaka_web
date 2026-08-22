@@ -1598,6 +1598,7 @@ class RendicionJornadaOut(BaseModel):
     fecha_hora_ultima_edicion: Optional[datetime] = None
     usuario_ultima_edicion_nombre: Optional[str] = None
     motivo_ajuste: Optional[str] = None
+    movimientos_post_rendicion: List[dict] = Field(default_factory=list)
 
 
 class JornadaHistorialOut(BaseModel):

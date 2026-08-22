@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../context/AuthContext'
 import { parseBackendDateTime } from '../utils/formatters'
+import { confirmarFechaAtrasada } from '../utils/confirmarFechaAtrasada'
 import LoadingButton from '../components/LoadingButton'
 import Modal from '../components/Modal'
 import RemoteSearchSelect from '../components/RemoteSearchSelect'
@@ -64,6 +65,7 @@ function PagoComisionModal({ comision, onClose, onSaved }) {
 
     const submit = async event => {
         event.preventDefault()
+        if (!confirmarFechaAtrasada(form.fecha_pago)) return
         try {
             setSaving(true)
             setError('')

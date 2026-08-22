@@ -423,6 +423,10 @@ class MovimientoBanco(TimestampMixin, Base):
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
     grupo_pago_id = Column(String(50), nullable=True)
     jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=True)
+    # Solo se completa cuando un ADMIN carga esto con fecha de un dia ya rendido
+    # (ver require_jornada_abierta_para_fecha) — vacio en el caso normal.
+    autorizado_post_rendicion_por_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
+    autorizado_post_rendicion_por_nombre = Column(String(100), nullable=True)
 
 
 # ─── Compras ───────────────────────────────────────────────────────────────────
@@ -650,6 +654,10 @@ class MovimientoCaja(TimestampMixin, Base):
     gasto_operativo_id = Column(Integer, ForeignKey('gastos_operativos.id'), nullable=True)
     gasto_operativo_rel = relationship("GastoOperativo", lazy='selectin', foreign_keys=[gasto_operativo_id])
     jornada_id = Column(Integer, ForeignKey('jornadas_financieras.id'), nullable=True)
+    # Solo se completa cuando un ADMIN carga esto con fecha de un dia ya rendido
+    # (ver require_jornada_abierta_para_fecha) — vacio en el caso normal.
+    autorizado_post_rendicion_por_id = Column(Integer, ForeignKey('usuarios.id'), nullable=True)
+    autorizado_post_rendicion_por_nombre = Column(String(100), nullable=True)
 
 
 class ConfiguracionCaja(TimestampMixin, Base):

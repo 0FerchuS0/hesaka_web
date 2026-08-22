@@ -12,6 +12,7 @@ import { exportReportBlob } from '../utils/reportExports'
 import { hasActionAccess } from '../utils/roles'
 import { parseBackendDateTime, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
 import { formatGsAmount, normalizeGsInput, parseGsInput } from '../utils/currencyInputs'
+import { confirmarFechaAtrasada } from '../utils/confirmarFechaAtrasada'
 
 const fmt = value => new Intl.NumberFormat('es-PY').format(value ?? 0)
 const fmtDate = value => {
@@ -371,6 +372,7 @@ function PagoProveedorModal({ proveedor, onClose }) {
             return
         }
 
+        if (!confirmarFechaAtrasada(fecha)) return
         setErrorConfirmacion('')
         registrarPago.mutate({
             fecha: fecha || null,
@@ -761,6 +763,7 @@ function EditarPagoHistorialModal({ grupoId, onClose }) {
         setErrorConfirmacion('')
         const confirmarReedicion = window.confirm('Vas a guardar una re-edicion financiera de este pago. Esto puede actualizar caja, bancos y movimientos asociados. ¿Deseas continuar?')
         if (!confirmarReedicion) return
+        if (!confirmarFechaAtrasada(fecha)) return
         guardarEdicion.mutate({
             fecha: fecha || null,
             metodos_pago: metodos.map(item => ({

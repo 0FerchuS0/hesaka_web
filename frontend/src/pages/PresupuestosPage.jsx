@@ -57,13 +57,16 @@ const sanitizeItemFinancials = item => {
     const cantidad = Math.max(1, parseInt(item?.cantidad, 10) || 1)
     const precioUnitario = Math.max(0, Math.trunc(Number(item?.precio_unitario || 0)))
     const bruto = precioUnitario * cantidad
-    const descuento = Math.min(Math.max(0, Math.trunc(Number(item?.descuento || 0))), bruto)
+    // El descuento no se recorta al bruto aca mientras el usuario todavia esta
+    // cargando datos (ver onBlur en el input, que recien ahi lo ajusta) — solo se
+    // evita negativo. El subtotal si queda a salvo con el piso en 0.
+    const descuento = Math.max(0, Math.trunc(Number(item?.descuento || 0)))
     return {
         ...item,
         cantidad,
         precio_unitario: precioUnitario,
         descuento,
-        subtotal: bruto - descuento,
+        subtotal: Math.max(0, bruto - descuento),
     }
 }
 const isJornadaClosedError = error => String(error?.response?.data?.detail || '').toLowerCase().includes('jornada')
@@ -372,6 +375,10 @@ function ItemRow({ item, idx, onUpdate, onRemove }) {
                 value={formatGsAmount(item.descuento)}
                 onChange={e => {
                     const descuento = normalizeGsInput(e.target.value).amount
+                    onUpdate(idx, sanitizeItemFinancials({ ...item, descuento }))
+                }}
+                onBlur={e => {
+                    const descuento = normalizeGsInput(e.target.value, calculateItemGross(item)).amount
                     onUpdate(idx, sanitizeItemFinancials({ ...item, descuento }))
                 }}
                 onFocus={e => e.target.select()}

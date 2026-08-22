@@ -7,6 +7,7 @@ import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { api } from '../context/AuthContext'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
+import { confirmarFechaAtrasada } from '../utils/confirmarFechaAtrasada'
 import { parseBackendDateTime, toDateInputValue as toBusinessDateInputValue, toDateTimeLocalValue as toBusinessDateTimeLocalValue } from '../utils/formatters'
 
 function fmt(value) {
@@ -441,6 +442,7 @@ export default function GastosPage() {
                 >
                     <form onSubmit={event => {
                         event.preventDefault()
+                        if (!confirmarFechaAtrasada(formGasto.fecha)) return
                         const payload = {
                             ...formGasto,
                             categoria_id: parseInt(formGasto.categoria_id, 10),

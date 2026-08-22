@@ -8,6 +8,7 @@ import FinancialJornadaNotice from '../components/FinancialJornadaNotice'
 import { TrendingUp, Plus, Search, CreditCard, DollarSign, AlertCircle, X, Ban, Settings, CheckCircle, Clock, Trash2, Box, Printer, Download, Eye, MessageCircle, RotateCcw } from 'lucide-react'
 import { hasActionAccess } from '../utils/roles'
 import usePendingNavigationGuard from '../utils/usePendingNavigationGuard'
+import { confirmarFechaAtrasada } from '../utils/confirmarFechaAtrasada'
 import { requestAndOpenPdf } from '../utils/fileDownloads'
 import { invalidateJornadaLiveData, useFinancialJornadaStatus } from '../hooks/useFinancialJornada'
 import { getWhatsappTemplateByCode, useActualizarWhatsappTemplate, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
@@ -893,6 +894,7 @@ function GestionPagosModal({ ventaId, onClose, onBusyChange }) {
             window.alert('El monto cobrado no puede superar el saldo pendiente de la venta.')
             return
         }
+        if (!confirmarFechaAtrasada(fecha)) return
         cobrar.mutate({
             monto: montoCobrado,
             metodo_pago: metodo,

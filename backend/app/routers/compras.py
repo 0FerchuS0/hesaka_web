@@ -54,7 +54,12 @@ from app.schemas.schemas import (
 from app.utils.auth import get_current_user
 from app.utils.excel_historial_pagos_proveedor import generar_excel_historial_pagos_proveedor
 from app.utils.filename_utils import sanitize_filename_component
-from app.utils.jornada import normalizar_fecha_negocio, require_jornada_abierta, require_jornada_abierta_para_fecha
+from app.utils.jornada import (
+    aplicar_autorizacion_post_rendicion,
+    normalizar_fecha_negocio,
+    require_jornada_abierta,
+    require_jornada_abierta_para_fecha,
+)
 from app.utils.pdf_compra import generar_pdf_compra
 from app.utils.pdf_pago_proveedor import generar_pdf_pago_proveedor
 from app.utils.timezone import ahora_negocio
@@ -576,8 +581,8 @@ def _revertir_pago_compra(session, pago: PagoCompra):
             session.delete(movimiento)
 
 
-def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra, monto: float, metodo_pago: str, banco: Optional[Banco], fecha_pago: datetime):
-    jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago")
+def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra, monto: float, metodo_pago: str, banco: Optional[Banco], fecha_pago: datetime, current_user=None):
+    jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago", current_user=current_user)
     concepto = f"Pago proveedor {compra.proveedor_rel.nombre if compra.proveedor_rel else 'SIN PROVEEDOR'}"
     if compra.nro_factura:
         concepto += f" - {compra.nro_factura}"
@@ -593,7 +598,7 @@ def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra,
 
         saldo_anterior = caja.saldo_actual or 0.0
         caja.saldo_actual = saldo_anterior - monto
-        session.add(MovimientoCaja(
+        movimiento = MovimientoCaja(
             fecha=fecha_pago,
             tipo="EGRESO",
             monto=monto,
@@ -602,7 +607,9 @@ def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra,
             saldo_nuevo=caja.saldo_actual,
             pago_compra_id=pago.id,
             jornada_id=jornada.id,
-        ))
+        )
+        aplicar_autorizacion_post_rendicion(jornada, movimiento)
+        session.add(movimiento)
         return
 
     if not banco:
@@ -610,7 +617,7 @@ def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra,
 
     saldo_anterior = banco.saldo_actual or 0.0
     banco.saldo_actual = saldo_anterior - monto
-    session.add(MovimientoBanco(
+    movimiento = MovimientoBanco(
         banco_id=banco.id,
         fecha=fecha_pago,
         tipo="EGRESO",
@@ -620,7 +627,9 @@ def _registrar_movimiento_pago_compra(session, compra: Compra, pago: PagoCompra,
         saldo_nuevo=banco.saldo_actual,
         pago_compra_id=pago.id,
         jornada_id=jornada.id,
-    ))
+    )
+    aplicar_autorizacion_post_rendicion(jornada, movimiento)
+    session.add(movimiento)
 
 
 def _anular_pago_compra(session, pago: PagoCompra):
@@ -695,7 +704,7 @@ def _resolver_factura_lote(session, compras: List[Compra], proveedor_id: int, fa
     return factura_a_asignar, tipo_documento_a_asignar
 
 
-def _aplicar_pago_proveedor(session, proveedor_id: int, data: PagoProveedorCreate, lote_pago_id_forzado: Optional[str] = None) -> PagoProveedorOut:
+def _aplicar_pago_proveedor(session, proveedor_id: int, data: PagoProveedorCreate, lote_pago_id_forzado: Optional[str] = None, current_user=None) -> PagoProveedorOut:
     proveedor = session.query(Compra).options(selectinload(Compra.proveedor_rel)).filter(Compra.proveedor_id == proveedor_id).first()
     if not proveedor or not proveedor.proveedor_rel:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado.")
@@ -793,7 +802,7 @@ def _aplicar_pago_proveedor(session, proveedor_id: int, data: PagoProveedorCreat
             session.add(pago)
             session.flush()
 
-            _registrar_movimiento_pago_compra(session, compra, pago, monto_aplicado, metodo_pago, banco, fecha_pago)
+            _registrar_movimiento_pago_compra(session, compra, pago, monto_aplicado, metodo_pago, banco, fecha_pago, current_user=current_user)
 
             compra.saldo = max(0.0, saldo_compra - monto_aplicado)
             _recalcular_estado_compra(session, compra)
@@ -1047,7 +1056,7 @@ def registrar_pago_global_proveedor(
 ):
     session = get_session_for_tenant(tenant_slug)
     try:
-        resultado = _aplicar_pago_proveedor(session, proveedor_id, data)
+        resultado = _aplicar_pago_proveedor(session, proveedor_id, data, current_user=current_user)
         session.commit()
         return resultado
     except HTTPException:
@@ -1369,7 +1378,7 @@ def editar_pago_proveedor(
         for pago in pagos:
             _anular_pago_compra(session, pago)
 
-        resultado = _aplicar_pago_proveedor(session, proveedor_id, data, lote_pago_id_forzado=None if grupo_id.startswith("IND-") and len(data.metodos_pago) == 1 else (pagos[0].lote_pago_id or str(uuid4())))
+        resultado = _aplicar_pago_proveedor(session, proveedor_id, data, lote_pago_id_forzado=None if grupo_id.startswith("IND-") and len(data.metodos_pago) == 1 else (pagos[0].lote_pago_id or str(uuid4())), current_user=current_user)
         session.commit()
         return resultado
     except HTTPException:
@@ -2171,7 +2180,7 @@ def registrar_pago_compra(
                 raise HTTPException(status_code=404, detail="Banco no encontrado.")
 
         fecha_pago = normalizar_fecha_negocio(session, data.fecha)
-        jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago")
+        jornada = require_jornada_abierta_para_fecha(session, fecha_pago, accion="registrar un pago", current_user=current_user)
         pago = PagoCompra(
             compra_id=compra_id,
             fecha=fecha_pago,
@@ -2198,7 +2207,7 @@ def registrar_pago_compra(
 
             saldo_anterior = caja.saldo_actual or 0.0
             caja.saldo_actual = saldo_anterior - monto
-            session.add(MovimientoCaja(
+            movimiento = MovimientoCaja(
                 fecha=fecha_pago,
                 tipo="EGRESO",
                 monto=monto,
@@ -2207,11 +2216,13 @@ def registrar_pago_compra(
                 saldo_nuevo=caja.saldo_actual,
                 pago_compra_id=pago.id,
                 jornada_id=jornada.id,
-            ))
+            )
+            aplicar_autorizacion_post_rendicion(jornada, movimiento)
+            session.add(movimiento)
         else:
             saldo_anterior = banco.saldo_actual or 0.0
             banco.saldo_actual = saldo_anterior - monto
-            session.add(MovimientoBanco(
+            movimiento = MovimientoBanco(
                 banco_id=banco.id,
                 fecha=fecha_pago,
                 tipo="EGRESO",
@@ -2221,7 +2232,9 @@ def registrar_pago_compra(
                 saldo_nuevo=banco.saldo_actual,
                 pago_compra_id=pago.id,
                 jornada_id=jornada.id,
-            ))
+            )
+            aplicar_autorizacion_post_rendicion(jornada, movimiento)
+            session.add(movimiento)
 
         compra.saldo = max(0.0, float(compra.saldo or 0) - monto)
         _recalcular_estado_compra(session, compra)

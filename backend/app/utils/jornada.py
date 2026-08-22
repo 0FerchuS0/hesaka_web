@@ -59,6 +59,9 @@ class MovimientoJornadaNormalizado:
     venta_codigo: Optional[str] = None
     cliente_nombre: Optional[str] = None
     pago_id: Optional[int] = None
+    # Se completa solo cuando un ADMIN cargo esto con fecha de un dia ya rendido
+    # (ver require_jornada_abierta_para_fecha / aplicar_autorizacion_post_rendicion).
+    autorizado_post_rendicion_por_nombre: Optional[str] = None
 
 
 def hoy_jornada(session=None) -> date:
@@ -171,42 +174,95 @@ def obtener_ultima_jornada_anterior(session) -> JornadaFinanciera | None:
     )
 
 
-def require_jornada_abierta(session):
-    jornada = obtener_jornada_actual(session, incluir_vencida=False)
-    if not jornada:
-        raise HTTPException(
-            status_code=409,
-            detail="Debes abrir la jornada financiera de hoy antes de registrar movimientos de dinero.",
-        )
-    return jornada
+def require_jornada_abierta(session, current_user=None):
+    return require_jornada_abierta_para_fecha(session, None, current_user=current_user)
 
 
-def require_jornada_abierta_para_fecha(session, fecha_movimiento: datetime | date | None, *, accion: str = "registrar movimientos de dinero"):
+def require_jornada_abierta_para_fecha(
+    session,
+    fecha_movimiento: datetime | date | None,
+    *,
+    accion: str = "registrar movimientos de dinero",
+    current_user=None,
+):
+    """Asegura que exista una jornada financiera para el dia de `fecha_movimiento`
+    (default: hoy) y la devuelve, creandola si hace falta — se usa tanto para la
+    jornada de "hoy" como en los puntos donde se registra un pago, gasto o cobro
+    con una fecha propia.
+
+    La jornada es solo la agrupacion/etiqueta de "a que dia pertenece" un movimiento
+    para reportes (corte, rendicion); no es un candado que bloquee cargar algo con
+    fecha de ayer. Antes se exigia que esa jornada tuviera estado ABIERTA, pero
+    apenas pasa la medianoche la jornada de ayer queda VENCIDA automaticamente (ver
+    vencer_jornadas_antiguas) y nadie podia reabrirla — en la practica esto
+    bloqueaba para siempre cargar un gasto o cobro con un dia de atraso, algo que
+    pasa seguido en un negocio real (alguien carga un comprobante al dia
+    siguiente). Solo se bloquea una fecha futura.
+
+    Excepcion: si ya se hizo una rendicion (entrega de la plata de caja) que cubre
+    este instante, insertar un movimiento con esa fecha lo dejaria fuera del
+    calculo de la proxima rendicion (que solo mira movimientos posteriores a la
+    ultima) — quedaria plata sin rendir sin que nadie lo note. Por eso ahi se exige
+    rol ADMIN; si quien llama no es ADMIN se bloquea. Si es ADMIN, se permite pero
+    se deja anotado en el atributo dinamico `_movimiento_autorizado_por` (id,
+    nombre) para que el punto donde se crea el MovimientoCaja/MovimientoBanco lo
+    guarde — asi el reporte de esa rendicion puede mostrar que se agrego algo
+    despues y quien lo autorizo.
+    """
+    vencer_jornadas_antiguas(session)
+    hoy = hoy_jornada(session)
+
     if fecha_movimiento is None:
-        return require_jornada_abierta(session)
-
-    if isinstance(fecha_movimiento, datetime):
+        fecha_normalizada = ahora_negocio(session)
+        fecha_obj = fecha_normalizada.date()
+    elif isinstance(fecha_movimiento, datetime):
         fecha_normalizada = normalizar_fecha_negocio(session, fecha_movimiento)
         fecha_obj = fecha_normalizada.date()
     else:
         fecha_obj = fecha_movimiento
+        fecha_normalizada = datetime.combine(fecha_obj, time.min)
 
-    jornada = obtener_jornada_por_fecha(session, fecha_obj, incluir_vencida=False)
-    if jornada:
-        return jornada
-
-    fecha_legible = fecha_obj.strftime("%d/%m/%Y")
-    jornada_existente = obtener_jornada_por_fecha(session, fecha_obj, incluir_vencida=True)
-    if jornada_existente:
+    if fecha_obj > hoy:
         raise HTTPException(
             status_code=409,
-            detail=f"No se puede {accion} con fecha {fecha_legible} porque la jornada financiera de ese dia ya esta cerrada.",
+            detail=f"No se puede {accion} con una fecha futura.",
         )
 
-    raise HTTPException(
-        status_code=409,
-        detail=f"No se puede {accion} con fecha {fecha_legible} porque no existe una jornada financiera abierta para ese dia.",
+    jornada = obtener_jornada_por_fecha(session, fecha_obj, incluir_vencida=True)
+    if jornada:
+        ultima_rendicion = obtener_ultima_rendicion_vigente(session, jornada.id)
+        if ultima_rendicion and fecha_normalizada <= ultima_rendicion.fecha_hora_rendicion:
+            es_admin = bool(current_user and getattr(current_user, "rol", None) == "ADMIN")
+            if not es_admin:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"No se puede {accion} con fecha del {fecha_obj.strftime('%d/%m/%Y')} porque ese dia "
+                        "ya fue rendido. Si hace falta corregirlo, hablá con un administrador."
+                    ),
+                )
+            jornada._movimiento_autorizado_por = (current_user.id, current_user.nombre_completo)
+        return jornada
+
+    jornada = JornadaFinanciera(
+        fecha=fecha_obj,
+        estado="ABIERTA" if fecha_obj == hoy else "VENCIDA",
+        fecha_hora_apertura=ahora_negocio(session),
+        observacion_apertura="Creada automaticamente al registrar un movimiento con esta fecha.",
     )
+    session.add(jornada)
+    session.flush()
+    return jornada
+
+
+def aplicar_autorizacion_post_rendicion(jornada, movimiento) -> None:
+    """Si require_jornada_abierta_para_fecha marco la jornada como autorizada por un
+    ADMIN para saltear una rendicion ya hecha, propaga ese dato al MovimientoCaja o
+    MovimientoBanco recien creado — asi el reporte de esa rendicion puede mostrarlo."""
+    autorizado_por = getattr(jornada, "_movimiento_autorizado_por", None)
+    if not autorizado_por:
+        return
+    movimiento.autorizado_post_rendicion_por_id, movimiento.autorizado_post_rendicion_por_nombre = autorizado_por
 
 
 def abrir_jornada_actual(session, current_user: Usuario, observacion: str | None = None):
@@ -477,6 +533,7 @@ def _normalizar_movimientos_caja(movimientos: list[MovimientoCaja], tz: tzinfo) 
                 venta_codigo=venta.codigo if venta else None,
                 cliente_nombre=cliente.nombre if cliente else None,
                 pago_id=pago_venta.id if pago_venta else None,
+                autorizado_post_rendicion_por_nombre=getattr(movimiento, "autorizado_post_rendicion_por_nombre", None),
             )
         )
     return normalizados
@@ -555,6 +612,7 @@ def _normalizar_movimientos_banco(movimientos: list[MovimientoBanco], tz: tzinfo
                 venta_codigo=venta.codigo if venta else None,
                 cliente_nombre=cliente.nombre if cliente else None,
                 pago_id=pago_venta.id if pago_venta else None,
+                autorizado_post_rendicion_por_nombre=getattr(movimiento, "autorizado_post_rendicion_por_nombre", None),
             )
         )
     return normalizados
@@ -666,6 +724,7 @@ def serializar_movimiento_jornada(movimiento: MovimientoJornadaNormalizado) -> d
         "venta_codigo": movimiento.venta_codigo,
         "cliente_nombre": movimiento.cliente_nombre,
         "pago_id": movimiento.pago_id,
+        "autorizado_post_rendicion_por_nombre": movimiento.autorizado_post_rendicion_por_nombre,
     }
 
 
@@ -1477,9 +1536,11 @@ def construir_desglose_medios_rendicion(
 def serializar_rendicion(session, rendicion: RendicionJornadaFinanciera, *, desglose_medios: list[dict] | None = None):
     jornada = session.query(JornadaFinanciera).filter(JornadaFinanciera.id == rendicion.jornada_id).first()
     ultima = obtener_ultima_rendicion_vigente(session, rendicion.jornada_id)
+    movimientos_post_rendicion: list = []
     if desglose_medios is None:
         resumen = construir_resumen_rendicion(session, rendicion)
         desglose_medios = resumen.desglose_medios
+        movimientos_post_rendicion = resumen.movimientos_post_rendicion
     return {
         "id": rendicion.id,
         "jornada_id": rendicion.jornada_id,
@@ -1504,6 +1565,7 @@ def serializar_rendicion(session, rendicion: RendicionJornadaFinanciera, *, desg
         "fecha_hora_ultima_edicion": rendicion.fecha_hora_ultima_edicion,
         "usuario_ultima_edicion_nombre": rendicion.usuario_ultima_edicion_nombre,
         "motivo_ajuste": rendicion.motivo_ajuste,
+        "movimientos_post_rendicion": [serializar_movimiento_jornada(mov) for mov in movimientos_post_rendicion],
     }
 
 
@@ -1671,6 +1733,11 @@ def construir_resumen_rendicion(session, rendicion: RendicionJornadaFinanciera):
     ingresos_banco = float(sum(mov.monto for mov in ingresos if mov.origen == "BANCO"))
     egresos_caja = float(sum(mov.monto for mov in egresos if mov.origen == "CAJA"))
     egresos_banco = float(sum(mov.monto for mov in egresos if mov.origen == "BANCO"))
+    # Movimientos que un ADMIN cargo con fecha de esta rendicion pero DESPUES de que
+    # ya se habia hecho — ya estan sumados en los totales de arriba (por eso hay que
+    # dejarlos a la vista aparte, para que quien revise la rendicion sepa que esa
+    # plata no la conto quien la rindio originalmente).
+    movimientos_post_rendicion = [mov for mov in movimientos if mov.autorizado_post_rendicion_por_nombre]
     return SimpleNamespace(
         total_ingresos=total_ingresos,
         total_egresos=total_egresos,
@@ -1687,6 +1754,7 @@ def construir_resumen_rendicion(session, rendicion: RendicionJornadaFinanciera):
         ingresos=ingresos,
         egresos=egresos,
         todos=movimientos,
+        movimientos_post_rendicion=movimientos_post_rendicion,
     )
 
 

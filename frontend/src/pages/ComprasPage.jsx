@@ -228,7 +228,11 @@ function recalcItem(item) {
     const cantidad = Math.max(1, parseInt(item.cantidad, 10) || 1)
     const costo = Math.max(0, Math.trunc(Number(item.costo_unitario || 0)))
     const bruto = costo * cantidad
-    const descuento = Math.min(Math.max(0, Math.trunc(Number(item.descuento || 0))), bruto)
+    // El descuento no se recorta aca mientras el usuario esta cargando datos (ver
+    // onBlur en el input, que recien ahi lo ajusta al bruto) — solo se evita negativo.
+    // El subtotal si queda a salvo con el piso en 0 aunque el descuento este temporalmente
+    // por encima del bruto.
+    const descuento = Math.max(0, Math.trunc(Number(item.descuento || 0)))
     return { ...item, cantidad, costo_unitario: costo, descuento, subtotal: Math.max(0, bruto - descuento) }
 }
 
@@ -956,6 +960,7 @@ function CompraFormModal({ compraId = null, onClose, onWhatsappReady = null, ini
                                             style={{ width: 100, padding: '6px 8px' }}
                                             value={formatGsAmount(item.descuento)}
                                             onChange={event => updateItem(index, 'descuento', normalizeGsInput(event.target.value).amount)}
+                                            onBlur={event => updateItem(index, 'descuento', normalizeGsInput(event.target.value, Math.max(0, (parseInt(item.cantidad, 10) || 1) * (Number(item.costo_unitario) || 0))).amount)}
                                             onFocus={event => event.target.select()}
                                         /></td>
                                         <td style={{ fontWeight: 700, color: 'var(--primary-light)' }}>Gs. {fmt(item.subtotal)}</td>

@@ -154,6 +154,50 @@ def generar_excel_rendicion_jornada(rendicion, resumen, config):
                 cell.alignment = align_left
         row += 1
 
+    post_rendicion = list(getattr(resumen, "movimientos_post_rendicion", []) or [])
+    if post_rendicion:
+        row += 2
+        ws.merge_cells(f"A{row}:D{row}")
+        ws[f"A{row}"] = "MOVIMIENTOS AGREGADOS DESPUES DE ESTA RENDICION"
+        ws[f"A{row}"].font = Font(name="Arial", size=11, bold=True, color="B91C1C")
+        row += 1
+        ws.merge_cells(f"A{row}:D{row}")
+        ws[f"A{row}"] = (
+            "Ya estan incluidos en los totales de arriba, pero se cargaron con esta fecha "
+            "DESPUES de que la rendicion ya se habia hecho — quien la recibio no los conto."
+        )
+        row += 1
+
+        headers_post = ["Fecha", "Concepto", "Monto", "Autorizo"]
+        for col, header in enumerate(headers_post, start=1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = header
+            cell.font = font_header
+            cell.fill = PatternFill(start_color="B91C1C", end_color="B91C1C", fill_type="solid")
+            cell.border = border
+            cell.alignment = align_center
+        row += 1
+
+        for movimiento in post_rendicion:
+            values = [
+                movimiento.fecha.strftime("%d/%m/%Y %H:%M"),
+                movimiento.concepto or "-",
+                movimiento.monto,
+                movimiento.autorizado_post_rendicion_por_nombre or "-",
+            ]
+            for col, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=col)
+                cell.value = value
+                cell.border = border
+                cell.fill = fill_row_expense
+                if col == 3:
+                    cell.number_format = "#,##0"
+                    cell.alignment = align_right
+                    cell.font = font_expense
+                else:
+                    cell.alignment = align_left
+            row += 1
+
     widths = {"A": 18, "B": 12, "C": 16, "D": 20, "E": 32, "F": 20, "G": 14}
     for col, width in widths.items():
         ws.column_dimensions[col].width = width

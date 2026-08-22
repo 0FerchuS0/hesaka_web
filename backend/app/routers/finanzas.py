@@ -65,6 +65,7 @@ from app.utils.excel_reporte_finanzas import generar_excel_reporte_finanzas
 from app.utils.filename_utils import format_date_for_filename
 from app.utils.jornada import (
     abrir_jornada_actual,
+    aplicar_autorizacion_post_rendicion,
     cargar_movimientos_jornada_normalizados,
     construir_alerta_movimientos_posteriores,
     construir_cuentas_por_cobrar_dia,
@@ -281,8 +282,8 @@ def _revertir_impacto_gasto(session, gasto: GastoOperativo):
         gasto.movimiento_banco_id = None
 
 
-def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaGasto):
-    jornada = require_jornada_abierta_para_fecha(session, gasto.fecha, accion="registrar un gasto")
+def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaGasto, current_user=None):
+    jornada = require_jornada_abierta_para_fecha(session, gasto.fecha, accion="registrar un gasto", current_user=current_user)
     if gasto.metodo_pago == "EFECTIVO":
         caja = session.query(ConfiguracionCaja).first()
         if not caja:
@@ -302,6 +303,7 @@ def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaG
             gasto_operativo_id=gasto.id,
             jornada_id=jornada.id,
         )
+        aplicar_autorizacion_post_rendicion(jornada, movimiento)
         session.add(movimiento)
         session.flush()
         gasto.movimiento_caja_id = movimiento.id
@@ -325,6 +327,7 @@ def _aplicar_impacto_gasto(session, gasto: GastoOperativo, categoria: CategoriaG
         gasto_operativo_id=gasto.id,
         jornada_id=jornada.id,
     )
+    aplicar_autorizacion_post_rendicion(jornada, movimiento)
     session.add(movimiento)
     session.flush()
     gasto.movimiento_banco_id = movimiento.id
@@ -1881,11 +1884,11 @@ def registrar_gasto(
 
         payload = data.model_dump()
         payload["fecha"] = normalizar_fecha_negocio(session, payload["fecha"])
-        require_jornada_abierta_para_fecha(session, payload["fecha"], accion="registrar un gasto")
+        require_jornada_abierta_para_fecha(session, payload["fecha"], accion="registrar un gasto", current_user=current_user)
         gasto = GastoOperativo(**payload)
         session.add(gasto)
         session.flush()
-        _aplicar_impacto_gasto(session, gasto, categoria)
+        _aplicar_impacto_gasto(session, gasto, categoria, current_user=current_user)
 
         session.commit()
         session.refresh(gasto)
@@ -1925,11 +1928,11 @@ def editar_gasto(
 
         payload = data.model_dump()
         payload["fecha"] = normalizar_fecha_negocio(session, payload["fecha"] or gasto.fecha)
-        require_jornada_abierta_para_fecha(session, payload["fecha"], accion="registrar un gasto")
+        require_jornada_abierta_para_fecha(session, payload["fecha"], accion="registrar un gasto", current_user=current_user)
         for key, value in payload.items():
             setattr(gasto, key, value)
 
-        _aplicar_impacto_gasto(session, gasto, categoria)
+        _aplicar_impacto_gasto(session, gasto, categoria, current_user=current_user)
 
         session.commit()
         session.refresh(gasto)

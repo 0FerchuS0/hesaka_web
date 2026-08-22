@@ -3,6 +3,7 @@ import { api } from '../context/AuthContext'
 import { formatCurrency, formatDate, todayBusinessInputValue } from '../utils/formatters'
 import { CheckCircle, AlertCircle, Save, Loader2, ArrowRight } from 'lucide-react'
 import Modal from '../components/Modal'
+import { confirmarFechaAtrasada } from '../utils/confirmarFechaAtrasada'
 
 const todayInputValue = () => todayBusinessInputValue()
 
@@ -89,6 +90,8 @@ export default function CobroMultiplePage() {
             setError('Debe seleccionar un banco')
             return
         }
+
+        if (!confirmarFechaAtrasada(form.fecha)) return
 
         setSubmitting(true)
         setError('')

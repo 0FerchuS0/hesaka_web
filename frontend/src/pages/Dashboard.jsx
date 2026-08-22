@@ -14,9 +14,10 @@ import Modal from '../components/Modal'
 import { getWhatsappTemplateByCode, useWhatsappTemplatesCatalog } from '../hooks/useWhatsappTemplates'
 import { formatCurrentBusinessDate, parseBackendDateTime, todayBusinessInputValue } from '../utils/formatters'
 
-const DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta} a las {hora_turno}. Quedamos atentos para ayudarte a confirmar tu cita.'
+const DEFAULT_DASHBOARD_RECORDATORIO_TEMPLATE = 'Hola {paciente}, te escribimos de {empresa}. Te recordamos tu turno para el {proxima_consulta} a las {hora_turno}. Te esperamos. Si no podras asistir, por favor avisanos para reprogramar.'
 const DEFAULT_CUMPLEANOS_TEMPLATE = 'Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.'
-const DASHBOARD_RECORDATORIO_TEMPLATE_CODE = 'dashboard_recordatorio'
+// Mismo codigo que usa la Agenda del modulo Clinica: es un unico recordatorio de consulta editable desde un solo lugar.
+const DASHBOARD_RECORDATORIO_TEMPLATE_CODE = 'clinica_recordatorio_turno'
 const CUMPLEANOS_TEMPLATE_CODE = 'cumpleanos_cliente'
 
 function fmt(value) {

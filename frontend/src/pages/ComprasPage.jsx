@@ -96,35 +96,50 @@ function getRetiroWhatsappTemplate() {
     return localStorage.getItem(RETIRO_WHATSAPP_TEMPLATE_KEY) || DEFAULT_RETIRO_WHATSAPP_TEMPLATE
 }
 
-function buildRetiroWhatsappMessage(context, template = DEFAULT_RETIRO_WHATSAPP_TEMPLATE) {
+function buildRetiroWhatsappMessage(context, template = DEFAULT_RETIRO_WHATSAPP_TEMPLATE, empresa = 'HESAKA') {
     const ventaTexto = context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : ''
     return (template || DEFAULT_RETIRO_WHATSAPP_TEMPLATE)
         .replaceAll('{cliente}', context?.cliente_nombre || '')
         .replaceAll('{venta}', ventaTexto)
-        .replaceAll('{empresa}', 'HESAKA')
+        .replaceAll('{empresa}', empresa || 'HESAKA')
 }
 
-function buildRetiroWhatsappLink(context, message = '') {
+function buildRetiroTemplateFromMessage(message, context, empresa = 'HESAKA') {
+    let template = message || ''
+    const ventaTexto = context?.venta_codigo ? ` correspondiente a la venta ${context.venta_codigo}` : ''
+    const replacements = [
+        [context?.cliente_nombre || '', '{cliente}'],
+        [ventaTexto, '{venta}'],
+        [empresa || '', '{empresa}'],
+    ]
+    replacements.forEach(([value, placeholder]) => {
+        if (!value) return
+        template = template.replaceAll(value, placeholder)
+    })
+    return template
+}
+
+function buildRetiroWhatsappLink(context, message = '', empresa = 'HESAKA') {
     const telefono = normalizarTelefonoWhatsapp(context?.cliente_telefono)
     if (!telefono) return ''
-    const finalMessage = message || buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate())
+    const finalMessage = message || buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresa)
     return `https://wa.me/${telefono}?text=${encodeURIComponent(finalMessage)}`
 }
 
-function WhatsappRetiroModal({ context, onClose, onGuardarPlantilla = null, guardandoPlantilla = false }) {
-    const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
-    const whatsappLink = buildRetiroWhatsappLink(context, message)
+function WhatsappRetiroModal({ context, onClose, empresaNombre = 'HESAKA', onGuardarPlantilla = null, guardandoPlantilla = false }) {
+    const [message, setMessage] = useState(() => buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))
+    const whatsappLink = buildRetiroWhatsappLink(context, message, empresaNombre)
 
     useEffect(() => {
-        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
-    }, [context])
+        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))
+    }, [context, empresaNombre])
 
     const restoreSuggested = () => {
-        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate()))
+        setMessage(buildRetiroWhatsappMessage(context, getRetiroWhatsappTemplate(), empresaNombre))
     }
 
     const saveTemplate = () => {
-        const template = message
+        const template = buildRetiroTemplateFromMessage(message, context, empresaNombre)
         if (onGuardarPlantilla) {
             onGuardarPlantilla(template)
         }
@@ -1325,6 +1340,14 @@ export default function ComprasPage() {
         enabled: loadSecondaryCatalogs,
     })
     const actualizarWhatsappTemplate = useActualizarWhatsappTemplate()
+    const { data: configPublica } = useQuery({
+        queryKey: ['configuracion-general-publica'],
+        queryFn: () => api.get('/configuracion-general/publica').then(response => response.data),
+        enabled: loadSecondaryCatalogs,
+        staleTime: 5 * 60 * 1000,
+        retry: false,
+    })
+    const empresaNombre = (configPublica?.nombre || '').trim() || 'HESAKA'
 
     useEffect(() => {
         const timer = window.setTimeout(() => setLoadSecondaryCatalogs(true), 180)
@@ -1618,6 +1641,7 @@ export default function ComprasPage() {
                     <WhatsappRetiroModal
                         context={whatsappRetiro}
                         onClose={() => setWhatsappRetiro(null)}
+                        empresaNombre={empresaNombre}
                         guardandoPlantilla={actualizarWhatsappTemplate.isPending}
                         onGuardarPlantilla={plantilla => {
                             actualizarWhatsappTemplate.mutate({

@@ -104,8 +104,8 @@ WHATSAPP_TEMPLATE_DEFAULTS = [
     },
     {
         "codigo": "clinica_recordatorio_turno",
-        "nombre": "Clinica - Recordatorio de turno",
-        "descripcion": "Recordatorio de turno/control para pacientes de clinica.",
+        "nombre": "Clinica - Recordatorio de consulta",
+        "descripcion": "Recordatorio de turno/control para pacientes de clinica. Se usa tanto en la Agenda como en los avisos del Dashboard.",
         "plantilla": "Hola {paciente}, te escribimos de {empresa}. Te recordamos tu turno para el {proxima_consulta} a las {hora_turno}. Te esperamos. Si no podras asistir, por favor avisanos para reprogramar.",
     },
     {
@@ -114,18 +114,21 @@ WHATSAPP_TEMPLATE_DEFAULTS = [
         "descripcion": "Mensaje de saludo para clientes en su cumpleanos.",
         "plantilla": "Hola {cliente}, te escribimos de {empresa}. Queremos desearte un muy feliz cumpleaños. Que tengas un excelente dia.",
     },
-    {
-        "codigo": "dashboard_recordatorio",
-        "nombre": "Dashboard - Recordatorio rapido",
-        "descripcion": "Mensaje rapido desde dashboard para recordar proximas consultas.",
-        "plantilla": "Hola {paciente}, te escribimos de {empresa}. Tu ultima consulta fue el {ultima_consulta} y tu proximo control esta previsto para el {proxima_consulta} a las {hora_turno}. Quedamos atentos para ayudarte a confirmar tu cita.",
-    },
 ]
+
+# Codigos retirados del catalogo: se unificaron con otro codigo vigente.
+# 'dashboard_recordatorio' -> fusionado con 'clinica_recordatorio_turno' (mismo proposito: recordatorio de consulta).
+WHATSAPP_TEMPLATE_CODIGOS_RETIRADOS = ["dashboard_recordatorio"]
 
 
 def _asegurar_catalogo_plantillas_whatsapp(session):
     existentes = {row.codigo: row for row in session.query(PlantillaWhatsapp).all()}
     cambios = False
+    for codigo_retirado in WHATSAPP_TEMPLATE_CODIGOS_RETIRADOS:
+        row_retirado = existentes.pop(codigo_retirado, None)
+        if row_retirado is not None:
+            session.delete(row_retirado)
+            cambios = True
     for item in WHATSAPP_TEMPLATE_DEFAULTS:
         row = existentes.get(item["codigo"])
         if not row:

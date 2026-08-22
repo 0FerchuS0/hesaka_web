@@ -311,12 +311,15 @@ def _registrar_comision_tarjeta(
     fecha: Optional[datetime] = None,
     current_user=None,
 ):
-    """Crea un GastoOperativo automático por comisión de tarjeta y lo descuenta del banco."""
-    from app.models.models import GastoOperativo, CategoriaGasto, ConfiguracionEmpresa
-    config = session.query(ConfiguracionEmpresa).first()
-    if not config or not config.porcentaje_comision_tarjeta:
+    """Crea un GastoOperativo automático por comisión de tarjeta y lo descuenta del banco.
+    El porcentaje es el propio de ESE banco (Banco.porcentaje_comision, configurable en
+    Caja > Bancos) — cada banco cobra distinto, no existe un porcentaje unico valido
+    para todos."""
+    from app.models.models import GastoOperativo, CategoriaGasto, Banco
+    banco_comision = session.query(Banco).filter(Banco.id == banco_id).first()
+    if not banco_comision or not banco_comision.porcentaje_comision:
         return
-    pct = config.porcentaje_comision_tarjeta
+    pct = banco_comision.porcentaje_comision
     monto_comision = round(monto_pago * pct / 100, 2)
     if monto_comision <= 0:
         return
@@ -2279,10 +2282,11 @@ def _registrar_comision_tarjeta_grupal(
     fecha: Optional[datetime] = None,
     current_user=None,
 ):
-    """Versión grupal de la comisión de tarjeta."""
-    from app.models.models import GastoOperativo, CategoriaGasto, ConfiguracionEmpresa
-    config = session.query(ConfiguracionEmpresa).first()
-    pct: float = config.porcentaje_comision_tarjeta or 0.0
+    """Versión grupal de la comisión de tarjeta. El porcentaje es el propio de ESE banco
+    (Banco.porcentaje_comision) — mismo criterio que _registrar_comision_tarjeta."""
+    from app.models.models import GastoOperativo, CategoriaGasto, Banco
+    banco_comision = session.query(Banco).filter(Banco.id == banco_id).first()
+    pct: float = (banco_comision.porcentaje_comision or 0.0) if banco_comision else 0.0
     if pct <= 0:
         return
     
